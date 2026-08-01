@@ -15,10 +15,10 @@ jobs:
   build:
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    # 官方只保证 macOS。Windows 和 Linux 的打包配置留在
-    # electron-builder.yml 里（bun run build:win / build:linux 可用），
-    # 但不进 CI —— 没人在那两个平台上实际使用，红灯只会变成噪音。
-    # 欢迎有需要的人提 PR 把对应的 job 加回来。
+    # 官方只保证 macOS。Windows 和 Linux 的打包配置是好的
+    # （bun run build:win / build:linux 本地能跑），只是没人在那两个
+    # 平台上实际用过，红灯只会变成噪音，所以先注释掉。
+    # 想支持的话把下面对应的两段取消注释即可，欢迎提 PR。
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +27,16 @@ jobs:
             platform: mac
             artifacts: |
               dist_electron/*.dmg
+          # - os: windows-latest
+          #   platform: win
+          #   artifacts: |
+          #     dist_electron/*.exe
+          # - os: ubuntu-22.04
+          #   platform: linux
+          #   artifacts: |
+          #     dist_electron/*.AppImage
+          #     dist_electron/*.deb
+          #     dist_electron/*.tar.gz
 
     steps:
       - uses: actions/checkout@v4

@@ -14,10 +14,10 @@
     "postuninstall": "npm_execpath= electron-builder install-app-deps",
     "prettier": "npx prettier --write ./src",
     "netease_api:run": "npx @neteaseapireborn/api",
-    "build:app": "electron-vite build && electron-builder --mac -p never",
-    "build:mac": "electron-vite build && electron-builder --mac -p never",
-    "build:win": "electron-vite build && electron-builder --win -p never",
-    "build:linux": "electron-vite build && electron-builder --linux -p never"
+    "build:app": "npm_execpath= electron-vite build && npm_execpath= electron-builder --mac -p never",
+    "build:mac": "npm_execpath= electron-vite build && npm_execpath= electron-builder --mac -p never",
+    "build:win": "npm_execpath= electron-vite build && npm_execpath= electron-builder --win -p never",
+    "build:linux": "npm_execpath= electron-vite build && npm_execpath= electron-builder --linux -p never"
   },
   "main": "out/main/background.js",
   "engines": {
