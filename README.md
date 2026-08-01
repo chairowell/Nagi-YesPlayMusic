@@ -4,7 +4,8 @@
 
 <h2 align="center" style="font-weight: 600">YesPlayMusic</h2>
 
-<p align="center">高颜值的第三方网易云播放器 · 个人 macOS 定制版</p>
+<p align="center">高颜值的第三方网易云播放器</p>
+<p align="center"><sub>macOS 定制分支 · 迷你播放器与菜单栏歌词 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
 
 ---
 
