@@ -108,7 +108,7 @@ module.exports = {
           target: [
             {
               target: 'dmg',
-              arch: ['x64', 'arm64', 'universal'],
+              arch: ['arm64'],
             },
           ],
           artifactName: '${productName}-${os}-${version}-${arch}.${ext}',

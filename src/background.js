@@ -17,7 +17,7 @@ import {
   isCreateTray,
   isCreateMpris,
 } from '@/utils/platform';
-import { createProtocol } from 'vue-cli-plugin-electron-builder/lib';
+import path from 'node:path';
 import { startNeteaseMusicApi } from './electron/services';
 import { initIpcMain } from './electron/ipcMain.js';
 import { createMenu } from './electron/menu';
@@ -153,7 +153,8 @@ class Background {
     log('creating express app');
 
     const expressApp = express();
-    expressApp.use('/', express.static(__dirname + '/'));
+    // electron-vite 把主进程产物放在 out/main，渲染进程放在 out/renderer
+    expressApp.use('/', express.static(path.join(__dirname, '../renderer')));
     expressApp.use('/api', expressProxy('http://127.0.0.1:10754'));
     expressApp.use('/player', (req, res) => {
       this.window.webContents
@@ -191,7 +192,6 @@ class Background {
       webPreferences: {
         webSecurity: false,
         nodeIntegration: true,
-        enableRemoteModule: true,
         contextIsolation: false,
       },
       backgroundColor:
@@ -246,16 +246,15 @@ class Background {
     // hide menu bar on Microsoft Windows and Linux
     this.window.setMenuBarVisibility(false);
 
-    if (process.env.WEBPACK_DEV_SERVER_URL) {
+    if (process.env.ELECTRON_RENDERER_URL) {
       // Load the url of the dev server if in development mode
       this.window.loadURL(
         showLibraryDefault
-          ? `${process.env.WEBPACK_DEV_SERVER_URL}/#/library`
-          : process.env.WEBPACK_DEV_SERVER_URL
+          ? `${process.env.ELECTRON_RENDERER_URL}/#/library`
+          : process.env.ELECTRON_RENDERER_URL
       );
       if (!process.env.IS_TEST) this.window.webContents.openDevTools();
     } else {
-      createProtocol('app');
       this.window.loadURL(
         showLibraryDefault
           ? 'http://localhost:27232/#/library'
@@ -355,7 +354,6 @@ class Background {
           webPreferences: {
             webSecurity: false,
             nodeIntegration: true,
-            enableRemoteModule: true,
             contextIsolation: false,
           },
         });

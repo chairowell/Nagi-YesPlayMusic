@@ -5,6 +5,9 @@
   "description": "A third party music player for Netease Music",
   "author": "qier222<qier222@outlook.com>",
   "scripts": {
+    "dev": "electron-vite dev --watch",
+    "build:renderer": "vite build",
+    "build:electron": "electron-vite build",
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
@@ -16,12 +19,12 @@
     "electron:serve": "vue-cli-service electron:serve",
     "electron:buildicon": "electron-icon-builder --input=./build/icons/icon.png --output=build --flatten",
     "electron:publish": "vue-cli-service electron:build -mwl -p always",
-    "postinstall": "electron-builder install-app-deps",
-    "postuninstall": "electron-builder install-app-deps",
+    "postinstall": "npm_execpath= electron-builder install-app-deps",
+    "postuninstall": "npm_execpath= electron-builder install-app-deps",
     "prettier": "npx prettier --write ./src",
     "netease_api:run": "npx @neteaseapireborn/api"
   },
-  "main": "background.js",
+  "main": "out/main/background.js",
   "engines": {
     "node": "14 || 16"
   },
@@ -37,7 +40,7 @@
     "dayjs": "^1.8.36",
     "dexie": "^3.0.3",
     "discord-rich-presence": "^0.0.8",
-    "electron": "^13.6.7",
+    "electron": "^43",
     "electron-builder": "^23.0.0",
     "electron-context-menu": "^3.1.2",
     "electron-debug": "^3.1.0",
@@ -80,12 +83,14 @@
   },
   "devDependencies": {
     "@types/node": "^17.0.0",
+    "@vitejs/plugin-vue2": "^2.3.4",
     "@vue/cli-plugin-babel": "~4.5.0",
     "@vue/cli-plugin-eslint": "~4.5.0",
     "@vue/cli-plugin-pwa": "~4.5.0",
     "@vue/cli-plugin-vuex": "~4.5.0",
     "@vue/cli-service": "~4.5.0",
     "babel-eslint": "^10.1.0",
+    "electron-vite": "^5.0.0",
     "eslint": "^6.7.2",
     "eslint-config-prettier": "^8.1.0",
     "eslint-plugin-prettier": "^3.3.1",
@@ -94,6 +99,8 @@
     "prettier": "2.5.1",
     "sass": "^1.26.11",
     "sass-loader": "^10.0.2",
+    "vite": "^7",
+    "vite-plugin-svg-icons": "^2.0.1",
     "vue-cli-plugin-electron-builder": "~2.1.1",
     "vue-template-compiler": "^2.6.11"
   },
