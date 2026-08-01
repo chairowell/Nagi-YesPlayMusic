@@ -8,26 +8,20 @@
     "dev": "electron-vite dev --watch",
     "build:renderer": "vite build",
     "build:electron": "electron-vite build",
-    "serve": "vue-cli-service serve",
-    "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
-    "electron:build": "vue-cli-service electron:build -p never",
-    "electron:build-all": "vue-cli-service electron:build -p never -mwl",
-    "electron:build-mac": "vue-cli-service electron:build -p never -m",
-    "electron:build-win": "vue-cli-service electron:build -p never -w",
-    "electron:build-linux": "vue-cli-service electron:build -p never -l",
-    "electron:serve": "vue-cli-service electron:serve",
     "electron:buildicon": "electron-icon-builder --input=./build/icons/icon.png --output=build --flatten",
-    "electron:publish": "vue-cli-service electron:build -mwl -p always",
     "postinstall": "npm_execpath= electron-builder install-app-deps",
     "postuninstall": "npm_execpath= electron-builder install-app-deps",
     "prettier": "npx prettier --write ./src",
     "netease_api:run": "npx @neteaseapireborn/api",
-    "build:app": "electron-vite build && electron-builder --mac -p never"
+    "build:app": "electron-vite build && electron-builder --mac -p never",
+    "build:mac": "electron-vite build && electron-builder --mac -p never",
+    "build:win": "electron-vite build && electron-builder --win -p never",
+    "build:linux": "electron-vite build && electron-builder --linux -p never"
   },
   "main": "out/main/background.js",
   "engines": {
-    "node": "14 || 16"
+    "node": ">=20"
   },
   "dependencies": {
     "@neteaseapireborn/api": "^4.29.7",
@@ -139,5 +133,6 @@
     "hooks": {
       "pre-commit": "npm run prettier"
     }
-  }
+  },
+  "packageManager": "bun@1.3.12"
 }
