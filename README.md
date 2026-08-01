@@ -42,6 +42,19 @@
 开发模式也拉不起窗口。现在是 Vite 7 加 electron-vite 5，Electron 升到 43，
 构建时间从三四分钟降到一秒半，改完代码存盘就生效。Vue 2 的业务代码没有动。
 
+## 安装
+
+到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 dmg，
+Apple Silicon 选 `arm64`，Intel 选 `x64`。
+
+安装包**没有签名**（Apple 开发者账号每年 99 美元，这个项目暂时不值得），
+所以首次打开 macOS 会拦一道。放行方法二选一：
+
+- 打开「系统设置 → 隐私与安全性」，往下翻到被拦截的提示，点「仍要打开」
+- 或者在终端跑一句：`xattr -dr com.apple.quarantine /Applications/YesPlayMusic.app`
+
+自己从源码构建的话没有这个问题，本地产物不带隔离属性。
+
 ## 自己构建
 
 需要 [bun](https://bun.sh)，Node 20 以上（Node 26 实测可用）。
