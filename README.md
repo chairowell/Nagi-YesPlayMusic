@@ -20,17 +20,12 @@
 
 ## 这个版本改了什么
 
-<p align="center">
-  <img src="images/mini-player.png" alt="迷你播放器" width="720">
-</p>
-<p align="center">
-  <img src="images/menubar.png" alt="菜单栏歌词" width="300">
-</p>
-
 **迷你播放器。** 把窗口拖窄（宽度小于 620 或高度小于 340）就会自动变成一条紧凑的播放条，
 左边小封面配歌名歌手，中间是当前这句歌词，右边是播放控制。空间够的时候原文下面还会跟一行
 中文翻译，纯音乐则显示「纯音乐，请欣赏」。拖回大窗口自动还原成完整歌词页。
 原版最小窗口是 1080×720，这里放开到了 300×48。
+
+![迷你播放器](images/mini-player.png)
 
 **窗口置顶。** 迷你条上有个图钉按钮，点一下把窗口钉在最上层，切到别的桌面或者全屏应用上面
 它也会跟着走，适合一边干活一边扫一眼歌词。按钮平时藏着，鼠标移到播放条上才浮现，
@@ -39,6 +34,8 @@
 **macOS 菜单栏歌词。** 菜单栏图标位置直接显示专辑封面，右边跟着当前歌词走。
 文字按显示宽度截断而不是字符数，所以中日文和英文都能显示得比较满。迷你条开着的时候
 菜单栏只留封面，不重复显示一遍歌词；窗口一收起，歌词立刻补回菜单栏。
+
+![菜单栏歌词](images/menubar.png)
 
 **Anon 进度条。** 在原有的彩虹猫之外多加了一种进度条皮肤，设置里可以切换，两者互斥。
 
@@ -110,10 +107,13 @@ bun run build:app      # 出 macOS 安装包
 
 ## 截图
 
-![lyrics][lyrics-screenshot]
-![library-dark][library-dark-screenshot]
-![album][album-screenshot]
-![home-2][home-2-screenshot]
+以下界面来自上游，这个分支没有改动。
+
+![歌词页][lyrics-screenshot]
+
+![音乐库（深色）][library-dark-screenshot]
+
+![专辑][album-screenshot]
 
 ## 开源许可
 
