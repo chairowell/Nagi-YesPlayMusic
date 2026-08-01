@@ -5,6 +5,7 @@
       :class="{
         nyancat: settings.nyancatStyle,
         'nyancat-stop': settings.nyancatStyle && !player.playing,
+        anon: settings.anonStyle,
       }"
       @click.stop
     >

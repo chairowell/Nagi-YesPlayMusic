@@ -105,6 +105,37 @@
   transition: 300ms;
 }
 
+/* anon */
+
+.anon .vue-slider-rail {
+  background-color: rgba(128, 128, 128, 0.18);
+  padding: 2.5px 0px;
+  border-radius: 0;
+}
+
+.anon .vue-slider-process {
+  padding: 0px 1px;
+  top: -2px;
+  border-radius: 0;
+  background: linear-gradient(90deg, #ffc2d4 0%, #ff8fb1 60%, #f76d99 100%);
+}
+
+.anon .vue-slider-dot-handle {
+  background: url('/img/logos/anon.gif');
+  background-size: 24px;
+  width: 24px;
+  height: 24px;
+  /* .player 有 backdrop-filter，超出它上边界的部分会被裁掉，
+     所以整体往下压，让 Anon 坐在进度条上而不是骑在上面 */
+  margin-top: 6px;
+  box-shadow: none;
+  border-radius: 0;
+  box-sizing: border-box;
+  visibility: visible;
+  /* 像素画放大要关掉平滑，不然糊成一团 */
+  image-rendering: pixelated;
+}
+
 /* lyrics */
 .lyrics-page .vue-slider-rail {
   background-color: rgba(128, 128, 128, 0.18);

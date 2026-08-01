@@ -641,6 +641,23 @@
         </div>
       </div>
 
+      <div class="item">
+        <div class="left">
+          <div class="title">🎀 Anon</div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="anon-style"
+              v-model="anonStyle"
+              type="checkbox"
+              name="anon-style"
+            />
+            <label for="anon-style"></label>
+          </div>
+        </div>
+      </div>
+
       <div v-if="isElectron">
         <h3>代理</h3>
         <div class="item">
@@ -811,10 +828,11 @@
 import { mapState, mapActions } from 'vuex';
 import { isLooseLoggedIn, doLogout } from '@/utils/auth';
 import { auth as lastfmAuth } from '@/api/lastfm';
-import { 
-  changeAppearance, 
-  changeThemeColor, 
-  bytesToSize } from '@/utils/common';
+import {
+  changeAppearance,
+  changeThemeColor,
+  bytesToSize,
+} from '@/utils/common';
 import { countDBSize, clearDB } from '@/utils/db';
 import pkg from '../../package.json';
 
@@ -1052,6 +1070,28 @@ export default {
           key: 'nyancatStyle',
           value,
         });
+        // 两种进度条样式只能开一个
+        if (value) {
+          this.$store.commit('updateSettings', {
+            key: 'anonStyle',
+            value: false,
+          });
+        }
+      },
+    },
+    anonStyle: {
+      get() {
+        if (this.settings.anonStyle === undefined) return false;
+        return this.settings.anonStyle;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', { key: 'anonStyle', value });
+        if (value) {
+          this.$store.commit('updateSettings', {
+            key: 'nyancatStyle',
+            value: false,
+          });
+        }
       },
     },
     automaticallyCacheSongs: {
