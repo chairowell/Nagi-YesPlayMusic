@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 打 tag 时要建 Release，默认的 GITHUB_TOKEN 在组织仓库里是只读的
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
