@@ -47,8 +47,8 @@
 到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 dmg，
 Apple Silicon 选 `arm64`，Intel 选 `x64`。
 
-安装包**没有签名**（Apple 开发者账号每年 99 美元，这个项目暂时不值得），
-所以首次打开 macOS 会拦一道。放行方法二选一：
+安装包**没有签名**。这是有意的：第三方网易云客户端本身处在灰色地带，
+没必要把开发者身份绑上去。所以首次打开 macOS 会拦一道，放行方法二选一：
 
 - 打开「系统设置 → 隐私与安全性」，往下翻到被拦截的提示，点「仍要打开」
 - 或者在终端跑一句：`xattr -dr com.apple.quarantine /Applications/YesPlayMusic.app`
@@ -60,10 +60,14 @@ Apple Silicon 选 `arm64`，Intel 选 `x64`。
 需要 [bun](https://bun.sh)，Node 20 以上（Node 26 实测可用）。
 
 ```bash
+cp .env.example .env   # 必须，缺了它前端拿不到 API 地址，界面会全空
 bun install
-bun run dev        # 开发，主进程和渲染进程都热重载
-bun run build:app  # 出 macOS 安装包
+bun run dev            # 开发，主进程和渲染进程都热重载
+bun run build:app      # 出 macOS 安装包
 ```
+
+`.env` 不进版本库，但 `.env.example` 里已经是一份可以直接用的完整配置，
+不需要自己去申请任何密钥。
 
 产物在 `dist_electron/`，把 `mac-arm64/YesPlayMusic.app` 拷进 `/Applications` 就能用。
 安装包没有签名，首次打开需要在「系统设置 → 隐私与安全性」里点一次「仍要打开」。
