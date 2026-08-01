@@ -52,9 +52,20 @@ bun run build:app  # 出 macOS 安装包
 ```
 
 产物在 `dist_electron/`，把 `mac-arm64/YesPlayMusic.app` 拷进 `/Applications` 就能用。
-目前只配了 Apple Silicon 的 dmg，需要 Intel 或别的平台请改 `electron-builder.yml`。
+安装包没有签名，首次打开需要在「系统设置 → 隐私与安全性」里点一次「仍要打开」。
 
 开发细节和踩过的坑都记在 [CLAUDE.md](CLAUDE.md) 里。
+
+## 关于 Windows 和 Linux
+
+这个版本只在 macOS 上开发和测试，CI 也只跑 macOS。
+
+上游的 Windows 和 Linux 代码都还在，没有删，`electron-builder.yml` 里也配好了对应的
+打包目标，`bun run build:win` 和 `bun run build:linux` 本地就能跑。只是没人在那两个
+平台上实际用过，所以不敢说支持。
+
+如果你在用 Windows 或 Linux，欢迎提 PR：跑通了就把 `.github/workflows/build.yaml`
+里对应的 job 加回来，这个仓库很乐意把它们变成正式支持的平台。
 
 ## 致谢
 
