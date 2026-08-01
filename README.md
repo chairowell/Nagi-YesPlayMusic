@@ -47,8 +47,7 @@
 到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 dmg，
 Apple Silicon 选 `arm64`，Intel 选 `x64`。
 
-安装包**没有签名**。这是有意的：第三方网易云客户端本身处在灰色地带，
-没必要把开发者身份绑上去。所以首次打开 macOS 会拦一道，放行方法二选一：
+安装包没有签名，首次打开时 macOS 会拦一道。放行方法二选一：
 
 - 打开「系统设置 → 隐私与安全性」，往下翻到被拦截的提示，点「仍要打开」
 - 或者在终端跑一句：`xattr -dr com.apple.quarantine /Applications/YesPlayMusic.app`
