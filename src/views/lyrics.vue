@@ -30,7 +30,57 @@
         :style="{ background }"
       ></div>
 
-      <div class="left-side">
+      <!-- 迷你模式：小封面 + 一行歌词。窗口拖窄时自动切换 -->
+      <div
+        v-if="isMini"
+        class="mini-player"
+        @mouseenter="setWindowButtons(true)"
+        @mouseleave="setWindowButtons(false)"
+      >
+        <img class="mini-cover" :src="imageUrl" loading="lazy" />
+        <div class="mini-info">
+          <div class="mini-title" :title="currentTrack.name">
+            {{ currentTrack.name }}
+          </div>
+          <div class="mini-artist">{{ artist.name }}</div>
+        </div>
+        <div class="mini-lyric" :title="displayLyric">
+          <div class="mini-lyric-origin" :style="lyricFontSize">
+            {{ displayLyric }}
+          </div>
+          <div v-if="showMiniTranslation" class="mini-lyric-translation">
+            {{ currentLyricTranslation }}
+          </div>
+        </div>
+        <div class="mini-controls">
+          <button-icon
+            class="mini-pin"
+            :class="{ active: isAlwaysOnTop }"
+            :title="isAlwaysOnTop ? '取消置顶' : '窗口置顶'"
+            @click.native="toggleAlwaysOnTop"
+          >
+            <svg-icon icon-class="pin" />
+          </button-icon>
+          <button-icon @click.native="playPrevTrack">
+            <svg-icon icon-class="previous" />
+          </button-icon>
+          <button-icon class="mini-play" @click.native="playOrPause">
+            <svg-icon :icon-class="player.playing ? 'pause' : 'play'" />
+          </button-icon>
+          <button-icon @click.native="playNextTrack">
+            <svg-icon icon-class="next" />
+          </button-icon>
+        </div>
+        <div
+          class="mini-progress"
+          :class="{ anon: settings.anonStyle }"
+          :style="{ width: miniProgressPercent + '%' }"
+        >
+          <span v-if="settings.anonStyle" class="mini-progress-rider"></span>
+        </div>
+      </div>
+
+      <div v-if="!isMini" class="left-side">
         <div>
           <div v-if="settings.showLyricsTime" class="date">
             {{ date }}
@@ -227,7 +277,7 @@
           </div>
         </div>
       </div>
-      <div class="right-side">
+      <div v-if="!isMini" class="right-side">
         <transition name="slide-fade">
           <div
             v-show="!noLyric"
@@ -283,12 +333,17 @@
           </div>
         </transition>
       </div>
-      <div class="close-button" @click="toggleLyrics">
+      <div v-if="!isMini" class="close-button" @click="toggleLyrics">
         <button>
           <svg-icon icon-class="arrow-down" />
         </button>
       </div>
-      <div class="close-button" style="left: 24px" @click="fullscreen">
+      <div
+        v-if="!isMini"
+        class="close-button"
+        style="left: 24px"
+        @click="fullscreen"
+      >
         <button>
           <svg-icon v-if="isFullscreen" icon-class="fullscreen-exit" />
           <svg-icon v-else icon-class="fullscreen" />
@@ -335,10 +390,41 @@ export default {
       date: this.formatTime(new Date()),
       isFullscreen: !!document.fullscreenElement,
       rightClickLyric: null,
+      isMini: false,
+      miniTall: false,
+      isAlwaysOnTop: false,
     };
   },
   computed: {
     ...mapState(['player', 'settings', 'showLyrics']),
+    // 迷你模式下只显示当前这一行歌词
+    currentLyric() {
+      const line = this.lyricToShow[this.highlightLyricIndex];
+      if (!line) return '';
+      return Array.isArray(line.contents) ? line.contents[0] : line.contents;
+    },
+    // 纯音乐没有歌词，用网易云那套标准引导词占位
+    displayLyric() {
+      if (this.currentLyric) return this.currentLyric;
+      return this.noLyric ? '纯音乐，请欣赏' : '';
+    },
+    currentLyricTranslation() {
+      const line = this.lyricToShow[this.highlightLyricIndex];
+      return Array.isArray(line?.contents) ? line.contents[1] : '';
+    },
+    // 窗口够高才塞得下两行，太扁就只留原文
+    showMiniTranslation() {
+      return (
+        this.settings.showLyricsTranslation &&
+        this.miniTall &&
+        !!this.currentLyricTranslation
+      );
+    },
+    miniProgressPercent() {
+      const duration = this.player.currentTrackDuration;
+      if (!duration) return 0;
+      return Math.min(100, (this.player.progress / duration) * 100);
+    },
     currentTrack() {
       return this.player.currentTrack;
     },
@@ -450,6 +536,11 @@ export default {
     currentTrack() {
       this.getLyric();
       this.getCoverColor();
+      this.pushToTray();
+    },
+    // 歌词逐行推给菜单栏
+    displayLyric() {
+      this.pushToTray();
     },
     showLyrics(show) {
       if (show) {
@@ -474,11 +565,26 @@ export default {
     document.addEventListener('fullscreenchange', () => {
       this.isFullscreen = !!document.fullscreenElement;
     });
+    // showLyrics 的 watcher 只在「切换」时才启动计时器；
+    // 组件被重建（HMR、或初始就处于歌词页）时不会触发，这里补上
+    if (this.showLyrics) this.setLyricsInterval();
+    this.checkMini();
+    window.addEventListener('resize', this.checkMini);
+    if (process.env.IS_ELECTRON) {
+      window
+        .require('electron')
+        .ipcRenderer.invoke('isAlwaysOnTop')
+        .then(v => {
+          this.isAlwaysOnTop = v;
+        });
+    }
   },
   beforeDestroy: function () {
     if (this.timer) {
       clearInterval(this.timer);
     }
+    window.removeEventListener('resize', this.checkMini);
+    this.setWindowButtons(true); // 离开歌词页别把红绿灯留在隐藏状态
   },
   destroyed() {
     clearInterval(this.lyricsInterval);
@@ -486,6 +592,42 @@ export default {
   methods: {
     ...mapMutations(['toggleLyrics', 'updateModal']),
     ...mapActions(['likeATrack']),
+    // 窗口拖到这个尺寸以下就切成迷你播放器
+    checkMini() {
+      const next = window.innerWidth < 620 || window.innerHeight < 340;
+      // 28px 原文 + 14px 译文 + 间距 ≈ 53px，留点余量到 64 就够放两行
+      this.miniTall = window.innerHeight >= 64;
+      if (next === this.isMini) return;
+      this.isMini = next;
+      // 进迷你模式就把红绿灯收起来，退出时恢复
+      this.setWindowButtons(!next);
+      // 切换迷你模式会改变菜单栏该不该显示歌词
+      this.pushToTray();
+    },
+    pushToTray() {
+      if (!process.env.IS_ELECTRON) return;
+      window.require('electron').ipcRenderer.send('updateTrayNowPlaying', {
+        // 要不要在菜单栏显示文字由主进程定：
+        // 它还要考虑窗口是不是被隐藏了，这边看不到
+        title: this.displayLyric || this.currentTrack.name,
+        isMini: this.isMini,
+        // 菜单栏只有 18px，拉小图省流量
+        coverUrl: this.currentTrack?.al?.picUrl
+          ? `${this.currentTrack.al.picUrl}?param=64y64`
+          : '',
+      });
+    },
+    setWindowButtons(visible) {
+      if (!process.env.IS_ELECTRON) return;
+      window
+        .require('electron')
+        .ipcRenderer.send('setWindowButtonVisibility', visible);
+    },
+    async toggleAlwaysOnTop() {
+      if (!process.env.IS_ELECTRON) return;
+      const { ipcRenderer } = window.require('electron');
+      this.isAlwaysOnTop = await ipcRenderer.invoke('toggleAlwaysOnTop');
+    },
     initDate() {
       var _this = this;
       clearInterval(this.timer);
@@ -697,6 +839,155 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+// ===== 迷你播放器：小封面 + 一行歌词 =====
+.mini-player {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px 0 76px; // 左边留出红绿灯的位置
+  -webkit-app-region: drag;
+  overflow: hidden;
+
+  // 跟着窗口高度缩，压到最扁也不会溢出
+  .mini-cover {
+    height: min(58px, calc(100% - 8px));
+    width: auto;
+    aspect-ratio: 1;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  }
+
+  // 固定宽度，不然长歌名会一路挤占歌词的空间
+  .mini-info {
+    flex: 0 0 168px;
+    min-width: 0;
+  }
+
+  .mini-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mini-artist {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--color-text);
+    opacity: 0.58;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // 歌词放右边，字号沿用设置里的 lyricFontSize（和大视图一致）
+  .mini-lyric {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+    color: var(--color-text);
+
+    .mini-lyric-origin {
+      font-weight: 600;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mini-lyric-translation {
+      margin-top: 2px;
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.2;
+      opacity: 0.62;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .mini-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    -webkit-app-region: no-drag;
+
+    .svg-icon {
+      width: 16px;
+      height: 16px;
+      color: var(--color-text);
+    }
+
+    .mini-play .svg-icon {
+      width: 20px;
+      height: 20px;
+    }
+
+    // 任何时候都藏着，只有鼠标移到播放条上才浮现（置顶开着也一样）
+    .mini-pin {
+      margin-right: 6px;
+      opacity: 0;
+      transition: opacity 0.18s;
+
+      .svg-icon {
+        width: 14px;
+        height: 14px;
+      }
+
+      // 只在浮现出来的时候用颜色区分开关状态
+      &.active {
+        color: var(--color-primary);
+      }
+    }
+  }
+
+  &:hover .mini-controls .mini-pin {
+    opacity: 0.5;
+
+    &:hover,
+    &.active {
+      opacity: 1;
+    }
+  }
+
+  .mini-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    background-color: var(--color-primary);
+    transition: width 0.4s linear;
+
+    &.anon {
+      height: 3px;
+      background: linear-gradient(90deg, #ffc2d4 0%, #ff8fb1 60%, #f76d99 100%);
+    }
+
+    // Anon 骑在进度末端，往上站在线条上
+    .mini-progress-rider {
+      position: absolute;
+      right: -11px;
+      bottom: 1px;
+      width: 22px;
+      height: 22px;
+      background: url('/img/logos/anon.gif') center / 22px no-repeat;
+      image-rendering: pixelated;
+      pointer-events: none;
+    }
+  }
+}
+
 .lyrics-page {
   position: fixed;
   top: 0;

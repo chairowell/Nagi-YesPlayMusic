@@ -225,6 +225,25 @@ export function initIpcMain(win, store, trayEventEmitter) {
     win.isMaximized() ? win.unmaximize() : win.maximize();
   });
 
+  // 迷你播放器的「钉在最上层」开关
+  ipcMain.handle('toggleAlwaysOnTop', () => {
+    const next = !win.isAlwaysOnTop();
+    // 'floating' 这一层能盖住普通窗口，但不会挡住系统菜单栏
+    win.setAlwaysOnTop(next, 'floating');
+    // 切到别的桌面/全屏空间时也跟着走
+    win.setVisibleOnAllWorkspaces(next, { visibleOnFullScreen: true });
+    store.set('window.alwaysOnTop', next); // 记住，下次启动还原
+    return next;
+  });
+
+  ipcMain.handle('isAlwaysOnTop', () => win.isAlwaysOnTop());
+
+  // 迷你模式下默认藏起红绿灯，鼠标悬浮时再显示（仅 macOS 支持）
+  ipcMain.on('setWindowButtonVisibility', (e, visible) => {
+    if (process.platform !== 'darwin') return;
+    win.setWindowButtonVisibility(visible);
+  });
+
   ipcMain.on('settings', (event, options) => {
     store.set('settings', options);
     if (options.enableGlobalShortcut) {
@@ -321,6 +340,10 @@ export function initIpcMain(win, store, trayEventEmitter) {
     });
     ipcMain.on('updateTrayIcon', () => {
       trayEventEmitter.emit('updateIcon');
+    });
+    // macOS 菜单栏：封面 + 歌名/歌词
+    ipcMain.on('updateTrayNowPlaying', (_, payload) => {
+      trayEventEmitter.emit('updateNowPlaying', payload);
     });
   }
 }

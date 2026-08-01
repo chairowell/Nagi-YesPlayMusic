@@ -180,8 +180,9 @@ class Background {
     const options = {
       width: this.store.get('window.width') || 1440,
       height: this.store.get('window.height') || 840,
-      minWidth: 1080,
-      minHeight: 720,
+      // 原来是 1080x720，放开好试迷你播放器形态
+      minWidth: 300,
+      minHeight: 48,
       titleBarStyle: 'hiddenInset',
       frame: !(
         isWindows ||
@@ -245,6 +246,14 @@ class Background {
 
     // hide menu bar on Microsoft Windows and Linux
     this.window.setMenuBarVisibility(false);
+
+    // 还原上次的置顶状态
+    if (this.store.get('window.alwaysOnTop')) {
+      this.window.setAlwaysOnTop(true, 'floating');
+      this.window.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+      });
+    }
 
     if (process.env.ELECTRON_RENDERER_URL) {
       // Load the url of the dev server if in development mode

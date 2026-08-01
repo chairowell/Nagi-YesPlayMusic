@@ -51,6 +51,7 @@ export default {
     return {
       isElectron: process.env.IS_ELECTRON, // true || undefined
       userSelectNone: false,
+      autoOpenedLyrics: false, // 迷你模式是我们自动打开的，拖回大窗口要还原
     };
   },
   computed: {
@@ -79,9 +80,25 @@ export default {
   created() {
     if (this.isElectron) ipcRenderer(this);
     window.addEventListener('keydown', this.handleKeydown);
+    window.addEventListener('resize', this.handleMiniResize);
+    this.handleMiniResize();
     this.fetchData();
   },
+  beforeDestroy() {
+    window.removeEventListener('resize', this.handleMiniResize);
+  },
   methods: {
+    // 窗口拖窄时自动切到歌词页（里面是迷你播放器布局），拖回来再收起
+    handleMiniResize() {
+      const isMini = window.innerWidth < 620 || window.innerHeight < 340;
+      if (isMini && !this.showLyrics) {
+        this.$store.commit('toggleLyrics');
+        this.autoOpenedLyrics = true;
+      } else if (!isMini && this.showLyrics && this.autoOpenedLyrics) {
+        this.$store.commit('toggleLyrics');
+        this.autoOpenedLyrics = false;
+      }
+    },
     handleKeydown(e) {
       if (e.code === 'Space') {
         if (e.target.tagName === 'INPUT') return false;
