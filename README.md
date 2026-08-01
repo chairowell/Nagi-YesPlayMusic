@@ -18,6 +18,9 @@
 如果你是来找原版的，请直接去[上游仓库](https://github.com/qier222/YesPlayMusic)，
 那边有完整的跨平台安装包和文档。
 
+**欢迎提 Issue 和 PR。** 尤其是 Windows 和 Linux —— 打包配置都是好的，只是这边没有
+设备验证，所以暂时没开 CI，[详见下面](#关于-windows-和-linux)。
+
 ## 这个版本改了什么
 
 **迷你播放器。** 把窗口拖窄（宽度小于 620 或高度小于 340）就会自动变成一条紧凑的播放条，
@@ -84,8 +87,8 @@ bun run build:app      # 出 macOS 安装包
 打包目标，`bun run build:win` 和 `bun run build:linux` 本地就能跑。只是没人在那两个
 平台上实际用过，所以不敢说支持。
 
-如果你在用 Windows 或 Linux，欢迎提 PR：跑通了就把 `.github/workflows/build.yaml`
-里对应的 job 加回来，这个仓库很乐意把它们变成正式支持的平台。
+如果你在用 Windows 或 Linux，跑通之后把 `.github/workflows/build.yaml` 里对应的
+job 取消注释就行（已经写好放在那儿了），这个仓库很乐意把它们变成正式支持的平台。
 
 ## 致谢
 
