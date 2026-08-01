@@ -11,8 +11,8 @@
 
 ## 关于这个仓库
 
-这是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 分出来的个人版本，
-不再跟随上游发版，只按自己的使用习惯打磨 macOS 上的体验。原项目的功能和界面基本保留，
+这是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 分出来独立维护的分支，
+不再跟随上游发版，专注打磨 macOS 上的使用体验。原项目的功能和界面基本保留，
 下面这些是这个版本额外做的事。
 
 如果你是来找原版的，请直接去[上游仓库](https://github.com/qier222/YesPlayMusic)，
@@ -73,7 +73,6 @@ bun run build:app      # 出 macOS 安装包
 不需要自己去申请任何密钥。
 
 产物在 `dist_electron/`，把 `mac-arm64/YesPlayMusic.app` 拷进 `/Applications` 就能用。
-安装包没有签名，首次打开需要在「系统设置 → 隐私与安全性」里点一次「仍要打开」。
 
 开发细节和踩过的坑都记在 [CLAUDE.md](CLAUDE.md) 里。
 
@@ -93,7 +92,7 @@ bun run build:app      # 出 macOS 安装包
 这个项目的一切都建立在 [qier222](https://github.com/qier222) 和
 [YesPlayMusic 所有贡献者](https://github.com/qier222/YesPlayMusic/graphs/contributors)
 的工作之上。播放器内核、界面设计、歌词、音乐库、网易云 API 的对接，这些真正困难的部分
-都是他们写好的，这个 fork 只是在上面加了几个自己想要的功能。
+都是他们写好的，这个分支只是在上面加了几个自己想要的功能。
 
 同样感谢这些被项目依赖的开源工作：
 
@@ -124,6 +123,5 @@ bun run build:app      # 出 macOS 安装包
 <!-- MARKDOWN LINKS & IMAGES -->
 
 [album-screenshot]: images/album.png
-[home-2-screenshot]: images/home-2.png
 [lyrics-screenshot]: images/lyrics.png
 [library-dark-screenshot]: images/library-dark.png
