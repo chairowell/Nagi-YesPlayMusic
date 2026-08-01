@@ -686,6 +686,10 @@ export default {
     },
     getLyric() {
       if (!this.currentTrack.id) return;
+      // 记下这次请求对应的歌曲。网络慢的时候前一首的响应可能后到，
+      // 不加这个判断就会把已经切过去的新歌的歌词覆盖掉。
+      const requestedId = this.currentTrack.id;
+      const isStale = () => this.currentTrack.id !== requestedId;
       if (
         this.currentTrack.pc !== null &&
         this.currentTrack.cd === null &&
@@ -693,9 +697,10 @@ export default {
       ) {
         //云盘未设置关联的歌曲获取其内置歌词
         return getCloudLyric(
-          this.currentTrack.id,
+          requestedId,
           this.$store.state.data.user?.userId
         ).then(data => {
+          if (isStale()) return false;
           this.tlyric = [];
           this.romalyric = [];
           this.lyric = data?.lrc?.length > 0 ? parseLyric(data.lrc) : [];
@@ -703,7 +708,8 @@ export default {
           return true;
         });
       }
-      return getLyric(this.currentTrack.id).then(data => {
+      return getLyric(requestedId).then(data => {
+        if (isStale()) return false;
         if (!data?.lrc?.lyric) {
           this.lyric = [];
           this.tlyric = [];
