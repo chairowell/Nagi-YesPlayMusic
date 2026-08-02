@@ -74,12 +74,12 @@ test('缺少 Apple 发版密钥时在构建前立即失败', () => {
 test('tag 和三个应用版本字段必须完全一致', () => {
   expect(
     validateTauriVersions({
-      packageVersion: '0.6.0-beta.1',
-      tauriVersion: '0.6.0-beta.1',
-      cargoVersion: '0.6.0-beta.1',
-      tag: 'v0.6.0-beta.1',
+      packageVersion: '0.6.0',
+      tauriVersion: '0.6.0',
+      cargoVersion: '0.6.0',
+      tag: 'v0.6.0',
     })
-  ).toBe('0.6.0-beta.1');
+  ).toBe('0.6.0');
   expect(() =>
     validateTauriVersions({
       packageVersion: '0.6.0',
@@ -90,8 +90,8 @@ test('tag 和三个应用版本字段必须完全一致', () => {
   ).toThrow('版本号不一致');
 });
 
-test('本轮 Tauri 重构使用独立 beta 版本线', async () => {
-  expect(await verifyTauriVersions()).toBe('0.6.0-beta.1');
+test('本轮 Tauri 重构发布为稳定版', async () => {
+  expect(await verifyTauriVersions()).toBe('0.6.0');
 });
 
 test('只有版本 tag 获得写权限并创建草稿 release', () => {
@@ -101,7 +101,5 @@ test('只有版本 tag 获得写权限并创建草稿 release', () => {
 });
 
 test('DMG 文件名明确标记版本和 Apple Silicon 架构', () => {
-  expect(tauriDmgName('0.6.0-beta.1')).toBe(
-    'YesPlayMusic_0.6.0-beta.1_aarch64.dmg'
-  );
+  expect(tauriDmgName('0.6.0')).toBe('YesPlayMusic_0.6.0_aarch64.dmg');
 });
