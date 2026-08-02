@@ -840,6 +840,10 @@ import {
 } from '@/utils/db';
 import { normalizeCacheLimit } from '@/utils/cachePolicy';
 import { stopInterval } from '@/utils/mediaLifecycle';
+import {
+  isLinux as platformIsLinux,
+  isMac as platformIsMac,
+} from '@/utils/platform';
 import pkg from '../../package.json';
 
 const electron =
@@ -878,10 +882,10 @@ export default {
       return process.env.IS_ELECTRON;
     },
     isMac() {
-      return /macintosh|mac os x/i.test(navigator.userAgent);
+      return platformIsMac;
     },
     isLinux() {
-      return process.platform === 'linux';
+      return platformIsLinux;
     },
     version() {
       return pkg.version;
@@ -1504,7 +1508,7 @@ export default {
       } else if (this.settings.lang === 'zh-TW') {
         shortcut = shortcut.replace('Space', '空白鍵');
       }
-      if (process.platform === 'darwin') {
+      if (platformIsMac) {
         return shortcut
           .replace('CommandOrControl', '⌘')
           .replace('Command', '⌘')
