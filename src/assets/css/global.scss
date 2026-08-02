@@ -74,9 +74,18 @@ body {
 }
 
 html {
+  overflow-x: hidden;
   overflow-y: var(--html-overflow-y);
   min-width: 768px;
   overscroll-behavior: none;
+}
+
+// 旧版页面拒绝缩到 768px 以下；迷你播放器已经支持 300px 窗口，
+// 继续保留这个限制会让 WKWebView 生成横向原生滚动条。
+@media (max-width: 767px) {
+  html {
+    min-width: 0;
+  }
 }
 
 select,
