@@ -839,6 +839,7 @@ import {
   trimTrackSourceCache,
 } from '@/utils/db';
 import { normalizeCacheLimit } from '@/utils/cachePolicy';
+import { stopInterval } from '@/utils/mediaLifecycle';
 import pkg from '../../package.json';
 
 const electron =
@@ -868,6 +869,7 @@ export default {
         recording: false,
       },
       recordedShortcut: [],
+      lastfmChecker: null,
     };
   },
   computed: {
@@ -1406,6 +1408,9 @@ export default {
     this.countDBSize('tracks');
     if (process.env.IS_ELECTRON) this.getAllOutputDevices();
   },
+  beforeDestroy() {
+    this.stopLastfmChecker();
+  },
   methods: {
     ...mapActions(['showToast']),
     getAllOutputDevices() {
@@ -1451,18 +1456,24 @@ export default {
       });
     },
     lastfmConnect() {
+      this.stopLastfmChecker();
       lastfmAuth();
-      let lastfmChecker = setInterval(() => {
+      this.lastfmChecker = setInterval(() => {
         const session = localStorage.getItem('lastfm');
         if (session) {
           this.$store.commit('updateLastfm', JSON.parse(session));
-          clearInterval(lastfmChecker);
+          this.stopLastfmChecker();
         }
       }, 1000);
     },
     lastfmDisconnect() {
+      this.stopLastfmChecker();
       localStorage.removeItem('lastfm');
       this.$store.commit('updateLastfm', {});
+    },
+    stopLastfmChecker() {
+      stopInterval(this.lastfmChecker);
+      this.lastfmChecker = null;
     },
     sendProxyConfig() {
       if (this.proxyProtocol === 'noProxy') return;

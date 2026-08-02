@@ -4,3 +4,7 @@
 export function destroyMediaPlayer(player) {
   player?.destroy?.();
 }
+
+export function stopInterval(timer, clear = clearInterval) {
+  if (timer !== null && timer !== undefined) clear(timer);
+}
