@@ -11,10 +11,18 @@ describe('性能采样参数', () => {
     expect(() => parseMetricsArgs([])).toThrow('必须通过 --pid 指定根进程');
     expect(parseMetricsArgs(['--pid', '42', '--duration', '5'])).toEqual({
       pid: 42,
+      includePids: [],
       durationSeconds: 5,
       intervalSeconds: 1,
       label: 'unnamed',
     });
+  });
+
+  test('可显式纳入由 launchd 托管的 WebKit XPC 进程', () => {
+    expect(
+      parseMetricsArgs(['--pid', '42', '--include-pids', '51,52'])
+        .includePids
+    ).toEqual([51, 52]);
   });
 });
 
@@ -29,6 +37,11 @@ describe('进程树性能采样', () => {
   test('递归收集子进程，不混入无关应用', () => {
     const tree = collectProcessTree(parseProcessTable(table), 10);
     expect(tree.map(process => process.pid)).toEqual([10, 11, 12]);
+  });
+
+  test('显式 WebKit PID 及其子进程会加入统计', () => {
+    const tree = collectProcessTree(parseProcessTable(table), 10, [99]);
+    expect(tree.map(process => process.pid)).toEqual([10, 11, 12, 99]);
   });
 
   test('统一输出均值、P95 和峰值', () => {

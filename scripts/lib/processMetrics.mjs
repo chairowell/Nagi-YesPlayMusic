@@ -9,6 +9,7 @@ function parsePositiveNumber(value, flag) {
 export function parseMetricsArgs(args) {
   const options = {
     pid: null,
+    includePids: [],
     durationSeconds: 60,
     intervalSeconds: 1,
     label: 'unnamed',
@@ -26,6 +27,15 @@ export function parseMetricsArgs(args) {
         break;
       case '--duration':
         options.durationSeconds = parsePositiveNumber(value, flag);
+        break;
+      case '--include-pids':
+        options.includePids = value.split(',').map(pid => {
+          const parsed = parsePositiveNumber(pid, flag);
+          if (!Number.isInteger(parsed)) {
+            throw new Error(`${flag} 必须是整数列表`);
+          }
+          return parsed;
+        });
         break;
       case '--interval':
         options.intervalSeconds = parsePositiveNumber(value, flag);
@@ -60,8 +70,8 @@ export function parseProcessTable(text) {
     .filter(Boolean);
 }
 
-export function collectProcessTree(processes, rootPid) {
-  const selectedPids = new Set([rootPid]);
+export function collectProcessTree(processes, rootPid, includePids = []) {
+  const selectedPids = new Set([rootPid, ...includePids]);
   let changed = true;
 
   while (changed) {

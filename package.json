@@ -14,6 +14,7 @@
     "build:tauri": "tauri build --target aarch64-apple-darwin && bun run sign:tauri:local",
     "sign:tauri:local": "bun scripts/sign-tauri-local.mjs",
     "smoke:tauri": "bun scripts/smoke-tauri-local.mjs",
+    "smoke:tauri:core": "bun scripts/smoke-tauri-local.mjs --core-only",
     "build:sidecar": "mkdir -p src-tauri/binaries && bun build src/sidecar.js --compile --target=bun-darwin-arm64 --outfile src-tauri/binaries/yesplaymusic-sidecar-aarch64-apple-darwin",
     "test": "bun test",
     "build:electron": "electron-vite build",

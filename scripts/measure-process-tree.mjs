@@ -9,7 +9,7 @@ import {
 const sleep = milliseconds =>
   new Promise(resolve => setTimeout(resolve, milliseconds));
 
-function takeSample(rootPid) {
+function takeSample(options) {
   const result = Bun.spawnSync([
     'ps',
     '-axo',
@@ -20,9 +20,13 @@ function takeSample(rootPid) {
   }
 
   const processes = parseProcessTable(new TextDecoder().decode(result.stdout));
-  const tree = collectProcessTree(processes, rootPid);
-  if (!tree.some(process => process.pid === rootPid)) {
-    throw new Error(`根进程 ${rootPid} 不存在`);
+  const tree = collectProcessTree(
+    processes,
+    options.pid,
+    options.includePids
+  );
+  if (!tree.some(process => process.pid === options.pid)) {
+    throw new Error(`根进程 ${options.pid} 不存在`);
   }
 
   return {
@@ -46,7 +50,7 @@ async function main() {
   const samples = [];
 
   for (let index = 0; index < sampleCount; index += 1) {
-    samples.push(takeSample(options.pid));
+    samples.push(takeSample(options));
     if (index + 1 < sampleCount) {
       await sleep(options.intervalSeconds * 1000);
     }
@@ -65,6 +69,7 @@ async function main() {
       {
         label: options.label,
         rootPid: options.pid,
+        includedPids: options.includePids,
         durationSeconds: options.durationSeconds,
         intervalSeconds: options.intervalSeconds,
         ...summarizeSamples(samples),

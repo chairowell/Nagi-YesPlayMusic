@@ -11,6 +11,7 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    webview::PageLoadEvent,
     AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
 };
@@ -303,6 +304,15 @@ where
     args.into_iter().any(|arg| arg.as_ref() == "--smoke-test")
 }
 
+fn is_webview_smoke_test<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref() == "--webview-smoke-test")
+}
+
 fn wait_for_port(port: u16, timeout: Duration) -> Result<(), String> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let deadline = Instant::now() + timeout;
@@ -364,7 +374,10 @@ fn start_sidecar(app: &tauri::App) -> Result<CommandChild, Box<dyn std::error::E
     Ok(child)
 }
 
-fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+fn create_main_window(
+    app: &tauri::App,
+    show_after_creation: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let port = if cfg!(debug_assertions) {
         DEV_WEB_PORT
     } else {
@@ -376,6 +389,11 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
         .inner_size(1_440.0, 840.0)
         .min_inner_size(300.0, 48.0)
         .visible(false)
+        .on_page_load(|_, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                println!("[tauri] webview-ready: {}", payload.url());
+            }
+        })
         .build()?;
 
     let window_for_close = window.clone();
@@ -386,7 +404,9 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
         }
     });
 
-    window.show()?;
+    if show_after_creation {
+        window.show()?;
+    }
     Ok(())
 }
 
@@ -448,15 +468,31 @@ fn main() {
                 std::process::id()
             );
 
-            if is_smoke_test(env::args()) {
+            let core_smoke_test = is_smoke_test(env::args());
+            let webview_smoke_test = is_webview_smoke_test(env::args());
+            if core_smoke_test || webview_smoke_test {
+                // 隐藏验收不进入 Dock、不抢焦点；正式启动仍保持普通音乐应用行为。
+                let _ = app
+                    .handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
+            if core_smoke_test {
                 // CI/性能验收只验证后台核心，不创建窗口，也不会抢用户焦点。
                 let handle = app.handle().clone();
                 thread::spawn(move || {
                     thread::sleep(Duration::from_secs(12));
                     handle.exit(0);
                 });
+            } else if webview_smoke_test {
+                create_main_window(app, false)?;
+                let handle = app.handle().clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(25));
+                    handle.exit(0);
+                });
             } else {
-                create_main_window(app)?;
+                create_main_window(app, true)?;
                 create_tray(app)?;
             }
             Ok(())
@@ -490,13 +526,27 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_smoke_test, normalize_electron_shortcut, parse_legacy_settings};
+    use super::{
+        is_smoke_test, is_webview_smoke_test, normalize_electron_shortcut, parse_legacy_settings,
+    };
     use tauri_plugin_global_shortcut::Shortcut;
 
     #[test]
     fn smoke_test_must_be_explicit() {
         assert!(is_smoke_test(["yesplaymusic-tauri", "--smoke-test"]));
         assert!(!is_smoke_test(["yesplaymusic-tauri"]));
+    }
+
+    #[test]
+    fn webview_smoke_test_must_be_explicit() {
+        assert!(is_webview_smoke_test([
+            "yesplaymusic-tauri",
+            "--webview-smoke-test"
+        ]));
+        assert!(!is_webview_smoke_test([
+            "yesplaymusic-tauri",
+            "--smoke-test"
+        ]));
     }
 
     #[test]
