@@ -16,23 +16,23 @@ describe('sidecar 身份握手', () => {
     const healthLayer = app._router.stack[0];
     expect(healthLayer.route.path).toBe(SIDECAR_HEALTH_PATH);
 
-    let contentType = null;
+    const headers = new Map();
     let body = null;
     healthLayer.route.stack[0].handle(
       {},
       {
-        type(value) {
-          contentType = value;
-          return this;
+        setHeader(name, value) {
+          headers.set(name.toLowerCase(), value);
         },
-        send(value) {
+        end(value) {
           body = value;
-          return this;
         },
       }
     );
 
-    expect(contentType).toBe('application/json');
+    expect(headers.get('content-type')).toBe(
+      'application/json; charset=utf-8'
+    );
     expect(body).toBe(SIDECAR_HEALTH_BODY);
   });
 

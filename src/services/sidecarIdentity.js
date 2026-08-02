@@ -6,7 +6,11 @@ export const SIDECAR_HEALTH_BODY = JSON.stringify({
 
 export function installSidecarHealthRoute(app) {
   app.get(SIDECAR_HEALTH_PATH, (_request, response) => {
-    response.type('application/json').send(SIDECAR_HEALTH_BODY);
+    // Bun 单文件编译后不会可靠保留 Express response 的便捷方法，使用 Node 原生接口。
+    response.statusCode = 200;
+    response.setHeader('Content-Type', 'application/json; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store');
+    response.end(SIDECAR_HEALTH_BODY);
   });
 
   // 网易云 API 在返回 app 前已装好全部路由；健康检查必须排在业务路由前面。
