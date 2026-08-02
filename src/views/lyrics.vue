@@ -369,7 +369,11 @@ import Color from 'color';
 import { isAccountLoggedIn } from '@/utils/auth';
 import { hasListSource, getListSourcePath } from '@/utils/playList';
 import locale from '@/locale';
-import { disposeListeners, listen } from '@/utils/mediaLifecycle';
+import {
+  disposeListeners,
+  listen,
+  startVisibilityAwareInterval,
+} from '@/utils/mediaLifecycle';
 
 export default {
   name: 'Lyrics',
@@ -380,7 +384,7 @@ export default {
   },
   data() {
     return {
-      lyricsInterval: null,
+      lyricsIntervalCleanup: null,
       timer: null,
       listenerCleanups: [],
       lyric: [],
@@ -550,7 +554,7 @@ export default {
         this.setLyricsInterval();
         this.$store.commit('enableScrolling', false);
       } else {
-        clearInterval(this.lyricsInterval);
+        this.stopLyricsInterval();
         this.$store.commit('enableScrolling', true);
       }
     },
@@ -581,11 +585,12 @@ export default {
     if (this.timer) {
       clearInterval(this.timer);
     }
+    this.stopLyricsInterval();
     disposeListeners(this.listenerCleanups);
     this.setWindowButtons(true); // 离开歌词页别把红绿灯留在隐藏状态
   },
   unmounted() {
-    clearInterval(this.lyricsInterval);
+    this.stopLyricsInterval();
   },
   methods: {
     ...mapMutations(['toggleLyrics', 'updateModal']),
@@ -797,24 +802,40 @@ export default {
       }
     },
     setLyricsInterval() {
-      this.lyricsInterval = setInterval(() => {
-        const progress = this.player.seek(null, false) ?? 0;
-        let oldHighlightLyricIndex = this.highlightLyricIndex;
-        this.highlightLyricIndex = this.lyric.findIndex((l, index) => {
-          const nextLyric = this.lyric[index + 1];
-          return (
-            progress >= l.time && (nextLyric ? progress < nextLyric.time : true)
-          );
-        });
-        if (oldHighlightLyricIndex !== this.highlightLyricIndex) {
-          const el = document.getElementById(`line${this.highlightLyricIndex}`);
-          if (el)
-            el.scrollIntoView({
-              behavior: 'smooth',
-              block: 'center',
-            });
+      this.stopLyricsInterval();
+      this.lyricsIntervalCleanup = startVisibilityAwareInterval(
+        document,
+        () => {
+          const progress = this.player.seek(null, false) ?? 0;
+          let oldHighlightLyricIndex = this.highlightLyricIndex;
+          this.highlightLyricIndex = this.lyric.findIndex((l, index) => {
+            const nextLyric = this.lyric[index + 1];
+            return (
+              progress >= l.time &&
+              (nextLyric ? progress < nextLyric.time : true)
+            );
+          });
+          if (oldHighlightLyricIndex !== this.highlightLyricIndex) {
+            const el = document.getElementById(
+              `line${this.highlightLyricIndex}`
+            );
+            if (el)
+              el.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+              });
+          }
+        },
+        {
+          foregroundMs: 50,
+          // 菜单栏歌词不需要 20 FPS；4 FPS 足以跟上逐行变化。
+          backgroundMs: 250,
         }
-      }, 50);
+      );
+    },
+    stopLyricsInterval() {
+      this.lyricsIntervalCleanup?.();
+      this.lyricsIntervalCleanup = null;
     },
     moveToFMTrash() {
       this.player.moveToFMTrash();

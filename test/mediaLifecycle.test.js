@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   observeDocumentVisibility,
+  startVisibilityAwareInterval,
   disposeListeners,
   destroyMediaPlayer,
   listen,
@@ -30,6 +31,35 @@ describe('轮询生命周期', () => {
     const cleared = [];
     stopInterval(null, timer => cleared.push(timer));
     expect(cleared).toEqual([]);
+  });
+
+  test('窗口隐藏后降低轮询频率，恢复时切回前台频率', () => {
+    const listeners = new Map();
+    const target = {
+      hidden: false,
+      addEventListener: (type, handler) => listeners.set(type, handler),
+      removeEventListener: type => listeners.delete(type),
+    };
+    const scheduled = [];
+    const cleared = [];
+    let nextTimer = 0;
+
+    const cleanup = startVisibilityAwareInterval(target, () => {}, {
+      foregroundMs: 50,
+      backgroundMs: 250,
+      setTimer: (callback, delay) => {
+        scheduled.push(delay);
+        return ++nextTimer;
+      },
+      clearTimer: timer => cleared.push(timer),
+    });
+    target.hidden = true;
+    listeners.get('visibilitychange')();
+    cleanup();
+
+    expect(scheduled).toEqual([50, 250]);
+    expect(cleared).toEqual([1, 2]);
+    expect(listeners.has('visibilitychange')).toBe(false);
   });
 });
 
