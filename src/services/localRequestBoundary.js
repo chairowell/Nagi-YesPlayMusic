@@ -10,6 +10,33 @@ export function addNativeProxyToken(options, request, nativeToken) {
   return options;
 }
 
+function hardenAuthCookie(cookie) {
+  const [name] = cookie.split('=', 1);
+  if (!['MUSIC_U', '__csrf'].includes(name.trim())) return cookie;
+  const parts = cookie
+    .split(';')
+    .map(part => part.trim())
+    .filter(
+      part =>
+        part &&
+        part.toLowerCase() !== 'httponly' &&
+        !part.toLowerCase().startsWith('samesite=')
+    );
+  return [...parts, 'HttpOnly', 'SameSite=Strict'].join('; ');
+}
+
+export function hardenAuthCookieHeaders(headers) {
+  const key = Object.keys(headers).find(
+    header => header.toLowerCase() === 'set-cookie'
+  );
+  if (!key || !headers[key]) return headers;
+  const cookies = Array.isArray(headers[key]) ? headers[key] : [headers[key]];
+  return {
+    ...headers,
+    [key]: cookies.map(hardenAuthCookie),
+  };
+}
+
 function secretsMatch(received, expected) {
   if (typeof received !== 'string' || typeof expected !== 'string') {
     return false;

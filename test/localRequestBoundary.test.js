@@ -3,6 +3,7 @@ import express from 'express';
 import {
   NATIVE_AUTH_HEADER,
   addNativeProxyToken,
+  hardenAuthCookieHeaders,
   installLocalRequestBoundary,
 } from '../src/services/localRequestBoundary';
 
@@ -134,5 +135,21 @@ describe('本地 HTTP 安全边界', () => {
     expect(nextCalled).toBe(true);
     expect(requestObject.url).toContain('md5_password=secret');
     expect(requestObject.originalUrl).toBe('/login');
+  });
+
+  test('代理把网易云登录 Cookie 强制升级为 HttpOnly 和 SameSite=Strict', () => {
+    const headers = hardenAuthCookieHeaders({
+      'set-cookie': [
+        'MUSIC_U=secret; Path=/; SameSite=None',
+        '__csrf=csrf; Path=/',
+        'NMTID=ordinary; Path=/',
+      ],
+    });
+
+    expect(headers['set-cookie'][0]).toContain('HttpOnly');
+    expect(headers['set-cookie'][0]).toContain('SameSite=Strict');
+    expect(headers['set-cookie'][0]).not.toContain('SameSite=None');
+    expect(headers['set-cookie'][1]).toContain('HttpOnly');
+    expect(headers['set-cookie'][2]).toBe('NMTID=ordinary; Path=/');
   });
 });

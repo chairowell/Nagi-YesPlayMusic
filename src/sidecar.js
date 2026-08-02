@@ -6,6 +6,7 @@ import { startNeteaseMusicApi } from './services/neteaseApi';
 import { parseSidecarArgs } from './utils/sidecarConfig';
 import {
   addNativeProxyToken,
+  hardenAuthCookieHeaders,
   installLocalRequestBoundary,
 } from './services/localRequestBoundary';
 
@@ -58,6 +59,9 @@ function startRendererServer(
     expressProxy(`http://${HOST}:${apiPort}`, {
       proxyReqOptDecorator(options, request) {
         return addNativeProxyToken(options, request, nativeToken);
+      },
+      userResHeaderDecorator(headers) {
+        return hardenAuthCookieHeaders(headers);
       },
     })
   );
