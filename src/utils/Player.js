@@ -13,6 +13,7 @@ import shuffle from 'lodash/shuffle';
 import { decode as base642Buffer } from '@/utils/base64';
 import {
   consumeQueuedTrack,
+  getAdjacentTrack,
   getActiveTrackIndex,
   pickRandomTrackID,
 } from '@/utils/playerQueue';
@@ -264,43 +265,27 @@ export default class {
     }, 1000);
   }
   _getNextTrack() {
-    const next = this._reversed ? this.current - 1 : this.current + 1;
-
     if (this._playNextList.length > 0) {
       let trackID = this._playNextList[0];
       return [trackID, INDEX_IN_PLAY_NEXT];
     }
 
-    // 循环模式开启，则重新播放当前模式下的相对的下一首
-    if (this.repeatMode === 'on') {
-      if (this._reversed && this.current === 0) {
-        // 倒序模式，当前歌曲是第一首，则重新播放列表最后一首
-        return [this.list[this.list.length - 1], this.list.length - 1];
-      } else if (this.list.length === this.current + 1) {
-        // 正序模式，当前歌曲是最后一首，则重新播放第一首
-        return [this.list[0], 0];
-      }
-    }
-
-    // 返回 [trackID, index]
-    return [this.list[next], next];
+    const direction = this._reversed ? -1 : 1;
+    return getAdjacentTrack(
+      this.list,
+      this.current,
+      direction,
+      this.repeatMode === 'on'
+    );
   }
   _getPrevTrack() {
-    const next = this._reversed ? this.current + 1 : this.current - 1;
-
-    // 循环模式开启，则重新播放当前模式下的相对的下一首
-    if (this.repeatMode === 'on') {
-      if (this._reversed && this.current === 0) {
-        // 倒序模式，当前歌曲是最后一首，则重新播放列表第一首
-        return [this.list[0], 0];
-      } else if (this.list.length === this.current + 1) {
-        // 正序模式，当前歌曲是第一首，则重新播放列表最后一首
-        return [this.list[this.list.length - 1], this.list.length - 1];
-      }
-    }
-
-    // 返回 [trackID, index]
-    return [this.list[next], next];
+    const direction = this._reversed ? 1 : -1;
+    return getAdjacentTrack(
+      this.list,
+      this.current,
+      direction,
+      this.repeatMode === 'on'
+    );
   }
   async _shuffleTheList(firstTrackID = this.currentTrackID) {
     let list = this._list.filter(tid => tid !== firstTrackID);

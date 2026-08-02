@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   consumeQueuedTrack,
+  getAdjacentTrack,
   getActiveTrackIndex,
   pickRandomTrackID,
 } from '../src/utils/playerQueue';
@@ -56,5 +57,33 @@ describe('心动模式随机种子', () => {
 
   test('空歌单安全返回 undefined', () => {
     expect(pickRandomTrackID([], () => 0.5)).toBeUndefined();
+  });
+});
+
+describe('播放队列首尾边界', () => {
+  const list = [1, 2, 3];
+
+  test('正序上一首在队首循环到队尾', () => {
+    expect(getAdjacentTrack(list, 0, -1, true)).toEqual([3, 2]);
+  });
+
+  test('正序上一首在队首且关闭循环时停止', () => {
+    expect(getAdjacentTrack(list, 0, -1, false)).toEqual([undefined, -1]);
+  });
+
+  test('正序下一首在队尾循环到队首', () => {
+    expect(getAdjacentTrack(list, 2, 1, true)).toEqual([1, 0]);
+  });
+
+  test('倒序下一首在队首循环到队尾', () => {
+    expect(getAdjacentTrack(list, 0, -1, true)).toEqual([3, 2]);
+  });
+
+  test('倒序上一首在队尾循环到队首', () => {
+    expect(getAdjacentTrack(list, 2, 1, true)).toEqual([1, 0]);
+  });
+
+  test('队列为空时安全停止', () => {
+    expect(getAdjacentTrack([], 0, 1, true)).toEqual([undefined, 0]);
   });
 });

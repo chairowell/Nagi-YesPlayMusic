@@ -28,3 +28,21 @@ export function consumeQueuedTrack(queue, trackID) {
   if (index !== -1) queue.splice(index, 1);
   return index;
 }
+
+/**
+ * 返回队列中指定方向的相邻歌曲。
+ *
+ * 正序、倒序只是方向不同，首尾循环应该共用同一套边界判断；分别写条件时，
+ * “上一首”很容易把第一首和最后一首判断反。
+ */
+export function getAdjacentTrack(list, current, direction, shouldWrap) {
+  if (list.length === 0) return [undefined, current];
+
+  let target = current + direction;
+  if (target < 0 || target >= list.length) {
+    if (!shouldWrap) return [undefined, target];
+    target = target < 0 ? list.length - 1 : 0;
+  }
+
+  return [list[target], target];
+}
