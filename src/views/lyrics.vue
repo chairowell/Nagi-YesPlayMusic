@@ -35,7 +35,7 @@
         v-if="isMini"
         class="mini-player"
         @mouseenter="setWindowButtons(true)"
-        @mouseleave="setWindowButtons(false)"
+        @mouseleave="handleMiniMouseLeave"
       >
         <img class="mini-cover" :src="imageUrl" loading="lazy" />
         <div class="mini-info">
@@ -55,7 +55,10 @@
         <div class="mini-controls">
           <button-icon
             class="mini-pin"
-            :class="{ active: isAlwaysOnTop }"
+            :class="{
+              active: isAlwaysOnTop,
+              'pin-dismissed': pinDismissed,
+            }"
             :title="isAlwaysOnTop ? '取消置顶' : '窗口置顶'"
             @click="toggleAlwaysOnTop"
           >
@@ -408,6 +411,7 @@ export default {
       isMini: false,
       miniTall: false,
       isAlwaysOnTop: false,
+      pinDismissed: false,
     };
   },
   computed: {
@@ -621,6 +625,7 @@ export default {
       this.miniTall = window.innerHeight >= 64;
       if (next === this.isMini) return;
       this.isMini = next;
+      this.pinDismissed = false;
       // 进迷你模式就把红绿灯收起来，退出时恢复
       this.setWindowButtons(!next);
       // 切换迷你模式会改变菜单栏该不该显示歌词
@@ -646,6 +651,12 @@ export default {
     async toggleAlwaysOnTop() {
       if (!isDesktopRuntime) return;
       this.isAlwaysOnTop = await invokeDesktop('toggleAlwaysOnTop');
+      // 点击后的鼠标仍压在按钮上，单靠 :hover 不会自动淡出。
+      this.pinDismissed = true;
+    },
+    handleMiniMouseLeave() {
+      this.pinDismissed = false;
+      this.setWindowButtons(false);
     },
     initDate() {
       var _this = this;
@@ -991,6 +1002,11 @@ export default {
       // 只在浮现出来的时候用颜色区分开关状态
       &.active {
         color: var(--color-primary);
+      }
+
+      &.pin-dismissed {
+        opacity: 0 !important;
+        pointer-events: none;
       }
     }
   }
