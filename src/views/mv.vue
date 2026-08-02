@@ -49,6 +49,7 @@ import NProgress from 'nprogress';
 import locale from '@/locale';
 import '@/assets/css/plyr.css';
 import Plyr from 'plyr';
+import { destroyMediaPlayer } from '@/utils/mediaLifecycle';
 
 import ButtonIcon from '@/components/ButtonIcon.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
@@ -99,6 +100,11 @@ export default {
     this.getData(this.$route.params.id);
     console.log('网易云你这mv音频码率也太糊了吧🙄');
   },
+  beforeDestroy() {
+    destroyMediaPlayer(this.player);
+    this.player = null;
+    NProgress.done();
+  },
   methods: {
     ...mapActions(['showToast']),
     getData(id) {
@@ -108,6 +114,7 @@ export default {
           return mvUrl({ id, r: br.br });
         });
         Promise.all(requests).then(results => {
+          if (!this.player) return;
           let sources = results.map(result => {
             return {
               src: result.data.url.replace(/^http:/, 'https:'),
