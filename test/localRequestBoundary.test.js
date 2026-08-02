@@ -22,6 +22,7 @@ function createGuardedBoundary() {
   expect(boundaryLayer).not.toBe(originalFirstLayer);
   return (headers = {}, url = '/account') => {
     let nextCalled = false;
+    const requestObject = { headers, url, originalUrl: url };
     const responseHeaders = new Map();
     const response = {
       statusCode: 200,
@@ -45,12 +46,8 @@ function createGuardedBoundary() {
         return this;
       },
     };
-    boundaryLayer.handle(
-      { headers, url },
-      response,
-      () => (nextCalled = true)
-    );
-    return { response, responseHeaders, nextCalled };
+    boundaryLayer.handle(requestObject, response, () => (nextCalled = true));
+    return { requestObject, response, responseHeaders, nextCalled };
   };
 }
 
@@ -125,5 +122,17 @@ describe('本地 HTTP 安全边界', () => {
 
     expect(nativeOptions.headers[NATIVE_AUTH_HEADER]).toBe('proxy-token');
     expect(normalOptions.headers[NATIVE_AUTH_HEADER]).toBeUndefined();
+  });
+
+  test('业务路由保留查询参数，但日志使用的 originalUrl 会去掉隐私参数', () => {
+    const request = createGuardedBoundary();
+    const { requestObject, nextCalled } = request(
+      {},
+      '/login?email=user@example.com&md5_password=secret'
+    );
+
+    expect(nextCalled).toBe(true);
+    expect(requestObject.url).toContain('md5_password=secret');
+    expect(requestObject.originalUrl).toBe('/login');
   });
 });

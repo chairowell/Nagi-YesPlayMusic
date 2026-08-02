@@ -28,6 +28,10 @@ export function installLocalRequestBoundary(
 ) {
   const allowed = new Set(allowedOrigins);
   const boundary = (request, response, next) => {
+    if (typeof request.originalUrl === 'string') {
+      // 上游会把 originalUrl 原样写进 stdout；路由仍使用 req.url，所以只脱敏日志视图。
+      request.originalUrl = request.originalUrl.split('?')[0];
+    }
     const origin = request.headers.origin;
     const fetchSite = request.headers['sec-fetch-site'];
     if (
