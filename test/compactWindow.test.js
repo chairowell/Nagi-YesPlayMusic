@@ -69,6 +69,7 @@ test('Bar 和浏览尺寸分别记忆，更新一档不会覆盖另一档', () =
   expect(loadCompactWindowMemory(storage)).toEqual({
     bar: { x: 40, y: 50, width: 500, height: 64 },
     browse: { x: 100, y: 80, width: 1080, height: 700 },
+    lastMode: 'bar',
   });
   expect(COMPACT_RESIZE_SETTLE_MS).toBeGreaterThanOrEqual(200);
 });
@@ -80,4 +81,30 @@ test('中窗提供明确返回按钮和 Escape 快捷键', () => {
   expect(app).toContain('this.restoreCompactWindow()');
   expect(electronIpc).not.toContain('compactWindowBounds');
   expect(electronIpc).toContain('applyCompactWindowFrame(target)');
+});
+
+test('重启时恢复最后使用的逻辑尺寸，不采用 Tauri 插件保存的物理像素', () => {
+  const values = new Map();
+  const storage = {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+
+  rememberCompactWindowFrame(
+    { x: 20, y: 30, width: 346, height: 177 },
+    storage
+  );
+  rememberCompactWindowFrame(
+    { x: 100, y: 80, width: 1060, height: 720 },
+    storage
+  );
+
+  expect(loadCompactWindowMemory(storage)).toEqual({
+    bar: { x: 20, y: 30, width: 346, height: 177 },
+    browse: { x: 100, y: 80, width: 1060, height: 720 },
+    lastMode: 'browse',
+  });
+  expect(compactWindow).toContain('restoreRememberedCompactWindowFrame');
+  expect(app).toContain('compactWindowMemoryReady');
+  expect(tauriMain).toContain('.skip_initial_state("main")');
 });

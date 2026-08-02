@@ -169,6 +169,10 @@ export function initIpcMain(win, store, trayEventEmitter) {
 
   ipcMain.handle('getCompactWindowFrame', getCompactWindowFrame);
 
+  ipcMain.handle('restoreRememberedCompactWindowFrame', (_, target) =>
+    applyCompactWindowFrame(target)
+  );
+
   ipcMain.handle('expandCompactWindow', (_, target) => {
     const [currentWidth, currentHeight] = win.getContentSize();
     if (currentWidth >= 620 && currentHeight >= 340) return false;

@@ -42,13 +42,16 @@ function normalizeCompactWindowFrame(frame) {
 }
 
 export function loadCompactWindowMemory(storage = browserStorage()) {
-  const empty = { bar: null, browse: null };
+  const empty = { bar: null, browse: null, lastMode: null };
   if (!storage) return empty;
   try {
     const parsed = JSON.parse(storage.getItem(COMPACT_WINDOW_MEMORY_KEY));
     return {
       bar: normalizeCompactWindowFrame(parsed?.bar),
       browse: normalizeCompactWindowFrame(parsed?.browse),
+      lastMode: ['bar', 'browse'].includes(parsed?.lastMode)
+        ? parsed.lastMode
+        : null,
     };
   } catch (_) {
     return empty;
@@ -60,7 +63,7 @@ export function rememberCompactWindowFrame(frame, storage = browserStorage()) {
   const memory = loadCompactWindowMemory(storage);
   if (!normalized || !storage) return memory;
   const mode = isMiniWindowSize(normalized) ? 'bar' : 'browse';
-  const next = { ...memory, [mode]: normalized };
+  const next = { ...memory, [mode]: normalized, lastMode: mode };
   try {
     storage.setItem(COMPACT_WINDOW_MEMORY_KEY, JSON.stringify(next));
   } catch (_) {
@@ -112,6 +115,27 @@ async function applyTauriCompactWindowFrame(frame) {
   return true;
 }
 
+async function applyCompactWindowFrame(frame, electronChannel) {
+  if (electronRenderer) {
+    return electronRenderer.invoke(electronChannel, frame);
+  }
+  if (!isTauriRuntime) return false;
+  return applyTauriCompactWindowFrame(frame);
+}
+
+export async function restoreRememberedCompactWindowFrame() {
+  const memory = loadCompactWindowMemory();
+  const mode =
+    memory.lastMode || (memory.browse ? 'browse' : memory.bar ? 'bar' : null);
+  const frame = mode ? memory[mode] : null;
+  if (!frame) return null;
+  const restored = await applyCompactWindowFrame(
+    frame,
+    'restoreRememberedCompactWindowFrame'
+  );
+  return restored ? { mode, frame } : null;
+}
+
 export async function rememberCurrentCompactWindowFrame() {
   const frame = await captureCurrentCompactWindowFrame();
   if (!frame) return null;
@@ -133,9 +157,12 @@ export async function expandCompactWindow() {
     normalizeCompactWindowFrame({ ...COMPACT_EXPANDED_SIZE, x: null, y: null });
   compactWindowTransitioning = true;
   try {
-    return electronRenderer
-      ? await electronRenderer.invoke('expandCompactWindow', target)
-      : await applyTauriCompactWindowFrame(target);
+    const expanded = await applyCompactWindowFrame(
+      target,
+      'expandCompactWindow'
+    );
+    if (expanded) rememberCompactWindowFrame(target);
+    return expanded;
   } finally {
     compactWindowTransitioning = false;
   }
@@ -150,9 +177,12 @@ export async function restoreCompactWindow() {
   if (!memory.bar) return false;
   compactWindowTransitioning = true;
   try {
-    return electronRenderer
-      ? await electronRenderer.invoke('restoreCompactWindow', memory.bar)
-      : await applyTauriCompactWindowFrame(memory.bar);
+    const restored = await applyCompactWindowFrame(
+      memory.bar,
+      'restoreCompactWindow'
+    );
+    if (restored) rememberCompactWindowFrame(memory.bar);
+    return restored;
   } finally {
     compactWindowTransitioning = false;
   }

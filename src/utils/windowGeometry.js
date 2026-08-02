@@ -1,4 +1,5 @@
-export const MIN_REACHABLE_WINDOW_EDGE = 48;
+export const MIN_REACHABLE_WINDOW_WIDTH = 160;
+export const MIN_REACHABLE_WINDOW_HEIGHT = 80;
 
 function normalizeRectangle(value) {
   const area = value?.workArea || value;
@@ -16,7 +17,8 @@ function normalizeRectangle(value) {
 export function hasReachableWindowArea(
   frame,
   displays,
-  minimumEdge = MIN_REACHABLE_WINDOW_EDGE
+  minimumWidth = MIN_REACHABLE_WINDOW_WIDTH,
+  minimumHeight = MIN_REACHABLE_WINDOW_HEIGHT
 ) {
   const windowRectangle = normalizeRectangle(frame);
   if (
@@ -27,8 +29,8 @@ export function hasReachableWindowArea(
     return false;
   }
 
-  const minimumWidth = Math.min(minimumEdge, windowRectangle.width);
-  const minimumHeight = Math.min(minimumEdge, windowRectangle.height);
+  const requiredWidth = Math.min(minimumWidth, windowRectangle.width);
+  const requiredHeight = Math.min(minimumHeight, windowRectangle.height);
   return (displays || []).some(display => {
     const screen = normalizeRectangle(display);
     if (!screen || screen.width <= 0 || screen.height <= 0) return false;
@@ -42,6 +44,6 @@ export function hasReachableWindowArea(
         windowRectangle.y + windowRectangle.height,
         screen.y + screen.height
       ) - Math.max(windowRectangle.y, screen.y);
-    return overlapWidth >= minimumWidth && overlapHeight >= minimumHeight;
+    return overlapWidth >= requiredWidth && overlapHeight >= requiredHeight;
   });
 }

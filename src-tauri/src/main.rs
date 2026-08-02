@@ -410,8 +410,9 @@ fn window_frame_has_reachable_area(
     if window_width == 0 || window_height == 0 {
         return false;
     }
-    let minimum_width = i64::from(window_width.min(48));
-    let minimum_height = i64::from(window_height.min(48));
+    // 48px 的边角虽然数学上仍在屏幕内，实际很难发现和拖回；播放条至少保留一段可识别区域。
+    let minimum_width = i64::from(window_width.min(160));
+    let minimum_height = i64::from(window_height.min(80));
     monitors.iter().any(|&(x, y, width, height)| {
         let overlap_width = (i64::from(window_x) + i64::from(window_width))
             .min(i64::from(x) + i64::from(width))
@@ -757,7 +758,13 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 插件按物理像素保存尺寸，混合 Retina/普通屏时会把 1060×720 当成 2120×1440 恢复。
+        // 双档逻辑尺寸由渲染进程接管；这里只保留插件的退出写盘，跳过有歧义的启动恢复。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .skip_initial_state("main")
+                .build(),
+        )
         .setup(|app| {
             app.manage(GlobalShortcutRegistrationState(Mutex::new(
                 GlobalShortcutRegistration::default(),
@@ -889,17 +896,17 @@ mod tests {
 
     #[test]
     fn restored_window_must_have_a_reachable_area() {
-        let monitors = [(0, 0, 2560, 1410), (2560, 0, 3024, 1900)];
+        let monitors = [(0, 0, 2560, 1410), (5120, 0, 3024, 1900)];
         assert!(window_frame_has_reachable_area(
             (837, 30, 920, 620),
             &monitors
         ));
         assert!(!window_frame_has_reachable_area(
-            (8064, 2640, 3812, 268),
+            (8064, 100, 3812, 268),
             &monitors
         ));
         assert!(!window_frame_has_reachable_area(
-            (5560, 1880, 500, 200),
+            (8080, 100, 500, 200),
             &monitors
         ));
     }

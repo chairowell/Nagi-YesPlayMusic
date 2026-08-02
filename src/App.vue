@@ -66,6 +66,7 @@ import {
   expandCompactWindow,
   hasRememberedBarFrame,
   rememberCurrentCompactWindowFrame,
+  restoreRememberedCompactWindowFrame,
   restoreCompactWindow,
 } from '@/services/compactWindow';
 import { isMiniWindowSize } from '@/utils/miniWindow';
@@ -100,6 +101,7 @@ export default {
           height: window.innerHeight,
         }) && hasRememberedBarFrame(),
       compactResizeTimer: null,
+      compactWindowMemoryReady: !isDesktopRuntime,
       windowHidden: document.hidden,
     };
   },
@@ -136,7 +138,11 @@ export default {
       document,
       hidden => (this.windowHidden = hidden)
     );
-    this.handleMiniResize();
+    if (this.isDesktop) {
+      void this.initializeCompactWindowMemory();
+    } else {
+      this.handleMiniResize();
+    }
     this.fetchData();
   },
   beforeUnmount() {
@@ -147,6 +153,20 @@ export default {
     this.desktopEventsCleanup?.then(cleanup => cleanup());
   },
   methods: {
+    async initializeCompactWindowMemory() {
+      try {
+        const restored = await restoreRememberedCompactWindowFrame();
+        this.compactWindowExpanded =
+          restored?.mode === 'browse' && hasRememberedBarFrame();
+      } catch (error) {
+        // 单次恢复失败时仍允许用户正常拖动窗口，后续尺寸会覆盖损坏的旧记忆。
+        console.warn('[compact-window] 启动尺寸恢复失败', error);
+      } finally {
+        // Tauri 插件的物理像素状态已经被跳过；只有我们的逻辑尺寸落地后才允许写回记忆。
+        this.compactWindowMemoryReady = true;
+        this.handleMiniResize();
+      }
+    },
     async expandCompactWindow() {
       if (!(await expandCompactWindow())) return;
       this.compactWindowExpanded = true;
@@ -175,7 +195,7 @@ export default {
       this.scheduleCompactWindowMemory();
     },
     scheduleCompactWindowMemory() {
-      if (!this.isDesktop) return;
+      if (!this.isDesktop || !this.compactWindowMemoryReady) return;
       clearTimeout(this.compactResizeTimer);
       // 只记录拖拽结束后的最终档位，避免跨越临界线时污染另一套记忆。
       this.compactResizeTimer = setTimeout(async () => {
