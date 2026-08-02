@@ -1,15 +1,8 @@
 import { createApp } from 'vue';
-import App from './App.vue';
-import router from './router';
-import store from './store';
-import i18n from '@/locale';
-import SvgIcons from '@/assets/icons';
-import filters from '@/utils/filters';
-import { copyText } from '@/utils/clipboard';
-import { dailyTask } from '@/utils/common';
 import '@/assets/css/global.scss';
 import NProgress from 'nprogress';
 import '@/assets/css/nprogress.css';
+import { migrateLegacyDesktopSettings } from '@/services/legacyDataMigration';
 
 window.resetApp = () => {
   localStorage.clear();
@@ -28,13 +21,40 @@ console.log(
 );
 
 NProgress.configure({ showSpinner: false, trickleSpeed: 100 });
-dailyTask();
 
-const app = createApp(App);
-app.config.globalProperties.$filters = filters;
-app.config.globalProperties.$copyText = copyText;
-app.use(i18n);
-app.use(store);
-app.use(router);
-app.use(SvgIcons);
-app.mount('#app');
+async function bootstrap() {
+  // store 读取 localStorage 发生在模块求值阶段，所以必须先完成一次性迁移，
+  // 再动态加载整个业务依赖图。
+  await migrateLegacyDesktopSettings();
+  const [
+    { default: App },
+    { default: router },
+    { default: store },
+    { default: i18n },
+    { default: SvgIcons },
+    { default: filters },
+    { copyText },
+    { dailyTask },
+  ] = await Promise.all([
+    import('./App.vue'),
+    import('./router'),
+    import('./store'),
+    import('@/locale'),
+    import('@/assets/icons'),
+    import('@/utils/filters'),
+    import('@/utils/clipboard'),
+    import('@/utils/common'),
+  ]);
+
+  dailyTask();
+  const app = createApp(App);
+  app.config.globalProperties.$filters = filters;
+  app.config.globalProperties.$copyText = copyText;
+  app.use(i18n);
+  app.use(store);
+  app.use(router);
+  app.use(SvgIcons);
+  app.mount('#app');
+}
+
+void bootstrap();

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    env,
+    env, fs,
+    io::ErrorKind,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     sync::Mutex,
     thread,
@@ -155,6 +156,31 @@ fn update_shortcut_settings(
         }
     }
     register_global_shortcuts(app)
+}
+
+fn parse_legacy_settings(config: &str) -> Result<Option<serde_json::Value>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(config).map_err(|error| error.to_string())?;
+    Ok(value.get("settings").cloned())
+}
+
+#[tauri::command]
+fn read_legacy_settings(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let config_path = app
+        .path()
+        .home_dir()
+        .map_err(|error| error.to_string())?
+        .join("Library/Application Support/yesplaymusic/config.json");
+    let metadata = match fs::metadata(&config_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if metadata.len() > 1_048_576 {
+        return Err("旧版设置文件异常大，已拒绝读取".to_string());
+    }
+    let config = fs::read_to_string(config_path).map_err(|error| error.to_string())?;
+    parse_legacy_settings(&config)
 }
 
 #[tauri::command]
@@ -438,7 +464,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             desktop_event,
             is_always_on_top,
-            toggle_always_on_top
+            toggle_always_on_top,
+            read_legacy_settings
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application");
@@ -463,7 +490,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_smoke_test, normalize_electron_shortcut};
+    use super::{is_smoke_test, normalize_electron_shortcut, parse_legacy_settings};
     use tauri_plugin_global_shortcut::Shortcut;
 
     #[test]
@@ -489,5 +516,15 @@ mod tests {
                 "Tauri 无法解析 {accelerator}（转换后为 {normalized}）"
             );
         }
+    }
+
+    #[test]
+    fn legacy_config_only_exposes_settings() {
+        let settings =
+            parse_legacy_settings(r#"{"settings":{"lang":"zh-CN"},"window":{"width":1440}}"#)
+                .unwrap()
+                .unwrap();
+        assert_eq!(settings["lang"], "zh-CN");
+        assert!(settings.get("window").is_none());
     }
 }
