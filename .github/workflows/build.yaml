@@ -45,11 +45,65 @@ jobs:
       - name: Verify release version
         run: bun run verify:tauri:version -- "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
 
-      - name: Build signed Tauri app
+      - name: Build locally signed Tauri app
+        if: github.ref_type != 'tag'
         run: bun run build:tauri
 
-      - name: Package and verify DMG
+      - name: Package local DMG
+        if: github.ref_type != 'tag'
         run: bun run package:tauri:dmg
+
+      - name: Verify Apple release secrets
+        if: github.ref_type == 'tag'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: bun run verify:tauri:release-env
+
+      - name: Import Developer ID certificate
+        if: github.ref_type == 'tag'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/yesplaymusic-certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/yesplaymusic-build.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Build Developer ID signed and notarized DMG
+        if: github.ref_type == 'tag'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bun run build:tauri:release
+
+      - name: Validate Developer ID signature and notarization ticket
+        if: github.ref_type == 'tag'
+        run: |
+          APP_PATH="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          spctl --assess --type execute --verbose=4 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          xcrun stapler validate src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+      - name: Collect notarized release DMG
+        if: github.ref_type == 'tag'
+        run: bun run collect:tauri:release-dmg
 
       - name: Verify release checksum
         working-directory: dist_tauri
@@ -61,6 +115,12 @@ jobs:
           path: dist_tauri/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove temporary signing keychain
+        if: always() && github.ref_type == 'tag'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/yesplaymusic-build.keychain-db" || true
+          rm -f "$RUNNER_TEMP/yesplaymusic-certificate.p12"
 
   draft-release:
     name: Draft GitHub release

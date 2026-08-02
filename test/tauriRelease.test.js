@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { tauriDmgName } from '../scripts/package-tauri-dmg.mjs';
+import { verifyAppleReleaseEnvironment } from '../scripts/verify-apple-release-env.mjs';
 import {
   validateTauriVersions,
   verifyTauriVersions,
@@ -10,6 +11,9 @@ const workflow = readFileSync(
   new URL('../.github/workflows/build.yaml', import.meta.url),
   'utf8'
 );
+const packageJson = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+);
 
 test('Tauri CI 只构建 Apple Silicon 并上传签名后的 DMG', () => {
   expect(workflow).toContain('targets: aarch64-apple-darwin');
@@ -18,8 +22,46 @@ test('Tauri CI 只构建 Apple Silicon 并上传签名后的 DMG', () => {
   expect(workflow).toContain('run: shasum -a 256 -c *.sha256');
   expect(workflow).toContain('run: bun run verify:tauri:version');
   expect(workflow).toContain('path: dist_tauri/*');
+  expect(workflow).toContain('run: bun run build:tauri:release');
+  expect(workflow).toContain('run: bun run collect:tauri:release-dmg');
   expect(workflow).not.toContain('build:mac');
   expect(workflow).not.toContain('dist_electron');
+});
+
+test('版本 tag 必须经过 Developer ID 签名、公证和 stapler 验证', () => {
+  for (const secret of [
+    'APPLE_CERTIFICATE',
+    'APPLE_CERTIFICATE_PASSWORD',
+    'APPLE_SIGNING_IDENTITY',
+    'APPLE_ID',
+    'APPLE_PASSWORD',
+    'APPLE_TEAM_ID',
+    'KEYCHAIN_PASSWORD',
+  ]) {
+    expect(workflow).toContain(`secrets.${secret}`);
+  }
+  expect(workflow).toContain('xcrun stapler validate');
+  expect(workflow).toContain('spctl --assess --type execute');
+  expect(packageJson.scripts['build:tauri:release']).toContain('--bundles dmg');
+  expect(packageJson.scripts['build:tauri:release']).not.toContain(
+    'sign:tauri:local'
+  );
+});
+
+test('缺少 Apple 发版密钥时在构建前立即失败', () => {
+  expect(() => verifyAppleReleaseEnvironment({ APPLE_ID: 'owner@example.com' }))
+    .toThrow('APPLE_CERTIFICATE');
+  expect(
+    verifyAppleReleaseEnvironment({
+      APPLE_CERTIFICATE: 'certificate',
+      APPLE_CERTIFICATE_PASSWORD: 'certificate-password',
+      APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example',
+      APPLE_ID: 'owner@example.com',
+      APPLE_PASSWORD: 'app-specific-password',
+      APPLE_TEAM_ID: 'TEAMID',
+      KEYCHAIN_PASSWORD: 'temporary-keychain-password',
+    })
+  ).toBe(true);
 });
 
 test('tag 和三个应用版本字段必须完全一致', () => {
