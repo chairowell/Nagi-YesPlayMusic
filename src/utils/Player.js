@@ -11,6 +11,7 @@ import { isCreateMpris, isCreateTray } from '@/utils/platform';
 import { Howl, Howler } from 'howler';
 import shuffle from 'lodash/shuffle';
 import { decode as base642Buffer } from '@/utils/base64';
+import { getActiveTrackIndex } from '@/utils/playerQueue';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -921,7 +922,14 @@ export default class {
   }
   playTrackOnListByID(id, listName = 'default') {
     if (listName === 'default') {
-      this._current = this._list.findIndex(t => t === id);
+      this.current = getActiveTrackIndex(
+        {
+          shuffle: this.shuffle,
+          list: this._list,
+          shuffledList: this._shuffledList,
+        },
+        id
+      );
     }
     this._replaceCurrentTrack(id);
   }
