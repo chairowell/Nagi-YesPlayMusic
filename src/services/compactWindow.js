@@ -6,6 +6,15 @@ export const COMPACT_EXPANDED_SIZE = Object.freeze({ width: 920, height: 620 });
 
 let tauriMiniFrame = null;
 
+export function isCompactWindowPhysicalSize(size, scaleFactor = 1) {
+  const scale = Number(scaleFactor);
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  return isMiniWindowSize({
+    width: Number(size?.width) / safeScale,
+    height: Number(size?.height) / safeScale,
+  });
+}
+
 export async function expandCompactWindow() {
   if (electronRenderer) {
     return electronRenderer.invoke('expandCompactWindow', COMPACT_EXPANDED_SIZE);
@@ -17,7 +26,9 @@ export async function expandCompactWindow() {
   );
   const window = getCurrentWindow();
   const size = await window.innerSize();
-  if (!isMiniWindowSize(size)) return false;
+  const scaleFactor = await window.scaleFactor();
+  // Tauri 给的是物理像素；Retina 上不换算会把 494×254 的小窗误判为 988×508。
+  if (!isCompactWindowPhysicalSize(size, scaleFactor)) return false;
 
   tauriMiniFrame = {
     size,
