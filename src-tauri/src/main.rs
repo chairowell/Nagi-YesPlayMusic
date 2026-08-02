@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     env, fs,
-    io::ErrorKind,
+    io::{Cursor, ErrorKind},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     sync::Mutex,
     thread,
@@ -9,6 +9,7 @@ use std::{
 };
 
 use tauri::{
+    image::Image as TauriImage,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
@@ -28,6 +29,9 @@ const RELEASE_WEB_PORT: u16 = 28_232;
 struct SidecarState(Mutex<Option<CommandChild>>);
 
 #[derive(Default)]
+struct TrayCoverState(Mutex<Option<String>>);
+
+#[derive(Default)]
 struct GlobalShortcutRegistration {
     actions: HashMap<u32, String>,
     settings: Option<serde_json::Value>,
@@ -35,6 +39,117 @@ struct GlobalShortcutRegistration {
 }
 
 struct GlobalShortcutRegistrationState(Mutex<GlobalShortcutRegistration>);
+
+const MAX_TRAY_COVER_BYTES: u64 = 2 * 1024 * 1024;
+
+fn tray_cover_url(payload: &serde_json::Value) -> Option<&str> {
+    payload
+        .get("coverUrl")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+}
+
+fn decode_tray_cover(bytes: &[u8]) -> Result<TauriImage<'static>, String> {
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| error.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(2048);
+    limits.max_image_height = Some(2048);
+    limits.max_alloc = Some(32 * 1024 * 1024);
+    reader.limits(limits);
+    let cover = reader
+        .decode()
+        .map_err(|error| error.to_string())?
+        .resize_exact(64, 64, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    Ok(TauriImage::new_owned(cover.into_raw(), 64, 64))
+}
+
+async fn download_tray_cover(url: &str) -> Result<TauriImage<'static>, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|error| error.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("封面地址只允许 HTTP(S)".to_string());
+    }
+
+    let mut response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+    if response.content_length().unwrap_or(0) > MAX_TRAY_COVER_BYTES {
+        return Err("菜单栏封面响应过大".to_string());
+    }
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or(64 * 1024)
+            .min(MAX_TRAY_COVER_BYTES) as usize,
+    );
+    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        if bytes.len() as u64 + chunk.len() as u64 > MAX_TRAY_COVER_BYTES {
+            return Err("菜单栏封面响应过大".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    decode_tray_cover(&bytes)
+}
+
+fn update_tray_cover(app: &AppHandle, payload: &serde_json::Value) {
+    let Some(cover_url) = tray_cover_url(payload) else {
+        return;
+    };
+    let state = app.state::<TrayCoverState>();
+    let mut current = match state.0.lock() {
+        Ok(current) => current,
+        Err(error) => {
+            eprintln!("[tauri] 无法锁定菜单栏封面状态：{error}");
+            return;
+        }
+    };
+    if current.as_deref() == Some(cover_url) {
+        return;
+    }
+    let cover_url = cover_url.to_string();
+    *current = Some(cover_url.clone());
+    drop(current);
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match download_tray_cover(&cover_url).await {
+            Ok(icon) => {
+                let is_current = app
+                    .state::<TrayCoverState>()
+                    .0
+                    .lock()
+                    .map(|current| current.as_deref() == Some(cover_url.as_str()))
+                    .unwrap_or(false);
+                if is_current {
+                    if let Some(tray) = app.tray_by_id("main-tray") {
+                        if let Err(error) = tray.set_icon(Some(icon)) {
+                            eprintln!("[tauri] 无法更新菜单栏封面：{error}");
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                // 下载失败后清掉去重状态；下一次歌词更新会自然重试。
+                if let Ok(mut current) = app.state::<TrayCoverState>().0.lock() {
+                    if current.as_deref() == Some(cover_url.as_str()) {
+                        *current = None;
+                    }
+                }
+                eprintln!("[tauri] 无法下载菜单栏封面：{error}");
+            }
+        }
+    });
+}
 
 fn emit_desktop_event(app: &AppHandle, event: &str) {
     let _ = app.emit(&format!("desktop://{event}"), ());
@@ -211,6 +326,7 @@ fn desktop_event(
                 tray.set_title(Some(title.trim()))
                     .map_err(|error| error.to_string())?;
             }
+            update_tray_cover(&app, &payload);
         }
         // 这些事件在 Electron 里由 MPRIS、Discord、代理或动态图标消费；
         // Tauri macOS 端明确接收迁移期的 no-op，避免 renderer 出现未处理拒绝。
@@ -454,6 +570,7 @@ fn main() {
             app.manage(GlobalShortcutRegistrationState(Mutex::new(
                 GlobalShortcutRegistration::default(),
             )));
+            app.manage(TrayCoverState::default());
             let child = start_sidecar(app)?;
             app.manage(SidecarState(Mutex::new(Some(child))));
 
@@ -527,7 +644,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_smoke_test, is_webview_smoke_test, normalize_electron_shortcut, parse_legacy_settings,
+        decode_tray_cover, is_smoke_test, is_webview_smoke_test, normalize_electron_shortcut,
+        parse_legacy_settings, tray_cover_url,
     };
     use tauri_plugin_global_shortcut::Shortcut;
 
@@ -576,5 +694,31 @@ mod tests {
                 .unwrap();
         assert_eq!(settings["lang"], "zh-CN");
         assert!(settings.get("window").is_none());
+    }
+
+    #[test]
+    fn now_playing_payload_exposes_cover_url() {
+        let payload = serde_json::json!({
+            "title": "雨爱",
+            "coverUrl": "https://example.com/cover.jpg?param=64y64"
+        });
+
+        assert_eq!(
+            tray_cover_url(&payload),
+            Some("https://example.com/cover.jpg?param=64y64")
+        );
+        assert_eq!(tray_cover_url(&serde_json::json!({ "coverUrl": "" })), None);
+    }
+
+    #[test]
+    fn jpeg_cover_is_decoded_to_a_small_square_tray_icon() {
+        let mut encoded = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut encoded)
+            .encode(&[33, 66, 99], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+
+        let icon = decode_tray_cover(&encoded).unwrap();
+        assert_eq!((icon.width(), icon.height()), (64, 64));
+        assert_eq!(icon.rgba().len(), 64 * 64 * 4);
     }
 }
