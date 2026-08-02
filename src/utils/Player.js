@@ -6,7 +6,12 @@ import { getPlaylistDetail, intelligencePlaylist } from '@/api/playlist';
 import { getLyric, getMP3, getTrackDetail, scrobble } from '@/api/track';
 import store from '@/store';
 import { isAccountLoggedIn } from '@/utils/auth';
-import { cacheTrackSource, getTrackSource } from '@/utils/db';
+import {
+  cacheTrackSource,
+  getTrackSource,
+  hasTrackSource,
+} from '@/utils/db';
+import { revokeBlobURLs } from '@/utils/cacheStats';
 import { isCreateMpris, isCreateTray } from '@/utils/platform';
 import { Howl, Howler } from 'howler';
 import shuffle from 'lodash/shuffle';
@@ -369,9 +374,7 @@ export default class {
     // Clean up the previous object URLs since we've created a new one.
     // Revoke object URLs can release the memory taken by a Blob,
     // which occupied a large proportion of memory.
-    for (const url in this.createdBlobRecords) {
-      URL.revokeObjectURL(url);
-    }
+    revokeBlobURLs(this.createdBlobRecords, url => URL.revokeObjectURL(url));
 
     // Then, we replace the createBlobRecords with new one with
     // our newly created object URL.
@@ -541,14 +544,20 @@ export default class {
     });
   }
   _cacheNextTrack() {
+    if (!store.state.settings.automaticallyCacheSongs) return;
+
     let nextTrackID = this._isPersonalFM
       ? this._personalFMNextTrack?.id ?? 0
       : this._getNextTrack()[0];
     if (!nextTrackID) return;
     if (this._personalFMTrack.id == nextTrackID) return;
-    getTrackDetail(nextTrackID).then(data => {
+    getTrackDetail(nextTrackID).then(async data => {
       let track = data.songs[0];
-      this._getAudioSource(track);
+      if (!track || (await hasTrackSource(track.id))) return;
+
+      // 预缓存只触发网络下载；读取已缓存音频会创建无人使用的 Blob URL，
+      // 还会提前回收当前正在播放的 URL。
+      await this._getAudioSourceFromNetease(track);
     });
   }
   _loadSelfFromLocalStorage() {

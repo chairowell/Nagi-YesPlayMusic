@@ -13,3 +13,10 @@ export async function sumTrackSourceStats(iterate) {
 
   return { bytes, length };
 }
+
+/**
+ * URL.revokeObjectURL 必须收到真实 URL；for...in 遍历数组只会得到下标字符串。
+ */
+export function revokeBlobURLs(urls, revoke) {
+  for (const url of urls) revoke(url);
+}

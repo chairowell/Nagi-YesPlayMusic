@@ -135,6 +135,14 @@ export function getTrackSource(id) {
   });
 }
 
+export function hasTrackSource(id) {
+  return db.trackSources
+    .where('id')
+    .equals(Number(id))
+    .count()
+    .then(count => count > 0);
+}
+
 export function cacheTrackDetail(track, privileges) {
   db.trackDetail.put({
     id: track.id,
