@@ -81,11 +81,30 @@
           </button-icon>
         </div>
         <div
-          class="mini-progress"
-          :class="{ anon: settings.anonStyle }"
-          :style="{ width: miniProgressPercent + '%' }"
+          class="mini-progress-track"
+          :class="{ dragging: miniSeekDragging }"
+          role="slider"
+          tabindex="0"
+          :aria-label="`播放进度 ${formatTrackTime(
+            miniSeekPreview ?? player.progress
+          )}`"
+          :aria-valuemin="0"
+          :aria-valuemax="player.currentTrackDuration"
+          :aria-valuenow="Math.round(miniSeekPreview ?? player.progress)"
+          @pointerdown="startMiniSeek"
+          @pointermove="moveMiniSeek"
+          @pointerup="finishMiniSeek"
+          @pointercancel="cancelMiniSeek"
+          @keydown.left.prevent="nudgeMiniSeek(-5)"
+          @keydown.right.prevent="nudgeMiniSeek(5)"
         >
-          <span v-if="settings.anonStyle" class="mini-progress-rider"></span>
+          <div
+            class="mini-progress"
+            :class="{ anon: settings.anonStyle }"
+            :style="{ width: miniProgressPercent + '%' }"
+          >
+            <span v-if="settings.anonStyle" class="mini-progress-rider"></span>
+          </div>
         </div>
       </div>
 
@@ -391,6 +410,7 @@ import {
 } from '@/utils/mediaLifecycle';
 import { invokeDesktop, sendDesktop } from '@/services/desktopTransport';
 import { isDesktopRuntime } from '@/utils/runtime';
+import { calculateMiniSeekTime } from '@/utils/miniPlayer';
 
 export default {
   name: 'Lyrics',
@@ -418,6 +438,8 @@ export default {
       miniTall: false,
       isAlwaysOnTop: false,
       pinDismissed: false,
+      miniSeekDragging: false,
+      miniSeekPreview: null,
     };
   },
   computed: {
@@ -448,7 +470,8 @@ export default {
     miniProgressPercent() {
       const duration = this.player.currentTrackDuration;
       if (!duration) return 0;
-      return Math.min(100, (this.player.progress / duration) * 100);
+      const progress = this.miniSeekPreview ?? this.player.progress;
+      return Math.min(100, (progress / duration) * 100);
     },
     currentTrack() {
       return this.player.currentTrack;
@@ -663,6 +686,46 @@ export default {
     handleMiniMouseLeave() {
       this.pinDismissed = false;
       this.setWindowButtons(false);
+    },
+    updateMiniSeekPreview(event) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      this.miniSeekPreview = calculateMiniSeekTime(
+        event.clientX,
+        bounds.left,
+        bounds.width,
+        this.player.currentTrackDuration
+      );
+    },
+    startMiniSeek(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.miniSeekDragging = true;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      this.updateMiniSeekPreview(event);
+    },
+    moveMiniSeek(event) {
+      if (!this.miniSeekDragging) return;
+      this.updateMiniSeekPreview(event);
+    },
+    finishMiniSeek(event) {
+      if (!this.miniSeekDragging) return;
+      this.updateMiniSeekPreview(event);
+      const seekTime = this.miniSeekPreview;
+      this.miniSeekDragging = false;
+      this.player.progress = seekTime;
+      this.miniSeekPreview = null;
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    },
+    cancelMiniSeek() {
+      this.miniSeekDragging = false;
+      this.miniSeekPreview = null;
+    },
+    nudgeMiniSeek(offset) {
+      const duration = this.player.currentTrackDuration;
+      this.player.progress = Math.min(
+        duration,
+        Math.max(0, this.player.progress + offset)
+      );
     },
     initDate() {
       var _this = this;
@@ -1026,29 +1089,54 @@ export default {
     }
   }
 
-  .mini-progress {
+  .mini-progress-track {
     position: absolute;
     left: 0;
+    right: 0;
     bottom: 0;
-    height: 2px;
-    background-color: var(--color-primary);
-    transition: width 0.4s linear;
+    height: 10px;
+    cursor: pointer;
+    touch-action: none;
+    -webkit-app-region: no-drag;
 
-    &.anon {
-      height: 3px;
-      background: linear-gradient(90deg, #ffc2d4 0%, #ff8fb1 60%, #f76d99 100%);
+    &:focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: -2px;
     }
 
-    // Anon 骑在进度末端，往上站在线条上
-    .mini-progress-rider {
+    .mini-progress {
       position: absolute;
-      right: -11px;
-      bottom: 1px;
-      width: 22px;
-      height: 22px;
-      background: url('/img/logos/anon.gif') center / 22px no-repeat;
-      image-rendering: pixelated;
-      pointer-events: none;
+      left: 0;
+      bottom: 0;
+      height: 2px;
+      background-color: var(--color-primary);
+      transition: width 0.4s linear;
+
+      &.anon {
+        height: 3px;
+        background: linear-gradient(
+          90deg,
+          #ffc2d4 0%,
+          #ff8fb1 60%,
+          #f76d99 100%
+        );
+      }
+
+      // Anon 骑在进度末端，往上站在线条上
+      .mini-progress-rider {
+        position: absolute;
+        right: -11px;
+        bottom: 1px;
+        width: 22px;
+        height: 22px;
+        background: url('/img/logos/anon.gif') center / 22px no-repeat;
+        image-rendering: pixelated;
+        pointer-events: none;
+      }
+    }
+
+    &.dragging .mini-progress {
+      transition: none;
     }
   }
 }

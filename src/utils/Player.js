@@ -225,6 +225,8 @@ export default class {
   set progress(value) {
     if (this._howler) {
       this._howler.seek(value);
+      // 拖拽时先同步 UI；等待下一次时钟采样会让滑块短暂跳回旧位置。
+      this._progress = value;
       if (isCreateMpris) {
         void sendDesktop('seeked', this._howler.seek());
       }
