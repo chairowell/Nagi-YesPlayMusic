@@ -49,6 +49,26 @@ function secretsMatch(received, expected) {
   );
 }
 
+function appendVaryHeader(response, name) {
+  const current = response.getHeader('Vary');
+  const values = (
+    Array.isArray(current) ? current : String(current || '').split(',')
+  )
+    .map(value => value.trim())
+    .filter(Boolean);
+  if (!values.some(value => value.toLowerCase() === name.toLowerCase())) {
+    values.push(name);
+  }
+  response.setHeader('Vary', values.join(', '));
+}
+
+function sendJson(response, statusCode, payload) {
+  response.statusCode = statusCode;
+  response.setHeader('Content-Type', 'application/json; charset=utf-8');
+  response.setHeader('Cache-Control', 'no-store');
+  response.end(JSON.stringify(payload));
+}
+
 export function installLocalRequestBoundary(
   app,
   { allowedOrigins, nativeToken = null }
@@ -65,16 +85,14 @@ export function installLocalRequestBoundary(
       fetchSite === 'cross-site' ||
       (typeof origin === 'string' && !allowed.has(origin))
     ) {
-      response.status(403).send({ message: '拒绝跨站访问本地服务' });
+      sendJson(response, 403, { message: '拒绝跨站访问本地服务' });
       return;
     }
 
     if (origin) {
-      response.vary('Origin');
-      response.set({
-        'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Credentials': 'true',
-      });
+      appendVaryHeader(response, 'Origin');
+      response.setHeader('Access-Control-Allow-Origin', origin);
+      response.setHeader('Access-Control-Allow-Credentials', 'true');
     }
 
     if (
@@ -82,7 +100,7 @@ export function installLocalRequestBoundary(
       request.url.split('?')[0].startsWith('/native/') &&
       !secretsMatch(request.headers[NATIVE_AUTH_HEADER], nativeToken)
     ) {
-      response.status(401).send({ message: 'native 接口认证失败' });
+      sendJson(response, 401, { message: 'native 接口认证失败' });
       return;
     }
 

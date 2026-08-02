@@ -18,7 +18,7 @@ describe('渲染进程内容安全策略', () => {
     applyRendererSecurityHeaders(
       {},
       {
-        set(name, value) {
+        setHeader(name, value) {
           headers.set(name.toLowerCase(), value);
         },
       },

@@ -28,23 +28,14 @@ function createGuardedBoundary() {
     const response = {
       statusCode: 200,
       body: null,
-      status(code) {
-        this.statusCode = code;
-        return this;
+      setHeader(key, value) {
+        responseHeaders.set(key.toLowerCase(), value);
       },
-      send(body) {
+      getHeader(key) {
+        return responseHeaders.get(key.toLowerCase());
+      },
+      end(body) {
         this.body = body;
-        return this;
-      },
-      vary(value) {
-        responseHeaders.set('vary', value);
-        return this;
-      },
-      set(values) {
-        for (const [key, value] of Object.entries(values)) {
-          responseHeaders.set(key.toLowerCase(), value);
-        }
-        return this;
       },
     };
     boundaryLayer.handle(requestObject, response, () => (nextCalled = true));

@@ -14,8 +14,8 @@ export const CONTENT_SECURITY_POLICY = [
 ].join('; ');
 
 export function applyRendererSecurityHeaders(_request, response, next) {
-  response.set('Content-Security-Policy', CONTENT_SECURITY_POLICY);
-  response.set('X-Content-Type-Options', 'nosniff');
-  response.set('Referrer-Policy', 'no-referrer');
+  response.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('Referrer-Policy', 'no-referrer');
   next();
 }
