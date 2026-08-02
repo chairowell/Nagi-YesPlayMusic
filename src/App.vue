@@ -1,5 +1,11 @@
 <template>
-  <div id="app" :class="{ 'user-select-none': userSelectNone }">
+  <div
+    id="app"
+    :class="{
+      'user-select-none': userSelectNone,
+      'window-hidden': windowHidden,
+    }"
+  >
     <Scrollbar v-show="!showLyrics" ref="scrollbar" />
     <Navbar v-show="showNavbar" ref="navbar" />
     <main
@@ -45,6 +51,7 @@ import { ipcRenderer } from './electron/ipcRenderer';
 import { isAccountLoggedIn, isLooseLoggedIn } from '@/utils/auth';
 import Lyrics from './views/lyrics.vue';
 import { mapState } from 'vuex';
+import { observeDocumentVisibility } from '@/utils/mediaLifecycle';
 
 export default {
   name: 'App',
@@ -71,6 +78,7 @@ export default {
       isElectron: process.env.IS_ELECTRON, // true || undefined
       userSelectNone: false,
       autoOpenedLyrics: false, // 迷你模式是我们自动打开的，拖回大窗口要还原
+      windowHidden: document.hidden,
     };
   },
   computed: {
@@ -100,12 +108,17 @@ export default {
     if (this.isElectron) ipcRenderer(this);
     window.addEventListener('keydown', this.handleKeydown);
     window.addEventListener('resize', this.handleMiniResize);
+    this.visibilityCleanup = observeDocumentVisibility(
+      document,
+      hidden => (this.windowHidden = hidden)
+    );
     this.handleMiniResize();
     this.fetchData();
   },
   beforeUnmount() {
     window.removeEventListener('keydown', this.handleKeydown);
     window.removeEventListener('resize', this.handleMiniResize);
+    this.visibilityCleanup?.();
   },
   methods: {
     // 窗口拖窄时自动切到歌词页（里面是迷你播放器布局），拖回来再收起
@@ -146,6 +159,14 @@ export default {
 #app {
   width: 100%;
   transition: all 0.4s;
+}
+
+// Electron 和 WKWebView 都可能在隐藏窗口后继续合成动画；
+// 后台只暂停视觉效果，播放器和菜单栏歌词仍照常更新。
+#app.window-hidden *,
+#app.window-hidden *::before,
+#app.window-hidden *::after {
+  animation-play-state: paused !important;
 }
 
 main {

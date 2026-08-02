@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  observeDocumentVisibility,
   disposeListeners,
   destroyMediaPlayer,
   listen,
@@ -50,5 +51,27 @@ describe('全局事件生命周期', () => {
       ['remove', 'keydown', handler],
     ]);
     expect(cleanups).toEqual([]);
+  });
+
+  test('窗口隐藏和恢复时同步后台状态并在卸载时停止监听', () => {
+    const listeners = new Map();
+    const documentTarget = {
+      hidden: true,
+      addEventListener: (type, handler) => listeners.set(type, handler),
+      removeEventListener: (type, handler) => {
+        if (listeners.get(type) === handler) listeners.delete(type);
+      },
+    };
+    const states = [];
+
+    const cleanup = observeDocumentVisibility(documentTarget, hidden =>
+      states.push(hidden)
+    );
+    documentTarget.hidden = false;
+    listeners.get('visibilitychange')();
+    cleanup();
+
+    expect(states).toEqual([true, false]);
+    expect(listeners.has('visibilitychange')).toBe(false);
   });
 });
