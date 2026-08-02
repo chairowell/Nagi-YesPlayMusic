@@ -45,17 +45,16 @@
 **修了一个切歌的老问题。** 网络慢的时候快速切歌，前一首的歌词响应可能晚于后一首到达，
 把新歌的歌词覆盖成上一首的。现在请求前会记住是哪首歌，回来发现已经切歌就直接丢弃。
 
-**换掉了整套构建工具。** 原来的 Vue CLI 4（webpack 4）在新版 Node 上跑不起来，
-开发模式也拉不起窗口。现在是 Vite 7 加 electron-vite 5，Electron 升到 43，
-构建时间从三四分钟降到一秒半，改完代码存盘就生效。渲染层也已经升级到 Vue 3，
+**迁移到 Tauri。** 渲染层已经升级到 Vue 3 和 Vite 7，桌面外壳改为 Tauri 2。
+不再随应用捆绑一整套 Chromium，窗口、菜单栏、媒体状态和本地服务由 Rust 主进程接管；
 业务组件继续使用选项式 API。
 
 ## 安装
 
-到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 dmg，
-Apple Silicon 选 `arm64`，Intel 选 `x64`。
+到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 dmg。
+当前版本只提供 Apple Silicon（`arm64`）安装包。
 
-安装包没有签名，首次打开时 macOS 会拦一道。放行方法二选一：
+安装包没有 Developer ID 签名和 Apple 公证，首次打开时 macOS 会拦一道。放行方法二选一：
 
 - 打开「系统设置 → 隐私与安全性」，往下翻到被拦截的提示，点「仍要打开」
 - 或者在终端跑一句：`xattr -dr com.apple.quarantine /Applications/YesPlayMusic.app`
@@ -69,40 +68,28 @@ Apple Silicon 选 `arm64`，Intel 选 `x64`。
 ```bash
 cp .env.example .env   # 必须，缺了它前端拿不到 API 地址，界面会全空
 bun install
-bun run dev            # 开发，主进程和渲染进程都热重载
-bun run build:app      # 出 macOS 安装包
+bun run dev:tauri      # 开发模式
+bun run build:tauri    # 构建 Apple Silicon 应用
+bun run package:tauri:dmg  # 生成可分发的 DMG 和 SHA-256 校验文件
 ```
 
 `.env` 不进版本库，但 `.env.example` 里已经是一份可以直接用的完整配置，
 不需要自己去申请任何密钥。
 
-产物在 `dist_electron/`，把 `mac-arm64/YesPlayMusic.app` 拷进 `/Applications` 就能用。
+应用产物在
+`src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app`，
+DMG 和校验文件在 `dist_tauri/`。
+
+版本 tag 默认也走这套无 Developer ID 的发布流程。以后需要正式签名和公证时，
+在仓库中设置 `APPLE_SIGNING_ENABLED=true` 并补齐 Apple 凭据即可；对应 CI 步骤仍然保留。
 
 开发细节和踩过的坑都记在 [CLAUDE.md](CLAUDE.md) 里。
 
 ## 关于 Windows 和 Linux
 
-这个版本只在 macOS 上开发和测试，CI 也只跑 macOS。上游原有的 Windows 和 Linux
-代码都还在，`electron-builder.yml` 里也配好了打包目标，`bun run build:win` 和
-`build:linux` 本地能跑出包。
-
-但**上面那些新功能不是全都跨平台的**：
-
-| 功能 | Windows / Linux |
-| --- | --- |
-| 迷你播放器、双语歌词 | 可用 |
-| 窗口置顶 | 可用 |
-| Anon 进度条 | 可用 |
-| 切歌歌词错位的修复 | 可用 |
-| 菜单栏封面与歌词 | **未实现**，只有 macOS 有 |
-| 迷你模式自动收起窗口按钮 | **未实现**，这是 macOS 独有的接口 |
-
-菜单栏那部分是写在 `src/electron/tray.js` 的 `YPMTrayMacImpl` 里的，Windows 和 Linux
-走的还是上游原来的托盘实现，收不到 `updateNowPlaying` 事件，所以不会报错，就是没有效果。
-想补的话照着 macOS 那个类实现一份就行。
-
-真跑通了，把 `.github/workflows/build.yaml` 里对应的 job 取消注释（已经写好放在那儿），
-这个仓库很乐意把它们变成正式支持的平台。
+这个 fork 只面向 Apple Silicon Mac 开发、测试和发版，目前不提供 Intel Mac、Windows
+或 Linux 安装包。需要完整的跨平台支持，请使用
+[上游 YesPlayMusic](https://github.com/qier222/YesPlayMusic)。
 
 ## 致谢
 
@@ -116,7 +103,7 @@ bun run build:app      # 出 macOS 安装包
 - [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 及其
   [维护分支](https://github.com/neteasecloudmusicapienhanced/api)：网易云 API 的实现
 - [UnblockNeteaseMusic](https://github.com/UnblockNeteaseMusic/server)：灰色歌曲解锁
-- [Vue](https://vuejs.org)、[Vite](https://vite.dev)、[Electron](https://www.electronjs.org)
+- [Vue](https://vuejs.org)、[Vite](https://vite.dev)、[Tauri](https://tauri.app)
 
 界面设计的灵感来自 [Apple Music](https://music.apple.com)、
 [YouTube Music](https://music.youtube.com) 和 [Spotify](https://www.spotify.com)。

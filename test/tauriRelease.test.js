@@ -11,6 +11,10 @@ const workflow = readFileSync(
   new URL('../.github/workflows/build.yaml', import.meta.url),
   'utf8'
 );
+const readme = readFileSync(
+  new URL('../README.md', import.meta.url),
+  'utf8'
+);
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 );
@@ -102,4 +106,11 @@ test('只有版本 tag 获得写权限并创建草稿 release', () => {
 
 test('DMG 文件名明确标记版本和 Apple Silicon 架构', () => {
   expect(tauriDmgName('0.6.0')).toBe('YesPlayMusic_0.6.0_aarch64.dmg');
+});
+
+test('README 只说明 Apple Silicon 无签名 Tauri 发布方式', () => {
+  expect(readme).toContain('bun run build:tauri');
+  expect(readme).toContain('bun run package:tauri:dmg');
+  expect(readme).not.toContain('Intel 选 `x64`');
+  expect(readme).not.toContain('产物在 `dist_electron/`');
 });
