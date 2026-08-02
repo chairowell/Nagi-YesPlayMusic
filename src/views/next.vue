@@ -36,6 +36,7 @@ import TrackList from '@/components/TrackList.vue';
 
 export default {
   name: 'Next',
+  inject: ['appShell'],
   components: {
     TrackList,
   },
@@ -83,7 +84,7 @@ export default {
   },
   activated() {
     this.loadTracks();
-    this.$parent.$refs.scrollbar.restorePosition();
+    this.appShell.restoreScrollPosition();
   },
   methods: {
     ...mapActions(['playTrackOnListByID']),

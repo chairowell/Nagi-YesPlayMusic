@@ -76,6 +76,7 @@ import SvgIcon from '@/components/SvgIcon.vue';
 
 export default {
   name: 'Explore',
+  inject: ['appShell'],
   components: {
     CoverRow,
     ButtonTwoTone,
@@ -112,7 +113,7 @@ export default {
   },
   activated() {
     this.loadData();
-    this.$parent.$refs.scrollbar.restorePosition();
+    this.appShell.restoreScrollPosition();
   },
   methods: {
     ...mapMutations(['togglePlaylistCategory']),

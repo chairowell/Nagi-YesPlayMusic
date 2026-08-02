@@ -22,6 +22,7 @@ import TrackList from '@/components/TrackList.vue';
 
 export default {
   name: 'DailyTracks',
+  inject: ['appShell'],
   components: {
     TrackList,
   },
@@ -42,7 +43,7 @@ export default {
     } else {
       this.show = true;
     }
-    this.$parent.$refs.main.scrollTo(0, 0);
+    this.appShell.scrollMainTo(0, 0);
   },
   methods: {
     ...mapMutations(['updateDailyTracks']),

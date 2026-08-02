@@ -40,6 +40,15 @@ import { mapState } from 'vuex';
 
 export default {
   name: 'App',
+  provide() {
+    return {
+      appShell: {
+        restoreScrollPosition: () =>
+          this.$refs.scrollbar?.restorePosition(),
+        scrollMainTo: (...args) => this.$refs.main?.scrollTo(...args),
+      },
+    };
+  },
   components: {
     Navbar,
     Player,

@@ -82,6 +82,7 @@ import DailyTracksCard from '@/components/DailyTracksCard.vue';
 
 export default {
   name: 'Home',
+  inject: ['appShell'],
   components: { CoverRow, FMCard, DailyTracksCard },
   data() {
     return {
@@ -106,7 +107,7 @@ export default {
   },
   activated() {
     this.loadData();
-    this.$parent.$refs.scrollbar.restorePosition();
+    this.appShell.restoreScrollPosition();
   },
   methods: {
     loadData() {

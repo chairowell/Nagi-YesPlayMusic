@@ -240,6 +240,7 @@ function extractLyricPart(rawLyric) {
 
 export default {
   name: 'Library',
+  inject: ['appShell'],
   components: { SvgIcon, CoverRow, TrackList, MvRow, ContextMenu },
   data() {
     return {
@@ -308,7 +309,7 @@ export default {
     this.loadData();
   },
   activated() {
-    this.$parent.$refs.scrollbar.restorePosition();
+    this.appShell.restoreScrollPosition();
     this.loadData();
     dailyTask();
   },
@@ -356,7 +357,7 @@ export default {
         return;
       }
       this.currentTab = tab;
-      this.$parent.$refs.main.scrollTo({ top: 375, behavior: 'smooth' });
+      this.appShell.scrollMainTo({ top: 375, behavior: 'smooth' });
     },
     goToLikedSongsList() {
       this.$router.push({ path: '/library/liked-songs' });
