@@ -3,6 +3,8 @@ import '@/assets/css/global.scss';
 import NProgress from 'nprogress';
 import '@/assets/css/nprogress.css';
 import { migrateLegacyDesktopSettings } from '@/services/legacyDataMigration';
+import { isDesktopRuntime } from '@/utils/runtime';
+import { purgeLegacyDesktopAuthStorage } from '@/utils/authStorage';
 
 window.resetApp = () => {
   localStorage.clear();
@@ -26,6 +28,7 @@ async function bootstrap() {
   // store 读取 localStorage 发生在模块求值阶段，所以必须先完成一次性迁移，
   // 再动态加载整个业务依赖图。
   await migrateLegacyDesktopSettings();
+  purgeLegacyDesktopAuthStorage(localStorage, isDesktopRuntime);
   const [
     { default: App },
     { default: router },

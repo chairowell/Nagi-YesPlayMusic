@@ -1,8 +1,11 @@
 import Cookies from 'js-cookie';
 import { logout } from '@/api/auth';
 import store from '@/store';
+import { isDesktopRuntime } from '@/utils/runtime';
+import { shouldUseLegacyCookieFallback } from '@/utils/authStorage';
 
 export function setCookies(string) {
+  if (!shouldUseLegacyCookieFallback(isDesktopRuntime)) return;
   const cookies = string.split(';;');
   cookies.map(cookie => {
     document.cookie = cookie;
@@ -12,12 +15,18 @@ export function setCookies(string) {
 }
 
 export function getCookie(key) {
-  return Cookies.get(key) ?? localStorage.getItem(`cookie-${key}`);
+  const cookie = Cookies.get(key);
+  if (cookie !== undefined) return cookie;
+  return shouldUseLegacyCookieFallback(isDesktopRuntime)
+    ? localStorage.getItem(`cookie-${key}`)
+    : undefined;
 }
 
 export function removeCookie(key) {
   Cookies.remove(key);
-  localStorage.removeItem(`cookie-${key}`);
+  if (shouldUseLegacyCookieFallback(isDesktopRuntime)) {
+    localStorage.removeItem(`cookie-${key}`);
+  }
 }
 
 // MUSIC_U 只有在账户登录的情况下才有
