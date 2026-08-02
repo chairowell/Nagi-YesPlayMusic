@@ -22,6 +22,9 @@ use tauri_plugin_shell::{
     ShellExt,
 };
 
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSWindow, NSWindowButton};
+
 const API_PORT: u16 = 12_754;
 const DEV_WEB_PORT: u16 = 1_420;
 const RELEASE_WEB_PORT: u16 = 28_232;
@@ -153,6 +156,33 @@ fn update_tray_cover(app: &AppHandle, payload: &serde_json::Value) {
 
 fn emit_desktop_event(app: &AppHandle, event: &str) {
     let _ = app.emit(&format!("desktop://{event}"), ());
+}
+
+#[cfg(target_os = "macos")]
+fn set_window_button_visibility(window: WebviewWindow, visible: bool) -> Result<(), String> {
+    let window_on_main = window.clone();
+    window
+        .run_on_main_thread(move || match window_on_main.ns_window() {
+            Ok(pointer) => {
+                let ns_window = unsafe { &*(pointer.cast::<NSWindow>()) };
+                for kind in [
+                    NSWindowButton::CloseButton,
+                    NSWindowButton::MiniaturizeButton,
+                    NSWindowButton::ZoomButton,
+                ] {
+                    if let Some(button) = ns_window.standardWindowButton(kind) {
+                        button.setHidden(!visible);
+                    }
+                }
+            }
+            Err(error) => eprintln!("[tauri] 无法取得 macOS 窗口按钮：{error}"),
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_window_button_visibility(_window: WebviewWindow, _visible: bool) -> Result<(), String> {
+    Ok(())
 }
 
 fn normalize_electron_shortcut(shortcut: &str) -> String {
@@ -328,6 +358,14 @@ fn desktop_event(
             }
             update_tray_cover(&app, &payload);
         }
+        "setWindowButtonVisibility" => {
+            let visible = payload
+                .as_bool()
+                .ok_or_else(|| "窗口按钮显隐参数必须是布尔值".to_string())?;
+            if let Some(window) = app.get_webview_window("main") {
+                set_window_button_visibility(window, visible)?;
+            }
+        }
         // 这些事件在 Electron 里由 MPRIS、Discord、代理或动态图标消费；
         // Tauri macOS 端明确接收迁移期的 no-op，避免 renderer 出现未处理拒绝。
         "updateTrayPlayState"
@@ -336,7 +374,6 @@ fn desktop_event(
         | "player"
         | "setProxy"
         | "removeProxy"
-        | "setWindowButtonVisibility"
         | "seeked"
         | "playerCurrentTrackTime"
         | "switchRepeatMode"
