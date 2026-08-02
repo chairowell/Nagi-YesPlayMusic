@@ -8,7 +8,7 @@
       @scroll="handleScroll"
     >
       <router-view v-slot="{ Component }">
-        <keep-alive>
+        <keep-alive :max="4">
           <component :is="Component" v-if="$route.meta.keepAlive" />
         </keep-alive>
         <component :is="Component" v-if="!$route.meta.keepAlive" />
