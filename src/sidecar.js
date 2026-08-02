@@ -10,6 +10,7 @@ import {
   installLocalRequestBoundary,
 } from './services/localRequestBoundary';
 import { applyRendererSecurityHeaders } from './services/contentSecurityPolicy';
+import { installSidecarHealthRoute } from './services/sidecarIdentity';
 
 const HOST = '127.0.0.1';
 
@@ -52,6 +53,7 @@ function startRendererServer(
   { allowedOrigins, nativeToken }
 ) {
   const app = express();
+  installSidecarHealthRoute(app);
   installLocalRequestBoundary(app, { allowedOrigins });
   // 正式版页面由 sidecar 的 HTTP origin 提供，必须在真实响应上设置 CSP。
   app.use(applyRendererSecurityHeaders);
@@ -97,6 +99,7 @@ export async function runSidecar(args = process.argv.slice(2)) {
     port: config.apiPort,
     host: HOST,
   });
+  installSidecarHealthRoute(apiApp);
   installLocalRequestBoundary(apiApp, { allowedOrigins, nativeToken });
   registerNativeRoutes(apiApp);
   let rendererServer = null;

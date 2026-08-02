@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     env, fs,
-    io::{Cursor, ErrorKind},
+    io::{Cursor, ErrorKind, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     sync::Mutex,
     thread,
@@ -28,6 +28,8 @@ use objc2_app_kit::{NSWindow, NSWindowButton};
 const API_PORT: u16 = 12_754;
 const DEV_WEB_PORT: u16 = 1_420;
 const RELEASE_WEB_PORT: u16 = 28_232;
+const SIDECAR_HEALTH_PATH: &str = "/__yesplaymusic/health";
+const SIDECAR_HEALTH_BODY: &str = r#"{"service":"yesplaymusic-sidecar","protocol":1}"#;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 
@@ -466,18 +468,52 @@ where
         .any(|arg| arg.as_ref() == "--webview-smoke-test")
 }
 
-fn wait_for_port(port: u16, timeout: Duration) -> Result<(), String> {
+fn response_has_sidecar_identity(response: &str) -> bool {
+    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    let status_ok = headers
+        .lines()
+        .next()
+        .map(|line| line.starts_with("HTTP/1.1 200 ") || line.starts_with("HTTP/1.0 200 "))
+        .unwrap_or(false);
+    status_ok && body.trim() == SIDECAR_HEALTH_BODY
+}
+
+fn sidecar_identity_matches(address: SocketAddr) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(200)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let request = format!(
+        "GET {SIDECAR_HEALTH_PATH} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+
+    let mut response = String::new();
+    if stream.take(8 * 1024).read_to_string(&mut response).is_err() {
+        return false;
+    }
+    response_has_sidecar_identity(&response)
+}
+
+fn wait_for_sidecar(port: u16, timeout: Duration) -> Result<(), String> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let deadline = Instant::now() + timeout;
 
     while Instant::now() < deadline {
-        if TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok() {
+        if sidecar_identity_matches(address) {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(50));
     }
 
-    Err(format!("等待本机端口 {port} 超时"))
+    Err(format!(
+        "等待 YesPlayMusic sidecar 身份握手超时（端口 {port}）"
+    ))
 }
 
 fn start_sidecar(app: &tauri::App) -> Result<CommandChild, Box<dyn std::error::Error>> {
@@ -618,7 +654,7 @@ fn main() {
             } else {
                 RELEASE_WEB_PORT
             };
-            wait_for_port(ready_port, Duration::from_secs(15))?;
+            wait_for_sidecar(ready_port, Duration::from_secs(15))?;
             println!(
                 "[tauri] ready: pid={}, port={ready_port}",
                 std::process::id()
@@ -684,7 +720,7 @@ fn main() {
 mod tests {
     use super::{
         decode_tray_cover, is_smoke_test, is_webview_smoke_test, normalize_electron_shortcut,
-        parse_legacy_settings, tray_cover_url,
+        parse_legacy_settings, response_has_sidecar_identity, tray_cover_url,
     };
     use tauri_plugin_global_shortcut::Shortcut;
 
@@ -704,6 +740,21 @@ mod tests {
             "yesplaymusic-tauri",
             "--smoke-test"
         ]));
+    }
+
+    #[test]
+    fn occupied_port_must_answer_with_the_sidecar_identity() {
+        let valid = concat!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n",
+            "{\"service\":\"yesplaymusic-sidecar\",\"protocol\":1}"
+        );
+        let unrelated = "HTTP/1.1 200 OK\r\n\r\n{\"service\":\"other-app\"}";
+
+        assert!(response_has_sidecar_identity(valid));
+        assert!(!response_has_sidecar_identity(unrelated));
+        assert!(!response_has_sidecar_identity(
+            "HTTP/1.1 404 Not Found\r\n\r\n"
+        ));
     }
 
     #[test]
