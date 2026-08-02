@@ -1,4 +1,5 @@
 use std::{
+    env,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     sync::Mutex,
     thread,
@@ -16,6 +17,14 @@ const DEV_WEB_PORT: u16 = 1_420;
 const RELEASE_WEB_PORT: u16 = 28_232;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
+
+fn is_smoke_test<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter().any(|arg| arg.as_ref() == "--smoke-test")
+}
 
 fn wait_for_port(port: u16, timeout: Duration) -> Result<(), String> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
@@ -125,7 +134,21 @@ fn main() {
                 RELEASE_WEB_PORT
             };
             wait_for_port(ready_port, Duration::from_secs(15))?;
-            create_main_window(app)?;
+            println!(
+                "[tauri] ready: pid={}, port={ready_port}",
+                std::process::id()
+            );
+
+            if is_smoke_test(env::args()) {
+                // CI/性能验收只验证后台核心，不创建窗口，也不会抢用户焦点。
+                let handle = app.handle().clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(12));
+                    handle.exit(0);
+                });
+            } else {
+                create_main_window(app)?;
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -147,4 +170,15 @@ fn main() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_smoke_test;
+
+    #[test]
+    fn smoke_test_must_be_explicit() {
+        assert!(is_smoke_test(["yesplaymusic-tauri", "--smoke-test"]));
+        assert!(!is_smoke_test(["yesplaymusic-tauri"]));
+    }
 }

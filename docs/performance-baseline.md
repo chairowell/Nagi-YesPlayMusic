@@ -23,6 +23,24 @@ RSS 会重复计算进程间共享页，因此不是物理内存的绝对值；�
 此前的探索性采样中，Electron 整棵进程树 RSS 约为 383–722 MiB，Electron Framework
 自身约 273 MiB。这个范围只用于判断优化量级；正式验收必须用下面的固定场景重新采样。
 
+## Tauri 后台核心中间结果（2026-08-02）
+
+`bun run smoke:tauri` 在不创建 WebView、不显示窗口的条件下，验证 production bundle
+里的真实 sidecar、静态页面、同源 API 和退出回收：
+
+| 项目 | 结果 |
+| --- | ---: |
+| `.app` 总大小 | 73.4 MiB |
+| Tauri 主进程 RSS | 79.2 MiB |
+| Bun sidecar RSS | 90.25 MiB |
+| 两进程 RSS mean / P95 | 169.54 / 169.56 MiB |
+| 两进程 CPU mean / P95 | 0.38% / 1.3% |
+
+包体积相对 Electron 下降约 80.8%。后台核心 RSS 相比此前 Electron 探索性范围低约
+55.7%–76.5%，但这个数字**不含 WKWebView 的 WebContent / Networking 进程**，只能说明
+Rust + Bun 后台的固定成本，不能当作最终播放器内存。完整结果要等隐藏 WebView 和正常播放
+场景接入后再测。
+
 ## 采样方法
 
 先拿到被测版本的**精确根 PID**，再运行：
