@@ -30,6 +30,7 @@ const DEV_WEB_PORT: u16 = 1_420;
 const RELEASE_WEB_PORT: u16 = 28_232;
 const SIDECAR_HEALTH_PATH: &str = "/__yesplaymusic/health";
 const SIDECAR_HEALTH_BODY: &str = r#"{"service":"yesplaymusic-sidecar","protocol":1}"#;
+const SIDECAR_HEALTH_TOKEN_HEADER: &str = "X-YesPlayMusic-Health-Token";
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 
@@ -468,7 +469,7 @@ where
         .any(|arg| arg.as_ref() == "--webview-smoke-test")
 }
 
-fn response_has_sidecar_identity(response: &str) -> bool {
+fn response_has_sidecar_identity(response: &str, expected_token: &str) -> bool {
     let Some((headers, body)) = response.split_once("\r\n\r\n") else {
         return false;
     };
@@ -477,10 +478,18 @@ fn response_has_sidecar_identity(response: &str) -> bool {
         .next()
         .map(|line| line.starts_with("HTTP/1.1 200 ") || line.starts_with("HTTP/1.0 200 "))
         .unwrap_or(false);
-    status_ok && body.trim() == SIDECAR_HEALTH_BODY
+    let token_matches = headers.lines().skip(1).any(|line| {
+        line.split_once(':')
+            .map(|(name, value)| {
+                name.eq_ignore_ascii_case(SIDECAR_HEALTH_TOKEN_HEADER)
+                    && value.trim() == expected_token
+            })
+            .unwrap_or(false)
+    });
+    status_ok && token_matches && body.trim() == SIDECAR_HEALTH_BODY
 }
 
-fn sidecar_identity_matches(address: SocketAddr) -> bool {
+fn sidecar_identity_matches(address: SocketAddr, expected_token: &str) -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(200)) else {
         return false;
     };
@@ -497,15 +506,15 @@ fn sidecar_identity_matches(address: SocketAddr) -> bool {
     if stream.take(8 * 1024).read_to_string(&mut response).is_err() {
         return false;
     }
-    response_has_sidecar_identity(&response)
+    response_has_sidecar_identity(&response, expected_token)
 }
 
-fn wait_for_sidecar(port: u16, timeout: Duration) -> Result<(), String> {
+fn wait_for_sidecar(port: u16, expected_token: &str, timeout: Duration) -> Result<(), String> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let deadline = Instant::now() + timeout;
 
     while Instant::now() < deadline {
-        if sidecar_identity_matches(address) {
+        if sidecar_identity_matches(address, expected_token) {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(50));
@@ -516,7 +525,22 @@ fn wait_for_sidecar(port: u16, timeout: Duration) -> Result<(), String> {
     ))
 }
 
-fn start_sidecar(app: &tauri::App) -> Result<CommandChild, Box<dyn std::error::Error>> {
+fn generate_sidecar_health_token() -> Result<String, Box<dyn std::error::Error>> {
+    let mut bytes = [0_u8; 32];
+    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut token = String::with_capacity(64);
+    for byte in bytes {
+        token.push(HEX[(byte >> 4) as usize] as char);
+        token.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(token)
+}
+
+fn start_sidecar(
+    app: &tauri::App,
+    health_token: &str,
+) -> Result<CommandChild, Box<dyn std::error::Error>> {
     #[cfg(debug_assertions)]
     let command = app
         .shell()
@@ -542,7 +566,12 @@ fn start_sidecar(app: &tauri::App) -> Result<CommandChild, Box<dyn std::error::E
         ])
     };
 
-    let (mut events, child) = command.spawn()?;
+    let (mut events, mut child) = command.spawn()?;
+    // 匿名 stdin 管道不会像参数或环境变量那样出现在进程列表里。
+    if let Err(error) = child.write(format!("{health_token}\n").as_bytes()) {
+        let _ = child.kill();
+        return Err(error.into());
+    }
     tauri::async_runtime::spawn(async move {
         while let Some(event) = events.recv().await {
             match event {
@@ -646,7 +675,8 @@ fn main() {
                 GlobalShortcutRegistration::default(),
             )));
             app.manage(TrayCoverState::default());
-            let child = start_sidecar(app)?;
+            let health_token = generate_sidecar_health_token()?;
+            let child = start_sidecar(app, &health_token)?;
             app.manage(SidecarState(Mutex::new(Some(child))));
 
             let ready_port = if cfg!(debug_assertions) {
@@ -654,7 +684,7 @@ fn main() {
             } else {
                 RELEASE_WEB_PORT
             };
-            wait_for_sidecar(ready_port, Duration::from_secs(15))?;
+            wait_for_sidecar(ready_port, &health_token, Duration::from_secs(15))?;
             println!(
                 "[tauri] ready: pid={}, port={ready_port}",
                 std::process::id()
@@ -744,16 +774,26 @@ mod tests {
 
     #[test]
     fn occupied_port_must_answer_with_the_sidecar_identity() {
+        let expected_token = "a".repeat(64);
         let valid = concat!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n",
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "X-YesPlayMusic-Health-Token: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n",
+            "{\"service\":\"yesplaymusic-sidecar\",\"protocol\":1}"
+        );
+        let replayed = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "X-YesPlayMusic-Health-Token: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\r\n\r\n",
             "{\"service\":\"yesplaymusic-sidecar\",\"protocol\":1}"
         );
         let unrelated = "HTTP/1.1 200 OK\r\n\r\n{\"service\":\"other-app\"}";
 
-        assert!(response_has_sidecar_identity(valid));
-        assert!(!response_has_sidecar_identity(unrelated));
+        assert!(response_has_sidecar_identity(valid, &expected_token));
+        assert!(!response_has_sidecar_identity(replayed, &expected_token));
+        assert!(!response_has_sidecar_identity(unrelated, &expected_token));
         assert!(!response_has_sidecar_identity(
-            "HTTP/1.1 404 Not Found\r\n\r\n"
+            "HTTP/1.1 404 Not Found\r\n\r\n",
+            &expected_token
         ));
     }
 

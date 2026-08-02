@@ -13,6 +13,7 @@ import { applyRendererSecurityHeaders } from './services/contentSecurityPolicy';
 import {
   desktopSessionExpiryCookies,
   installSidecarHealthRoute,
+  readSidecarHealthToken,
 } from './services/sidecarIdentity';
 
 const HOST = '127.0.0.1';
@@ -69,10 +70,10 @@ async function runUnblockMusicAddonSmokeTest() {
 
 function startRendererServer(
   { apiPort, webPort, rendererDir },
-  { allowedOrigins, nativeToken }
+  { allowedOrigins, nativeToken, healthToken }
 ) {
   const app = express();
-  installSidecarHealthRoute(app);
+  installSidecarHealthRoute(app, healthToken);
   installLocalRequestBoundary(app, { allowedOrigins });
   // 正式版页面由 sidecar 的 HTTP origin 提供，必须在真实响应上设置 CSP。
   app.use(applyRendererSecurityHeaders);
@@ -104,8 +105,13 @@ function closeServer(server) {
   });
 }
 
-export async function runSidecar(args = process.argv.slice(2)) {
+export async function runSidecar(
+  args = process.argv.slice(2),
+  input = process.stdin
+) {
   const config = parseSidecarArgs(args);
+  // 令牌经父子进程的匿名 stdin 管道传入，不出现在 ps、URL、日志或环境变量中。
+  const healthToken = await readSidecarHealthToken(input);
   const allowedOrigins = [
     `http://${HOST}:${config.apiOnly ? 1420 : config.webPort}`,
   ];
@@ -118,14 +124,20 @@ export async function runSidecar(args = process.argv.slice(2)) {
     port: config.apiPort,
     host: HOST,
   });
-  installSidecarHealthRoute(apiApp);
+  // 正式版只在 Tauri 实际等待的 UI 端口暴露令牌；否则占用 UI 端口的进程
+  // 可以从仍正常启动的 API 端口偷到令牌，再伪造身份响应。
+  if (config.apiOnly) installSidecarHealthRoute(apiApp, healthToken);
   installLocalRequestBoundary(apiApp, { allowedOrigins, nativeToken });
   registerNativeRoutes(apiApp, config.apiPort);
   let rendererServer = null;
   try {
     rendererServer = config.apiOnly
       ? null
-      : await startRendererServer(config, { allowedOrigins, nativeToken });
+      : await startRendererServer(config, {
+          allowedOrigins,
+          nativeToken,
+          healthToken,
+        });
   } catch (error) {
     // UI 端口失败时一并回收 API，避免留下看不见的后台进程。
     await closeServer(apiApp.server);
