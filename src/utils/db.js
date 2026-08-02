@@ -1,7 +1,10 @@
 import axios from 'axios';
 import Dexie from 'dexie';
 import store from '@/store';
-import { sumTrackSourceStats } from '@/utils/cacheStats';
+import {
+  createKeyedTaskPool,
+  sumTrackSourceStats,
+} from '@/utils/cacheStats';
 import { isCacheLimitExceeded } from '@/utils/cachePolicy';
 // import pkg from "../../package.json";
 
@@ -31,6 +34,7 @@ db.version(1).stores({
 });
 
 let tracksCacheBytes = 0;
+const runTrackSourceCacheOnce = createKeyedTaskPool();
 
 // 等待 settings 可用
 async function waitForSettingsReady(timeoutMs = 5000) {
@@ -101,37 +105,40 @@ export async function trimTrackSourceCache() {
 
 export function cacheTrackSource(trackInfo, url, bitRate, from = 'netease') {
   if (!process.env.IS_ELECTRON) return;
-  const name = trackInfo.name;
-  const artist =
-    (trackInfo.ar && trackInfo.ar[0]?.name) ||
-    (trackInfo.artists && trackInfo.artists[0]?.name) ||
-    'Unknown';
-  let cover = trackInfo.al.picUrl;
-  if (cover.slice(0, 5) !== 'https') {
-    cover = 'https' + cover.slice(4);
-  }
-  axios.get(`${cover}?param=512y512`);
-  axios.get(`${cover}?param=224y224`);
-  axios.get(`${cover}?param=1024y1024`);
-  return axios
-    .get(url, {
+  return runTrackSourceCacheOnce(trackInfo.id, async () => {
+    // 正在播放的缓存命中会从读取路径返回，不应再次覆盖并重复累计大小。
+    if (await hasTrackSource(trackInfo.id)) return null;
+
+    const name = trackInfo.name;
+    const artist =
+      (trackInfo.ar && trackInfo.ar[0]?.name) ||
+      (trackInfo.artists && trackInfo.artists[0]?.name) ||
+      'Unknown';
+    let cover = trackInfo.al.picUrl;
+    if (cover.slice(0, 5) !== 'https') {
+      cover = 'https' + cover.slice(4);
+    }
+    axios.get(`${cover}?param=512y512`);
+    axios.get(`${cover}?param=224y224`);
+    axios.get(`${cover}?param=1024y1024`);
+
+    const response = await axios.get(url, {
       responseType: 'arraybuffer',
-    })
-    .then(response => {
-      db.trackSources.put({
-        id: trackInfo.id,
-        source: response.data,
-        bitRate,
-        from,
-        name,
-        artist,
-        createTime: new Date().getTime(),
-      });
-      console.debug(`[debug][db.js] cached track 👉 ${name} by ${artist}`);
-      tracksCacheBytes += response.data.byteLength;
-      trimTrackSourceCache();
-      return { trackID: trackInfo.id, source: response.data, bitRate };
     });
+    await db.trackSources.put({
+      id: trackInfo.id,
+      source: response.data,
+      bitRate,
+      from,
+      name,
+      artist,
+      createTime: new Date().getTime(),
+    });
+    console.debug(`[debug][db.js] cached track 👉 ${name} by ${artist}`);
+    tracksCacheBytes += response.data.byteLength;
+    await trimTrackSourceCache();
+    return { trackID: trackInfo.id, source: response.data, bitRate };
+  });
 }
 
 export function getTrackSource(id) {

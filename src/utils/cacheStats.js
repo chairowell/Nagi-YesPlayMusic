@@ -20,3 +20,21 @@ export async function sumTrackSourceStats(iterate) {
 export function revokeBlobURLs(urls, revoke) {
   for (const url of urls) revoke(url);
 }
+
+/**
+ * 同一个 key 的并发任务共享一个 Promise，完成后再允许下一次执行。
+ * 音频缓存借此避免同一首歌被同时下载、重复累计大小。
+ */
+export function createKeyedTaskPool() {
+  const pending = new Map();
+
+  return function runOnce(key, task) {
+    if (pending.has(key)) return pending.get(key);
+
+    const promise = Promise.resolve()
+      .then(task)
+      .finally(() => pending.delete(key));
+    pending.set(key, promise);
+    return promise;
+  };
+}
