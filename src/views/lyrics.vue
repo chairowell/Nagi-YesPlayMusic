@@ -1,6 +1,7 @@
 <template>
   <transition name="slide-up">
     <div
+      data-tauri-drag-region
       class="lyrics-page"
       :class="{ 'no-lyric': noLyric }"
       :data-theme="theme"
@@ -10,22 +11,26 @@
           (settings.lyricsBackground === 'blur') |
             (settings.lyricsBackground === 'dynamic')
         "
+        data-tauri-drag-region
         class="lyrics-background"
         :class="{
           'dynamic-background': settings.lyricsBackground === 'dynamic',
         }"
       >
         <div
+          data-tauri-drag-region
           class="top-right"
           :style="{ backgroundImage: `url(${bgImageUrl})` }"
         />
         <div
+          data-tauri-drag-region
           class="bottom-left"
           :style="{ backgroundImage: `url(${bgImageUrl})` }"
         />
       </div>
       <div
         v-if="settings.lyricsBackground === true"
+        data-tauri-drag-region
         class="gradient-background"
         :style="{ background }"
       ></div>
@@ -33,6 +38,7 @@
       <!-- 迷你模式：小封面 + 一行歌词。窗口拖窄时自动切换 -->
       <div
         v-if="isMini"
+        data-tauri-drag-region
         class="mini-player"
         @mouseenter="setWindowButtons(true)"
         @mouseleave="handleMiniMouseLeave"

@@ -502,6 +502,8 @@ fn create_main_window(
     let url = format!("http://127.0.0.1:{port}").parse()?;
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
         .title("YesPlayMusic")
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
         .inner_size(1_440.0, 840.0)
         .min_inner_size(300.0, 48.0)
         .visible(false)
