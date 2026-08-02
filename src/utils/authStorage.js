@@ -2,6 +2,17 @@ export function shouldUseLegacyCookieFallback(isDesktop) {
   return !isDesktop;
 }
 
+export function hasAccountSession({
+  isDesktop,
+  loginMode,
+  readableCookie,
+}) {
+  return (
+    loginMode === 'account' &&
+    (isDesktop || readableCookie !== undefined)
+  );
+}
+
 export function purgeLegacyDesktopAuthStorage(storage, isDesktop) {
   if (!isDesktop) return 0;
   const keys = Array.from(

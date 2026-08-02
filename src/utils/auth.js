@@ -2,7 +2,10 @@ import Cookies from 'js-cookie';
 import { logout } from '@/api/auth';
 import store from '@/store';
 import { isDesktopRuntime } from '@/utils/runtime';
-import { shouldUseLegacyCookieFallback } from '@/utils/authStorage';
+import {
+  hasAccountSession,
+  shouldUseLegacyCookieFallback,
+} from '@/utils/authStorage';
 
 export function setCookies(string) {
   if (!shouldUseLegacyCookieFallback(isDesktopRuntime)) return;
@@ -31,15 +34,16 @@ export function removeCookie(key) {
 
 // MUSIC_U 只有在账户登录的情况下才有
 export function isLoggedIn() {
-  return getCookie('MUSIC_U') !== undefined;
+  return hasAccountSession({
+    isDesktop: isDesktopRuntime,
+    loginMode: store.state.data.loginMode,
+    readableCookie: getCookie('MUSIC_U'),
+  });
 }
 
 // 账号登录
 export function isAccountLoggedIn() {
-  return (
-    getCookie('MUSIC_U') !== undefined &&
-    store.state.data.loginMode === 'account'
-  );
+  return isLoggedIn();
 }
 
 // 用户名搜索（用户数据为只读）

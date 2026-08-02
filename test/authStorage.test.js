@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import {
+  hasAccountSession,
   purgeLegacyDesktopAuthStorage,
   shouldUseLegacyCookieFallback,
 } from '../src/utils/authStorage';
@@ -57,5 +58,22 @@ describe('桌面登录凭据存储', () => {
 
     expect(purgeLegacyDesktopAuthStorage(storage, false)).toBe(0);
     expect(storage.has('cookie-MUSIC_U')).toBe(true);
+  });
+
+  test('桌面端用已持久化的登录模式判断会话，不需要读取 HttpOnly Cookie', () => {
+    expect(
+      hasAccountSession({
+        isDesktop: true,
+        loginMode: 'account',
+        readableCookie: undefined,
+      })
+    ).toBe(true);
+    expect(
+      hasAccountSession({
+        isDesktop: false,
+        loginMode: 'account',
+        readableCookie: undefined,
+      })
+    ).toBe(false);
   });
 });
