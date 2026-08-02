@@ -1554,6 +1554,7 @@ export default {
       };
       this.$store.commit('updateShortcut', payload);
       void sendDesktop('updateShortcut', payload);
+      void sendDesktop('settings', this.settings);
       this.showToast('快捷键已保存');
       this.recordedShortcut = [];
     },
@@ -1565,7 +1566,7 @@ export default {
     },
     restoreDefaultShortcuts() {
       this.$store.commit('restoreDefaultShortcuts');
-      void sendDesktop('restoreDefaultShortcuts');
+      void sendDesktop('restoreDefaultShortcuts', this.settings);
     },
   },
 };

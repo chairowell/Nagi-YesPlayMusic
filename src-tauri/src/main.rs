@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     sync::Mutex,
@@ -12,6 +13,7 @@ use tauri::{
     AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
@@ -23,8 +25,136 @@ const RELEASE_WEB_PORT: u16 = 28_232;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 
+#[derive(Default)]
+struct GlobalShortcutRegistration {
+    actions: HashMap<u32, String>,
+    settings: Option<serde_json::Value>,
+    temporarily_disabled: bool,
+}
+
+struct GlobalShortcutRegistrationState(Mutex<GlobalShortcutRegistration>);
+
 fn emit_desktop_event(app: &AppHandle, event: &str) {
     let _ = app.emit(&format!("desktop://{event}"), ());
+}
+
+fn normalize_electron_shortcut(shortcut: &str) -> String {
+    shortcut
+        .split('+')
+        .map(|part| match part {
+            "CommandOrControl" => "CmdOrCtrl",
+            "Right" => "ArrowRight",
+            "Left" => "ArrowLeft",
+            "Up" => "ArrowUp",
+            "Down" => "ArrowDown",
+            _ => part,
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn register_global_shortcuts(app: &AppHandle) -> Result<(), String> {
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|error| error.to_string())?;
+
+    let state = app.state::<GlobalShortcutRegistrationState>();
+    let (settings, temporarily_disabled) = {
+        let mut registration = state.0.lock().map_err(|error| error.to_string())?;
+        registration.actions.clear();
+        (
+            registration.settings.clone(),
+            registration.temporarily_disabled,
+        )
+    };
+    let Some(settings) = settings else {
+        return Ok(());
+    };
+    if temporarily_disabled
+        || !settings
+            .get("enableGlobalShortcut")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
+    {
+        return Ok(());
+    }
+
+    let shortcuts = settings
+        .get("shortcuts")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "快捷键设置缺少 shortcuts 数组".to_string())?;
+    let mut actions = HashMap::new();
+    for item in shortcuts {
+        let Some(action) = item.get("id").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(accelerator) = item
+            .get("globalShortcut")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let Ok(shortcut) = normalize_electron_shortcut(accelerator).parse::<Shortcut>() else {
+            eprintln!("[tauri] 忽略无法解析的快捷键：{accelerator}");
+            continue;
+        };
+        let shortcut_id = shortcut.id();
+        if let Err(error) = app.global_shortcut().register(shortcut) {
+            // 单个组合被系统或其他应用占用时，其余快捷键仍应可用。
+            eprintln!("[tauri] 无法注册快捷键 {accelerator}: {error}");
+            continue;
+        }
+        actions.insert(shortcut_id, action.to_string());
+    }
+
+    state.0.lock().map_err(|error| error.to_string())?.actions = actions;
+    Ok(())
+}
+
+fn update_shortcut_settings(
+    app: &AppHandle,
+    channel: &str,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    let state = app.state::<GlobalShortcutRegistrationState>();
+    {
+        let mut registration = state.0.lock().map_err(|error| error.to_string())?;
+        match channel {
+            "settings" => registration.settings = Some(payload),
+            "switchGlobalShortcutStatusTemporary" => {
+                registration.temporarily_disabled = payload.as_str() == Some("disable");
+            }
+            "updateShortcut" => {
+                if let (Some(settings), Some(id), Some(shortcut)) = (
+                    registration.settings.as_mut(),
+                    payload.get("id").and_then(serde_json::Value::as_str),
+                    payload.get("shortcut").and_then(serde_json::Value::as_str),
+                ) {
+                    if payload.get("type").and_then(serde_json::Value::as_str)
+                        == Some("globalShortcut")
+                    {
+                        if let Some(item) = settings
+                            .get_mut("shortcuts")
+                            .and_then(serde_json::Value::as_array_mut)
+                            .and_then(|items| {
+                                items.iter_mut().find(|item| {
+                                    item.get("id").and_then(serde_json::Value::as_str) == Some(id)
+                                })
+                            })
+                        {
+                            item["globalShortcut"] =
+                                serde_json::Value::String(shortcut.to_string());
+                        }
+                    }
+                }
+            }
+            "restoreDefaultShortcuts" => {
+                registration.settings = Some(payload);
+            }
+            _ => {}
+        }
+    }
+    register_global_shortcuts(app)
 }
 
 #[tauri::command]
@@ -34,6 +164,12 @@ fn desktop_event(
     payload: serde_json::Value,
 ) -> Result<(), String> {
     match channel.as_str() {
+        "settings"
+        | "switchGlobalShortcutStatusTemporary"
+        | "updateShortcut"
+        | "restoreDefaultShortcuts" => {
+            update_shortcut_settings(&app, &channel, payload)?;
+        }
         "updateTrayTooltip" => {
             if let (Some(tray), Some(title)) = (app.tray_by_id("main-tray"), payload.as_str()) {
                 tray.set_tooltip(Some(title))
@@ -51,16 +187,12 @@ fn desktop_event(
         }
         // 这些事件在 Electron 里由 MPRIS、Discord、代理或动态图标消费；
         // Tauri macOS 端明确接收迁移期的 no-op，避免 renderer 出现未处理拒绝。
-        "settings"
-        | "updateTrayPlayState"
+        "updateTrayPlayState"
         | "updateTrayLikeState"
         | "updateTrayIcon"
         | "player"
         | "setProxy"
         | "removeProxy"
-        | "switchGlobalShortcutStatusTemporary"
-        | "updateShortcut"
-        | "restoreDefaultShortcuts"
         | "setWindowButtonVisibility"
         | "seeked"
         | "playerCurrentTrackTime"
@@ -241,9 +373,41 @@ fn main() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let action = app
+                        .state::<GlobalShortcutRegistrationState>()
+                        .0
+                        .lock()
+                        .ok()
+                        .and_then(|registration| registration.actions.get(&shortcut.id()).cloned());
+                    match action.as_deref() {
+                        Some("minimize") => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                if window.is_visible().unwrap_or(false) {
+                                    let _ = window.hide();
+                                } else {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        }
+                        Some(action) => emit_desktop_event(app, action),
+                        None => {}
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
+            app.manage(GlobalShortcutRegistrationState(Mutex::new(
+                GlobalShortcutRegistration::default(),
+            )));
             let child = start_sidecar(app)?;
             app.manage(SidecarState(Mutex::new(Some(child))));
 
@@ -299,11 +463,31 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_smoke_test;
+    use super::{is_smoke_test, normalize_electron_shortcut};
+    use tauri_plugin_global_shortcut::Shortcut;
 
     #[test]
     fn smoke_test_must_be_explicit() {
         assert!(is_smoke_test(["yesplaymusic-tauri", "--smoke-test"]));
         assert!(!is_smoke_test(["yesplaymusic-tauri"]));
+    }
+
+    #[test]
+    fn electron_default_shortcuts_can_be_parsed_by_tauri() {
+        for accelerator in [
+            "Alt+CommandOrControl+P",
+            "Alt+CommandOrControl+Right",
+            "Alt+CommandOrControl+Left",
+            "Alt+CommandOrControl+Up",
+            "Alt+CommandOrControl+Down",
+            "Alt+CommandOrControl+L",
+            "Alt+CommandOrControl+M",
+        ] {
+            let normalized = normalize_electron_shortcut(accelerator);
+            assert!(
+                normalized.parse::<Shortcut>().is_ok(),
+                "Tauri 无法解析 {accelerator}（转换后为 {normalized}）"
+            );
+        }
     }
 }

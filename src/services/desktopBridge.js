@@ -4,7 +4,10 @@ import {
   isDesktopRuntime,
 } from '@/utils/runtime';
 import { createDesktopEventHandlers } from '@/services/desktopEventHandlers';
-import { electronRenderer } from '@/services/desktopTransport';
+import {
+  electronRenderer,
+  sendDesktop,
+} from '@/services/desktopTransport';
 
 export { sendDesktop, invokeDesktop } from '@/services/desktopTransport';
 
@@ -14,6 +17,9 @@ export async function connectDesktopEvents(self) {
   document.body.setAttribute('data-electron', 'yes');
   document.body.setAttribute('data-electron-os', platform);
   const handlers = createDesktopEventHandlers(self, store, store.state.player);
+  // Tauri 没有 Electron 主进程的持久化 store，启动时必须主动同步一次，
+  // 否则全局快捷键要等用户改过任意设置后才会真正注册。
+  void sendDesktop('settings', store.state.settings);
 
   if (electronRenderer) {
     const listeners = Object.entries(handlers).map(([channel, handler]) => {
