@@ -100,7 +100,7 @@ export default {
     border: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow: 0 0 6px rgba(255, 255, 255, 0.08);
   }
-  .menu .item:hover {
+  .menu :deep(.item:hover) {
     color: var(--color-text);
   }
 }
@@ -111,7 +111,7 @@ export default {
   }
 }
 
-.menu .item {
+.menu :deep(.item) {
   font-weight: 600;
   font-size: 14px;
   padding: 10px 14px;
@@ -129,15 +129,15 @@ export default {
     opacity: 0.75;
     transform: scale(0.95);
   }
-
-  .svg-icon {
-    height: 16px;
-    width: 16px;
-    margin-right: 5px;
-  }
 }
 
-hr {
+.menu :deep(.item .svg-icon) {
+  height: 16px;
+  width: 16px;
+  margin-right: 5px;
+}
+
+.menu :deep(hr) {
   margin: 4px 10px;
   background: rgba(128, 128, 128, 0.18);
   height: 1px;
@@ -145,37 +145,41 @@ hr {
   border: none;
 }
 
-.item-info {
+.menu :deep(.item-info) {
   padding: 10px 10px;
   display: flex;
   align-items: center;
   color: var(--color-text);
   cursor: default;
-  img {
-    height: 38px;
-    width: 38px;
-    border-radius: 4px;
-  }
-  .info {
-    margin-left: 10px;
-  }
-  .title {
-    font-size: 16px;
-    font-weight: 600;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 1;
-    overflow: hidden;
-    word-break: break-all;
-  }
-  .subtitle {
-    font-size: 12px;
-    opacity: 0.68;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 1;
-    overflow: hidden;
-    word-break: break-all;
-  }
+}
+
+.menu :deep(.item-info img) {
+  height: 38px;
+  width: 38px;
+  border-radius: 4px;
+}
+
+.menu :deep(.item-info .info) {
+  margin-left: 10px;
+}
+
+.menu :deep(.item-info .title) {
+  font-size: 16px;
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+.menu :deep(.item-info .subtitle) {
+  font-size: 12px;
+  opacity: 0.68;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  word-break: break-all;
 }
 </style>
