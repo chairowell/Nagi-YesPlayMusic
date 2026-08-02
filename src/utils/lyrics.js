@@ -8,6 +8,16 @@ export function lyricParser(lrc) {
   };
 }
 
+// 桌面端菜单栏也消费当前歌词，因此歌词页收起后不能把进度时钟一起停掉。
+export function shouldRunLyricClock(showLyrics, desktopRuntime) {
+  return showLyrics || desktopRuntime;
+}
+
+// 歌词页需要平滑滚动；只给菜单栏推逐句歌词时 4 FPS 已足够。
+export function lyricClockInterval(showLyrics) {
+  return showLyrics ? 50 : 250;
+}
+
 // regexr.com/6e52n
 const extractLrcRegex =
   /^(?<lyricTimestamps>(?:\[.+?\])+)(?!\[)(?<content>.+)$/gm;

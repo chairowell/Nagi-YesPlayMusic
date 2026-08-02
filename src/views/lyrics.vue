@@ -362,7 +362,13 @@ import VueSlider from 'vue-slider-component';
 import ContextMenu from '@/components/ContextMenu.vue';
 import { formatTrackTime } from '@/utils/common';
 import { getLyric, getCloudLyric } from '@/api/track';
-import { lyricParser, copyLyric, parseLyric } from '@/utils/lyrics';
+import {
+  copyLyric,
+  lyricClockInterval,
+  lyricParser,
+  parseLyric,
+  shouldRunLyricClock,
+} from '@/utils/lyrics';
 import ButtonIcon from '@/components/ButtonIcon.vue';
 import * as Vibrant from 'node-vibrant/dist/vibrant.worker.min.js';
 import Color from 'color';
@@ -543,6 +549,11 @@ export default {
   },
   watch: {
     currentTrack() {
+      // 新歌歌词尚未返回时不能继续拿上一首的时间轴更新菜单栏。
+      this.highlightLyricIndex = -1;
+      this.lyric = [];
+      this.tlyric = [];
+      this.romalyric = [];
       this.getLyric();
       this.getCoverColor();
       this.pushToTray();
@@ -552,13 +563,12 @@ export default {
       this.pushToTray();
     },
     showLyrics(show) {
-      if (show) {
-        this.setLyricsInterval();
-        this.$store.commit('enableScrolling', false);
+      if (shouldRunLyricClock(show, isDesktopRuntime)) {
+        this.setLyricsInterval(show);
       } else {
         this.stopLyricsInterval();
-        this.$store.commit('enableScrolling', true);
       }
+      this.$store.commit('enableScrolling', !show);
     },
   },
   created() {
@@ -570,9 +580,11 @@ export default {
       listen(document, 'fullscreenchange', this.handleFullscreenChange),
       listen(window, 'resize', this.checkMini)
     );
-    // showLyrics 的 watcher 只在「切换」时才启动计时器；
-    // 组件被重建（HMR、或初始就处于歌词页）时不会触发，这里补上
-    if (this.showLyrics) this.setLyricsInterval();
+    // watcher 不会在组件首次创建时触发；桌面端即使收起歌词页，
+    // 菜单栏仍需用低频时钟跟随当前歌词。
+    if (shouldRunLyricClock(this.showLyrics, isDesktopRuntime)) {
+      this.setLyricsInterval(this.showLyrics);
+    }
     this.checkMini();
     if (isDesktopRuntime) {
       invokeDesktop('isAlwaysOnTop').then(v => {
@@ -797,7 +809,7 @@ export default {
         }
       }
     },
-    setLyricsInterval() {
+    setLyricsInterval(showLyrics = this.showLyrics) {
       this.stopLyricsInterval();
       this.lyricsIntervalCleanup = startVisibilityAwareInterval(
         document,
@@ -811,7 +823,10 @@ export default {
               (nextLyric ? progress < nextLyric.time : true)
             );
           });
-          if (oldHighlightLyricIndex !== this.highlightLyricIndex) {
+          if (
+            showLyrics &&
+            oldHighlightLyricIndex !== this.highlightLyricIndex
+          ) {
             const el = document.getElementById(
               `line${this.highlightLyricIndex}`
             );
@@ -823,8 +838,7 @@ export default {
           }
         },
         {
-          foregroundMs: 50,
-          // 菜单栏歌词不需要 20 FPS；4 FPS 足以跟上逐行变化。
+          foregroundMs: lyricClockInterval(showLyrics),
           backgroundMs: 250,
         }
       );
