@@ -16,7 +16,7 @@ export function loginWithPhone(params) {
   return request({
     url: '/login/cellphone',
     method: 'post',
-    params,
+    data: params,
   });
 }
 
@@ -34,7 +34,7 @@ export function loginWithEmail(params) {
   return request({
     url: '/login',
     method: 'post',
-    params,
+    data: params,
   });
 }
 
