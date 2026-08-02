@@ -6,6 +6,40 @@ import { parseSidecarArgs } from './utils/sidecarConfig';
 
 const HOST = '127.0.0.1';
 
+function registerNativeRoutes(apiApp) {
+  let unblockMusicService;
+  apiApp.post('/native/unblock-music', async (request, response) => {
+    const { sourceListString, track, context } = request.body || {};
+    if (!track || typeof track !== 'object') {
+      response.status(400).send({ message: '缺少歌曲信息' });
+      return;
+    }
+
+    // 大多数歌曲不会走解锁服务，延迟加载可避免常驻时白白初始化 native addon。
+    try {
+      if (!unblockMusicService) {
+        const { createUnblockMusicService } = await import(
+          './services/unblockMusic'
+        );
+        unblockMusicService = createUnblockMusicService();
+      }
+      response.send(
+        await unblockMusicService(sourceListString, track, context)
+      );
+    } catch (error) {
+      console.error(`[sidecar][UNM] ${error.message}`);
+      response.status(500).send(null);
+    }
+  });
+}
+
+async function runUnblockMusicAddonSmokeTest() {
+  const { listUnblockMusicSources } = await import('./services/unblockMusic');
+  const sources = listUnblockMusicSources();
+  if (!sources.length) throw new Error('UNM native addon 没有返回可用音源');
+  console.log(`[sidecar][UNM] addon ready: ${sources.join(', ')}`);
+}
+
 function startRendererServer({ apiPort, webPort, rendererDir }) {
   const app = express();
 
@@ -32,6 +66,7 @@ export async function runSidecar(args = process.argv.slice(2)) {
     port: config.apiPort,
     host: HOST,
   });
+  registerNativeRoutes(apiApp);
   let rendererServer = null;
   try {
     rendererServer = config.apiOnly
@@ -67,7 +102,10 @@ export async function runSidecar(args = process.argv.slice(2)) {
 }
 
 if (import.meta.main) {
-  runSidecar().catch(error => {
+  const task = process.argv.includes('--unm-addon-smoke-test')
+    ? runUnblockMusicAddonSmokeTest()
+    : runSidecar();
+  task.catch(error => {
     console.error(`[sidecar] ${error.message}`);
     process.exit(1);
   });

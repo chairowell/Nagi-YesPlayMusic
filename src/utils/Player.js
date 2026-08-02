@@ -24,6 +24,7 @@ import {
 } from '@/utils/playerQueue';
 import { sendDesktop } from '@/services/desktopTransport';
 import { isDesktopRuntime } from '@/utils/runtime';
+import { requestUnblockedSong } from '@/services/unblockMusicTransport';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -412,7 +413,7 @@ export default class {
     console.debug(`[debug][Player.js] _getAudioSourceFromUnblockMusic`);
 
     if (
-      process.env.IS_ELECTRON !== true ||
+      !isDesktopRuntime ||
       store.state.settings.enableUnblockNeteaseMusic === false
     ) {
       return null;
@@ -438,8 +439,7 @@ export default class {
       }
     };
 
-    const retrieveSongInfo = await ipcRenderer.invoke(
-      'unblock-music',
+    const retrieveSongInfo = await requestUnblockedSong(
       store.state.settings.unmSource,
       track,
       {
