@@ -113,11 +113,11 @@ export default class {
       enumerable: false,
     });
 
-    // init
-    this._init();
-
-    window.yesplaymusic = {};
-    window.yesplaymusic.player = this;
+    Object.defineProperty(this, '_initialized', {
+      enumerable: false,
+      value: false,
+      writable: true,
+    });
   }
 
   get repeatMode() {
@@ -224,6 +224,12 @@ export default class {
   }
   get isCurrentTrackLiked() {
     return store.state.liked.songs.includes(this.currentTrack.id);
+  }
+
+  initialize() {
+    if (this._initialized) return;
+    this._initialized = true;
+    this._init();
   }
 
   _init() {

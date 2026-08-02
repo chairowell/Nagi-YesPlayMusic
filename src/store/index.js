@@ -4,6 +4,7 @@ import mutations from './mutations';
 import actions from './actions';
 import { changeAppearance, changeThemeColor } from '@/utils/common';
 import Player from '@/utils/Player';
+import { mountPlayerState } from '@/utils/playerState';
 // vuex 自定义插件
 import saveToLocalStorage from './plugins/localStorage';
 import { getSendSettingsPlugin } from './plugins/sendSettings';
@@ -51,17 +52,7 @@ window
     }
   });
 
-let player = new Player();
-player = new Proxy(player, {
-  set(target, prop, val) {
-    // console.log({ prop, val });
-    target[prop] = val;
-    if (prop === '_howler') return true;
-    target.saveSelfToLocalStorage();
-    target.sendSelfToIpcMain();
-    return true;
-  },
-});
-store.state.player = player;
+window.yesplaymusic = window.yesplaymusic || {};
+mountPlayerState(store, new Player(), window.yesplaymusic);
 
 export default store;
