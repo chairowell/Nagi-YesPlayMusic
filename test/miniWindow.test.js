@@ -1,10 +1,17 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
   MINI_WINDOW_INTERACTIVE_SELECTOR,
+  hasCrossedMiniWindowDragThreshold,
   isMiniWindowSize,
   shouldStartMiniWindowDrag,
   shouldToggleMiniWindow,
 } from '../src/utils/miniWindow';
+
+const lyricsView = readFileSync(
+  new URL('../src/views/lyrics.vue', import.meta.url),
+  'utf8'
+);
 
 function targetMatching(selector = null) {
   return {
@@ -42,6 +49,17 @@ describe('迷你窗口拖拽边界', () => {
     }
   });
 
+  test('只有实际文字可选择，容器空白仍用于拖窗和双击', () => {
+    expect(lyricsView).toContain(
+      '<span class="mini-copyable">{{ currentTrack.name }}</span>'
+    );
+    expect(lyricsView).toContain(
+      '<span class="mini-copyable">{{ displayLyric }}</span>'
+    );
+    expect(lyricsView).not.toContain('mini-info mini-copyable');
+    expect(lyricsView).not.toContain('mini-lyric mini-copyable');
+  });
+
   test('右键和双击不会误启动单击拖动', () => {
     expect(
       shouldStartMiniWindowDrag({
@@ -57,6 +75,16 @@ describe('迷你窗口拖拽边界', () => {
         target: targetMatching(),
       })
     ).toBe(false);
+  });
+
+  test('移动超过阈值才交给原生窗口拖拽', () => {
+    const start = { clientX: 100, clientY: 100 };
+    expect(
+      hasCrossedMiniWindowDragThreshold(start, { clientX: 102, clientY: 102 })
+    ).toBe(false);
+    expect(
+      hasCrossedMiniWindowDragThreshold(start, { clientX: 104, clientY: 100 })
+    ).toBe(true);
   });
 
   test('双击非文本区域进入中窗，文本和控件不触发', () => {

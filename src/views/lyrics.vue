@@ -45,18 +45,20 @@
         @dblclick="handleMiniDoubleClick"
       >
         <img class="mini-cover" :src="imageUrl" loading="lazy" />
-        <div class="mini-info mini-copyable">
+        <div class="mini-info">
           <div class="mini-title" :title="currentTrack.name">
-            {{ currentTrack.name }}
+            <span class="mini-copyable">{{ currentTrack.name }}</span>
           </div>
-          <div class="mini-artist">{{ artist.name }}</div>
+          <div class="mini-artist">
+            <span class="mini-copyable">{{ artist.name }}</span>
+          </div>
         </div>
-        <div class="mini-lyric mini-copyable" :title="displayLyric">
+        <div class="mini-lyric" :title="displayLyric">
           <div class="mini-lyric-origin" :style="lyricFontSize">
-            {{ displayLyric }}
+            <span class="mini-copyable">{{ displayLyric }}</span>
           </div>
           <div v-if="showMiniTranslation" class="mini-lyric-translation">
-            {{ currentLyricTranslation }}
+            <span class="mini-copyable">{{ currentLyricTranslation }}</span>
           </div>
         </div>
         <div class="mini-controls">
@@ -417,6 +419,7 @@ import {
 import { isDesktopRuntime, isTauriRuntime } from '@/utils/runtime';
 import { calculateMiniSeekTime } from '@/utils/miniPlayer';
 import {
+  hasCrossedMiniWindowDragThreshold,
   shouldStartMiniWindowDrag,
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
@@ -450,6 +453,7 @@ export default {
       pinDismissed: false,
       miniSeekDragging: false,
       miniSeekPreview: null,
+      miniWindowDragStart: null,
     };
   },
   computed: {
@@ -640,6 +644,7 @@ export default {
       clearInterval(this.timer);
     }
     this.stopLyricsInterval();
+    this.cancelMiniWindowDrag();
     disposeListeners(this.listenerCleanups);
     this.setWindowButtons(true); // 离开歌词页别把红绿灯留在隐藏状态
   },
@@ -699,9 +704,29 @@ export default {
     },
     handleMiniMouseDown(event) {
       if (!isTauriRuntime || !shouldStartMiniWindowDrag(event)) return;
-      // Tauri 的拖拽属性不会继承到子元素；这里明确排除文本、按钮和进度条。
+      // 等鼠标真的移动后再交给原生窗口，否则第一次按下会吞掉双击事件。
+      this.cancelMiniWindowDrag();
+      this.miniWindowDragStart = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+      document.addEventListener('mousemove', this.handleMiniDragMove);
+      document.addEventListener('mouseup', this.cancelMiniWindowDrag);
+    },
+    handleMiniDragMove(event) {
+      if (
+        !hasCrossedMiniWindowDragThreshold(this.miniWindowDragStart, event)
+      ) {
+        return;
+      }
       event.preventDefault();
+      this.cancelMiniWindowDrag();
       void startDesktopWindowDragging();
+    },
+    cancelMiniWindowDrag() {
+      this.miniWindowDragStart = null;
+      document.removeEventListener('mousemove', this.handleMiniDragMove);
+      document.removeEventListener('mouseup', this.cancelMiniWindowDrag);
     },
     handleMiniDoubleClick(event) {
       if (!shouldToggleMiniWindow(event)) return;

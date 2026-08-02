@@ -22,6 +22,20 @@ export function shouldStartMiniWindowDrag(event) {
   );
 }
 
+export function hasCrossedMiniWindowDragThreshold(
+  start,
+  current,
+  threshold = 4
+) {
+  const deltaX = Number(current?.clientX) - Number(start?.clientX);
+  const deltaY = Number(current?.clientY) - Number(start?.clientY);
+  return (
+    Number.isFinite(deltaX) &&
+    Number.isFinite(deltaY) &&
+    deltaX * deltaX + deltaY * deltaY >= threshold * threshold
+  );
+}
+
 export function shouldToggleMiniWindow(event) {
   return (
     event?.button === 0 &&
