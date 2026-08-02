@@ -3,8 +3,75 @@ import { isTauriRuntime } from '@/utils/runtime';
 import { isMiniWindowSize } from '@/utils/miniWindow';
 
 export const COMPACT_EXPANDED_SIZE = Object.freeze({ width: 920, height: 620 });
+export const COMPACT_RESIZE_SETTLE_MS = 250;
+export const COMPACT_WINDOW_MEMORY_KEY = 'compactWindowFrames.v1';
 
-let tauriMiniFrame = null;
+const MIN_WINDOW_SIZE = Object.freeze({ width: 300, height: 48 });
+const MAX_WINDOW_EDGE = 8192;
+let compactWindowTransitioning = false;
+
+function browserStorage() {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeCompactWindowFrame(frame) {
+  const width = Number(frame?.width);
+  const height = Number(frame?.height);
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width < MIN_WINDOW_SIZE.width ||
+    height < MIN_WINDOW_SIZE.height ||
+    width > MAX_WINDOW_EDGE ||
+    height > MAX_WINDOW_EDGE
+  ) {
+    return null;
+  }
+  const rawX = frame?.x == null ? null : Number(frame.x);
+  const rawY = frame?.y == null ? null : Number(frame.y);
+  return {
+    x: Number.isFinite(rawX) ? Math.round(rawX) : null,
+    y: Number.isFinite(rawY) ? Math.round(rawY) : null,
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+export function loadCompactWindowMemory(storage = browserStorage()) {
+  const empty = { bar: null, browse: null };
+  if (!storage) return empty;
+  try {
+    const parsed = JSON.parse(storage.getItem(COMPACT_WINDOW_MEMORY_KEY));
+    return {
+      bar: normalizeCompactWindowFrame(parsed?.bar),
+      browse: normalizeCompactWindowFrame(parsed?.browse),
+    };
+  } catch (_) {
+    return empty;
+  }
+}
+
+export function rememberCompactWindowFrame(frame, storage = browserStorage()) {
+  const normalized = normalizeCompactWindowFrame(frame);
+  const memory = loadCompactWindowMemory(storage);
+  if (!normalized || !storage) return memory;
+  const mode = isMiniWindowSize(normalized) ? 'bar' : 'browse';
+  const next = { ...memory, [mode]: normalized };
+  try {
+    storage.setItem(COMPACT_WINDOW_MEMORY_KEY, JSON.stringify(next));
+  } catch (_) {
+    // 无痕模式或磁盘配额异常不应阻断窗口切换，本次会话仍可继续。
+  }
+  return next;
+}
+
+export function hasRememberedBarFrame(storage = browserStorage()) {
+  return Boolean(loadCompactWindowMemory(storage).bar);
+}
 
 export function isCompactWindowPhysicalSize(size, scaleFactor = 1) {
   const scale = Number(scaleFactor);
@@ -15,50 +82,78 @@ export function isCompactWindowPhysicalSize(size, scaleFactor = 1) {
   });
 }
 
-export async function expandCompactWindow() {
+async function captureCurrentCompactWindowFrame() {
   if (electronRenderer) {
-    return electronRenderer.invoke(
-      'expandCompactWindow',
-      COMPACT_EXPANDED_SIZE
+    return normalizeCompactWindowFrame(
+      await electronRenderer.invoke('getCompactWindowFrame')
     );
   }
-  if (!isTauriRuntime || tauriMiniFrame) return false;
+  if (!isTauriRuntime) return null;
 
-  const { getCurrentWindow, LogicalSize } = await import(
-    '@tauri-apps/api/window'
-  );
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
   const window = getCurrentWindow();
-  const size = await window.innerSize();
-  const scaleFactor = await window.scaleFactor();
-  // Tauri 给的是物理像素；Retina 上不换算会把 494×254 的小窗误判为 988×508。
-  if (!isCompactWindowPhysicalSize(size, scaleFactor)) return false;
+  const [size, position, scaleFactor] = await Promise.all([
+    window.innerSize(),
+    window.outerPosition(),
+    window.scaleFactor(),
+  ]);
+  return normalizeCompactWindowFrame({
+    x: position.x,
+    y: position.y,
+    // 尺寸用逻辑像素记忆，跨 Retina/普通屏幕后视觉大小才不会翻倍或减半。
+    width: size.width / scaleFactor,
+    height: size.height / scaleFactor,
+  });
+}
 
-  tauriMiniFrame = {
-    size,
-    position: await window.outerPosition(),
-  };
-  await window.setSize(
-    new LogicalSize(COMPACT_EXPANDED_SIZE.width, COMPACT_EXPANDED_SIZE.height)
-  );
-  await window.center();
+async function applyTauriCompactWindowFrame(frame) {
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('restore_compact_window', frame);
   return true;
 }
 
-export async function restoreCompactWindow() {
-  if (electronRenderer) {
-    return electronRenderer.invoke('restoreCompactWindow');
-  }
-  if (!isTauriRuntime || !tauriMiniFrame) return false;
+export async function rememberCurrentCompactWindowFrame() {
+  const frame = await captureCurrentCompactWindowFrame();
+  if (!frame) return null;
+  rememberCompactWindowFrame(frame);
+  return {
+    mode: isMiniWindowSize(frame) ? 'bar' : 'browse',
+    frame,
+  };
+}
 
-  const frame = tauriMiniFrame;
-  tauriMiniFrame = null;
-  const { invoke } = await import('@tauri-apps/api/core');
-  // 原生层掌握完整显示器工作区；在那里校验后再恢复，避免旧外接屏坐标让窗口消失。
-  await invoke('restore_compact_window', {
-    x: frame.position.x,
-    y: frame.position.y,
-    width: frame.size.width,
-    height: frame.size.height,
-  });
-  return true;
+export async function expandCompactWindow() {
+  if (compactWindowTransitioning) return false;
+  const current = await captureCurrentCompactWindowFrame();
+  if (!current || !isMiniWindowSize(current)) return false;
+
+  const memory = rememberCompactWindowFrame(current);
+  const target =
+    memory.browse ||
+    normalizeCompactWindowFrame({ ...COMPACT_EXPANDED_SIZE, x: null, y: null });
+  compactWindowTransitioning = true;
+  try {
+    return electronRenderer
+      ? await electronRenderer.invoke('expandCompactWindow', target)
+      : await applyTauriCompactWindowFrame(target);
+  } finally {
+    compactWindowTransitioning = false;
+  }
+}
+
+export async function restoreCompactWindow() {
+  if (compactWindowTransitioning) return false;
+  const current = await captureCurrentCompactWindowFrame();
+  if (!current || isMiniWindowSize(current)) return false;
+
+  const memory = rememberCompactWindowFrame(current);
+  if (!memory.bar) return false;
+  compactWindowTransitioning = true;
+  try {
+    return electronRenderer
+      ? await electronRenderer.invoke('restoreCompactWindow', memory.bar)
+      : await applyTauriCompactWindowFrame(memory.bar);
+  } finally {
+    compactWindowTransitioning = false;
+  }
 }

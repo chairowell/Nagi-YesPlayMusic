@@ -13,7 +13,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, WebviewUrl,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -456,17 +456,30 @@ fn ensure_main_window_reachable(window: &WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 fn restore_compact_window(
     window: WebviewWindow,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
+    x: Option<i32>,
+    y: Option<i32>,
+    width: f64,
+    height: f64,
 ) -> Result<(), String> {
-    let frame = (x, y, width, height);
-    let reachable = window_frame_has_reachable_area(frame, &monitor_work_areas(&window)?);
+    if !width.is_finite()
+        || !height.is_finite()
+        || !(300.0..=8192.0).contains(&width)
+        || !(48.0..=8192.0).contains(&height)
+    {
+        return Err("窗口尺寸超出安全范围".to_string());
+    }
     window
-        .set_size(PhysicalSize::new(width, height))
+        .set_size(LogicalSize::new(width, height))
         .map_err(|error| error.to_string())?;
-    if reachable {
+    let restored_size = window.outer_size().map_err(|error| error.to_string())?;
+    let monitors = monitor_work_areas(&window)?;
+    let reachable = x.zip(y).map(|(x, y)| {
+        window_frame_has_reachable_area(
+            (x, y, restored_size.width, restored_size.height),
+            &monitors,
+        )
+    });
+    if let Some((x, y)) = x.zip(y).filter(|_| reachable == Some(true)) {
         window
             .set_position(PhysicalPosition::new(x, y))
             .map_err(|error| error.to_string())?;

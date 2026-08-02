@@ -16,10 +16,12 @@
         <button-icon
           v-if="compactWindowExpanded"
           class="restore-compact-window"
-          title="回到迷你播放器"
+          title="回到播放栏 (Esc)"
           @click="$emit('restore-compact-window')"
         >
           <svg-icon icon-class="arrow-down" />
+          <span>回到播放栏</span>
+          <kbd>Esc</kbd>
         </button-icon>
       </div>
       <div class="navigation-links">
@@ -240,6 +242,22 @@ nav.has-custom-titlebar {
   .restore-compact-window {
     margin-left: 8px;
     color: var(--color-primary);
+    gap: 6px;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: var(--color-secondary-bg-for-transparent);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    .svg-icon {
+      width: 16px;
+      height: 16px;
+    }
+    kbd {
+      opacity: 0.55;
+      font-family: inherit;
+      font-size: 11px;
+    }
   }
 }
 @media (max-width: 970px) {

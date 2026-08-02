@@ -62,17 +62,20 @@ import { observeDocumentVisibility } from '@/utils/mediaLifecycle';
 import { connectDesktopEvents } from '@/services/desktopBridge';
 import { isDesktopRuntime } from '@/utils/runtime';
 import {
+  COMPACT_RESIZE_SETTLE_MS,
   expandCompactWindow,
+  hasRememberedBarFrame,
+  rememberCurrentCompactWindowFrame,
   restoreCompactWindow,
 } from '@/services/compactWindow';
+import { isMiniWindowSize } from '@/utils/miniWindow';
 
 export default {
   name: 'App',
   provide() {
     return {
       appShell: {
-        restoreScrollPosition: () =>
-          this.$refs.scrollbar?.restorePosition(),
+        restoreScrollPosition: () => this.$refs.scrollbar?.restorePosition(),
         scrollMainTo: (...args) => this.$refs.main?.scrollTo(...args),
       },
     };
@@ -91,7 +94,12 @@ export default {
       isDesktop: isDesktopRuntime,
       userSelectNone: false,
       autoOpenedLyrics: false, // 迷你模式是我们自动打开的，拖回大窗口要还原
-      compactWindowExpanded: false,
+      compactWindowExpanded:
+        !isMiniWindowSize({
+          width: window.innerWidth,
+          height: window.innerHeight,
+        }) && hasRememberedBarFrame(),
+      compactResizeTimer: null,
       windowHidden: document.hidden,
     };
   },
@@ -134,6 +142,7 @@ export default {
   beforeUnmount() {
     window.removeEventListener('keydown', this.handleKeydown);
     window.removeEventListener('resize', this.handleMiniResize);
+    clearTimeout(this.compactResizeTimer);
     this.visibilityCleanup?.();
     this.desktopEventsCleanup?.then(cleanup => cleanup());
   },
@@ -151,7 +160,11 @@ export default {
     },
     // 窗口拖窄时自动切到歌词页（里面是迷你播放器布局），拖回来再收起
     handleMiniResize() {
-      const isMini = window.innerWidth < 620 || window.innerHeight < 340;
+      const isMini = isMiniWindowSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+      this.compactWindowExpanded = !isMini && hasRememberedBarFrame();
       if (isMini && !this.showLyrics) {
         this.$store.commit('toggleLyrics');
         this.autoOpenedLyrics = true;
@@ -159,8 +172,25 @@ export default {
         this.$store.commit('toggleLyrics');
         this.autoOpenedLyrics = false;
       }
+      this.scheduleCompactWindowMemory();
+    },
+    scheduleCompactWindowMemory() {
+      if (!this.isDesktop) return;
+      clearTimeout(this.compactResizeTimer);
+      // 只记录拖拽结束后的最终档位，避免跨越临界线时污染另一套记忆。
+      this.compactResizeTimer = setTimeout(async () => {
+        const remembered = await rememberCurrentCompactWindowFrame();
+        if (!remembered) return;
+        this.compactWindowExpanded =
+          remembered.mode === 'browse' && hasRememberedBarFrame();
+      }, COMPACT_RESIZE_SETTLE_MS);
     },
     handleKeydown(e) {
+      if (e.code === 'Escape' && this.compactWindowExpanded) {
+        e.preventDefault();
+        void this.restoreCompactWindow();
+        return;
+      }
       if (e.code === 'Space') {
         if (e.target.tagName === 'INPUT') return false;
         if (this.$route.name === 'mv') return false;

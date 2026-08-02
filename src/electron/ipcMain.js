@@ -78,8 +78,6 @@ export function initIpcMain(win, store, trayEventEmitter) {
   // WIP: Do not enable logging as it has some issues in non-blocking I/O environment.
   // UNM.enableLogging(UNM.LoggingType.ConsoleEnv);
   const unblockMusic = createUnblockMusicService({ log });
-  let compactWindowBounds = null;
-
   ipcMain.handle(
     'unblock-music',
     /**
@@ -133,28 +131,55 @@ export function initIpcMain(win, store, trayEventEmitter) {
 
   ipcMain.handle('isAlwaysOnTop', () => win.isAlwaysOnTop());
 
-  ipcMain.handle('expandCompactWindow', (_, { width, height }) => {
-    if (compactWindowBounds) return false;
-    const [currentWidth, currentHeight] = win.getContentSize();
-    if (currentWidth >= 620 && currentHeight >= 340) return false;
-    compactWindowBounds = win.getBounds();
-    win.setContentSize(width, height, true);
-    win.center();
-    return true;
-  });
+  const getCompactWindowFrame = () => {
+    const [width, height] = win.getContentSize();
+    const { x, y } = win.getBounds();
+    return { x, y, width, height };
+  };
 
-  ipcMain.handle('restoreCompactWindow', () => {
-    if (!compactWindowBounds) return false;
-    const bounds = compactWindowBounds;
-    compactWindowBounds = null;
-    if (hasReachableWindowArea(bounds, screen.getAllDisplays())) {
-      win.setBounds(bounds, true);
+  const applyCompactWindowFrame = frame => {
+    const width = Math.round(Number(frame?.width));
+    const height = Math.round(Number(frame?.height));
+    if (
+      !Number.isFinite(width) ||
+      !Number.isFinite(height) ||
+      width < 300 ||
+      height < 48 ||
+      width > 8192 ||
+      height > 8192
+    ) {
+      return false;
+    }
+    win.setContentSize(width, height, true);
+    const bounds = win.getBounds();
+    const x = frame?.x == null ? null : Number(frame.x);
+    const y = frame?.y == null ? null : Number(frame.y);
+    const target = { ...bounds, x, y };
+    if (
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      hasReachableWindowArea(target, screen.getAllDisplays())
+    ) {
+      win.setPosition(Math.round(x), Math.round(y), true);
     } else {
-      // 外接屏拔掉后只恢复尺寸，位置交给当前显示器重新居中。
-      win.setSize(bounds.width, bounds.height, true);
       win.center();
     }
     return true;
+  };
+
+  ipcMain.handle('getCompactWindowFrame', getCompactWindowFrame);
+
+  ipcMain.handle('expandCompactWindow', (_, target) => {
+    const [currentWidth, currentHeight] = win.getContentSize();
+    if (currentWidth >= 620 && currentHeight >= 340) return false;
+    return applyCompactWindowFrame(target);
+  });
+
+  ipcMain.handle('restoreCompactWindow', (_, target) => {
+    const [currentWidth, currentHeight] = win.getContentSize();
+    if (currentWidth < 620 || currentHeight < 340) return false;
+    // 目标来自持久化的 Bar 记忆，不能依赖“本次会话里曾展开过”；否则重启后无法收回。
+    return applyCompactWindowFrame(target);
   });
 
   // 迷你模式下默认藏起红绿灯，鼠标悬浮时再显示（仅 macOS 支持）
