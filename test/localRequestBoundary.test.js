@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import express from 'express';
+import { readFileSync } from 'node:fs';
 import {
   NATIVE_AUTH_HEADER,
   addNativeProxyToken,
   hardenAuthCookieHeaders,
   installLocalRequestBoundary,
 } from '../src/services/localRequestBoundary';
+import { desktopSessionExpiryCookies } from '../src/services/sidecarIdentity';
 
 function createGuardedBoundary() {
   const app = express();
@@ -21,9 +23,9 @@ function createGuardedBoundary() {
 
   const boundaryLayer = app._router.stack[0];
   expect(boundaryLayer).not.toBe(originalFirstLayer);
-  return (headers = {}, url = '/account') => {
+  return (headers = {}, url = '/account', method = 'GET') => {
     let nextCalled = false;
-    const requestObject = { headers, url, originalUrl: url };
+    const requestObject = { headers, url, originalUrl: url, method };
     const responseHeaders = new Map();
     const response = {
       statusCode: 200,
@@ -98,6 +100,37 @@ describe('本地 HTTP 安全边界', () => {
     expect(withoutToken.nextCalled).toBe(false);
     expect(withToken.response.statusCode).toBe(200);
     expect(withToken.nextCalled).toBe(true);
+  });
+
+  test('本机注销响应可靠清除 HttpOnly 会话', () => {
+    const cookies = desktopSessionExpiryCookies();
+    expect(cookies).toEqual([
+      expect.stringContaining('MUSIC_U=;'),
+      expect.stringContaining('__csrf=;'),
+    ]);
+    for (const cookie of cookies) {
+      expect(cookie).toContain('Max-Age=0');
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('SameSite=Strict');
+    }
+    const sidecarSource = readFileSync(
+      new URL('../src/sidecar.js', import.meta.url),
+      'utf8'
+    );
+    expect(sidecarSource).toContain("apiApp.post('/native/logout-session'");
+    expect(sidecarSource).toContain('desktopSessionExpiryCookies()');
+    expect(sidecarSource).toContain('response.statusCode = 204');
+  });
+
+  test('桌面注销必须等待本机 HttpOnly 会话清除后再清理界面状态', () => {
+    const authSource = readFileSync(
+      new URL('../src/utils/auth.js', import.meta.url),
+      'utf8'
+    );
+    expect(authSource).toContain('await clearDesktopSession()');
+    expect(authSource.indexOf('await clearDesktopSession()')).toBeLessThan(
+      authSource.indexOf("store.commit('updateData'")
+    );
   });
 
   test('只有内部 native 代理会注入令牌', () => {

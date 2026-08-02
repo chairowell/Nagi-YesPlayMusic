@@ -1,7 +1,7 @@
 import Cookies from 'js-cookie';
-import { logout } from '@/api/auth';
+import { clearDesktopSession, logout } from '@/api/auth';
 import store from '@/store';
-import { isDesktopRuntime } from '@/utils/runtime';
+import { isDesktopRuntime, isTauriRuntime } from '@/utils/runtime';
 import {
   hasAccountSession,
   shouldUseLegacyCookieFallback,
@@ -56,14 +56,35 @@ export function isLooseLoggedIn() {
   return isAccountLoggedIn() || isUsernameLoggedIn();
 }
 
-export function doLogout() {
-  logout();
-  removeCookie('MUSIC_U');
-  removeCookie('__csrf');
+let logoutTask = null;
+
+async function performLogout() {
+  if (isTauriRuntime) {
+    try {
+      await clearDesktopSession();
+    } catch (error) {
+      // HttpOnly Cookie 不能由页面兜底删除；失败时保留登录状态，避免“看似已退出”。
+      console.error(`[auth] ${error.message}`);
+      return false;
+    }
+  } else {
+    void logout();
+    removeCookie('MUSIC_U');
+    removeCookie('__csrf');
+  }
   // 更新状态仓库中的用户信息
   store.commit('updateData', { key: 'user', value: {} });
   // 更新状态仓库中的登录状态
   store.commit('updateData', { key: 'loginMode', value: null });
   // 更新状态仓库中的喜欢列表
   store.commit('updateData', { key: 'likedSongPlaylistID', value: undefined });
+  return true;
+}
+
+export function doLogout() {
+  if (logoutTask) return logoutTask;
+  logoutTask = performLogout().finally(() => {
+    logoutTask = null;
+  });
+  return logoutTask;
 }

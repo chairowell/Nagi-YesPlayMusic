@@ -108,3 +108,15 @@ export function logout() {
     method: 'post',
   });
 }
+
+export async function clearDesktopSession() {
+  const response = await fetch('/api/native/logout-session', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`本机会话清理失败（HTTP ${response.status}）`);
+  }
+  return true;
+}

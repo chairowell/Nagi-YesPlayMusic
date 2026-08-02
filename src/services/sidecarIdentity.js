@@ -4,6 +4,17 @@ export const SIDECAR_HEALTH_BODY = JSON.stringify({
   protocol: 1,
 });
 
+export function desktopSessionExpiryCookies() {
+  const attributes = [
+    'Path=/',
+    'Max-Age=0',
+    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    'HttpOnly',
+    'SameSite=Strict',
+  ].join('; ');
+  return [`MUSIC_U=; ${attributes}`, `__csrf=; ${attributes}`];
+}
+
 export function installSidecarHealthRoute(app) {
   app.get(SIDECAR_HEALTH_PATH, (_request, response) => {
     // Bun 单文件编译后不会可靠保留 Express response 的便捷方法，使用 Node 原生接口。

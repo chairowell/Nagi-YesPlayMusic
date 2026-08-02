@@ -10,12 +10,31 @@ import {
   installLocalRequestBoundary,
 } from './services/localRequestBoundary';
 import { applyRendererSecurityHeaders } from './services/contentSecurityPolicy';
-import { installSidecarHealthRoute } from './services/sidecarIdentity';
+import {
+  desktopSessionExpiryCookies,
+  installSidecarHealthRoute,
+} from './services/sidecarIdentity';
 
 const HOST = '127.0.0.1';
 
-function registerNativeRoutes(apiApp) {
+function registerNativeRoutes(apiApp, apiPort) {
   let unblockMusicService;
+  apiApp.post('/native/logout-session', (request, response) => {
+    // 先复制当前 Cookie 再返回过期响应；远端注销即使失败，本机 HttpOnly 会话也会清掉。
+    const cookie = request.headers.cookie;
+    void fetch(`http://${HOST}:${apiPort}/logout`, {
+      method: 'POST',
+      headers: cookie ? { Cookie: cookie } : {},
+    }).catch(error => {
+      console.warn(`[sidecar][logout] 远端注销失败：${error.message}`);
+    });
+    // 上游只缓存 200；204 可确保注销响应及 Set-Cookie 永不进入两分钟缓存。
+    response.statusCode = 204;
+    response.setHeader('Set-Cookie', desktopSessionExpiryCookies());
+    response.setHeader('Cache-Control', 'no-store');
+    response.end();
+  });
+
   apiApp.post('/native/unblock-music', async (request, response) => {
     const { sourceListString, track, context } = request.body || {};
     if (!track || typeof track !== 'object') {
@@ -101,7 +120,7 @@ export async function runSidecar(args = process.argv.slice(2)) {
   });
   installSidecarHealthRoute(apiApp);
   installLocalRequestBoundary(apiApp, { allowedOrigins, nativeToken });
-  registerNativeRoutes(apiApp);
+  registerNativeRoutes(apiApp, config.apiPort);
   let rendererServer = null;
   try {
     rendererServer = config.apiOnly
