@@ -147,7 +147,7 @@ export default {
     },
     cacheLimit: {
       text: 'Şarkılar Önbellek sınırı',
-      none: 'Yok',
+      none: 'Sınırsız',
     },
     lyricFontSize: {
       text: 'Şarkı Sözleri Yazı Boyutu',

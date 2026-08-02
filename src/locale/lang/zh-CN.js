@@ -153,7 +153,7 @@ export default {
     },
     cacheLimit: {
       text: '歌曲缓存上限',
-      none: '无限制',
+      none: '无上限',
     },
     lyricFontSize: {
       text: '歌词字体大小',

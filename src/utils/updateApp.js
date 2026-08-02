@@ -1,5 +1,6 @@
 import initLocalStorage from '@/store/initLocalStorage.js';
 import pkg from '../../package.json';
+import { normalizeCacheLimit } from '@/utils/cachePolicy';
 
 const updateSetting = () => {
   const parsedSettings = JSON.parse(localStorage.getItem('settings'));
@@ -7,6 +8,7 @@ const updateSetting = () => {
     ...initLocalStorage.settings,
     ...parsedSettings,
   };
+  settings.cacheLimit = normalizeCacheLimit(settings.cacheLimit);
 
   if (
     settings.shortcuts.length !== initLocalStorage.settings.shortcuts.length

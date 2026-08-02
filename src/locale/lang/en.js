@@ -152,7 +152,7 @@ export default {
     },
     cacheLimit: {
       text: 'Songs Cache limit',
-      none: 'None',
+      none: 'Unlimited',
     },
     lyricFontSize: {
       text: 'Lyric Font Size',

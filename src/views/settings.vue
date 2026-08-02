@@ -182,7 +182,7 @@
         </div>
         <div class="right">
           <select v-model="cacheLimit">
-            <option :value="false">
+            <option :value="null">
               {{ $t('settings.cacheLimit.none') }}
             </option>
             <option :value="512"> 500MB </option>
@@ -833,7 +833,12 @@ import {
   changeThemeColor,
   bytesToSize,
 } from '@/utils/common';
-import { countDBSize, clearDB } from '@/utils/db';
+import {
+  clearTrackSourceCache,
+  countDBSize,
+  trimTrackSourceCache,
+} from '@/utils/db';
+import { normalizeCacheLimit } from '@/utils/cachePolicy';
 import pkg from '../../package.json';
 
 const electron =
@@ -1104,9 +1109,6 @@ export default {
           key: 'automaticallyCacheSongs',
           value,
         });
-        if (value === false) {
-          this.clearCache();
-        }
       },
     },
     showLyricsTranslation: {
@@ -1225,13 +1227,14 @@ export default {
     },
     cacheLimit: {
       get() {
-        return this.settings.cacheLimit || false;
+        return normalizeCacheLimit(this.settings.cacheLimit);
       },
       set(value) {
         this.$store.commit('updateSettings', {
           key: 'cacheLimit',
-          value,
+          value: normalizeCacheLimit(value),
         });
+        trimTrackSourceCache().then(() => this.countDBSize());
       },
     },
     proxyProtocol: {
@@ -1443,7 +1446,7 @@ export default {
       });
     },
     clearCache() {
-      clearDB().then(() => {
+      clearTrackSourceCache().then(() => {
         this.countDBSize();
       });
     },

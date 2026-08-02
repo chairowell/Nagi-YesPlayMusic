@@ -2,6 +2,7 @@ import axios from 'axios';
 import Dexie from 'dexie';
 import store from '@/store';
 import { sumTrackSourceStats } from '@/utils/cacheStats';
+import { isCacheLimitExceeded } from '@/utils/cachePolicy';
 // import pkg from "../../package.json";
 
 const db = new Dexie('yesplaymusic');
@@ -61,7 +62,7 @@ async function initTracksCacheBytes() {
       '[debug][db.js] initTracksCacheBytes, total bytes:',
       tracksCacheBytes
     );
-    deleteExcessCache();
+    trimTrackSourceCache();
   } catch (err) {
     console.debug('[debug][db.js] initTracksCacheBytes failed', err);
   }
@@ -70,21 +71,29 @@ async function initTracksCacheBytes() {
 // 模块加载时触发初始化
 initTracksCacheBytes();
 
-async function deleteExcessCache() {
-  if (
-    store.state.settings.cacheLimit === false ||
-    tracksCacheBytes < store.state.settings.cacheLimit * Math.pow(1024, 2)
-  ) {
-    return;
-  }
+export async function trimTrackSourceCache() {
   try {
-    const delCache = await db.trackSources.orderBy('createTime').first();
-    await db.trackSources.delete(delCache.id);
-    tracksCacheBytes -= delCache.source.byteLength;
-    console.debug(
-      `[debug][db.js] deleteExcessCacheSucces, track: ${delCache.name}, size: ${delCache.source.byteLength}, cacheSize:${tracksCacheBytes}`
-    );
-    deleteExcessCache();
+    while (
+      isCacheLimitExceeded(
+        tracksCacheBytes,
+        store.state.settings.cacheLimit
+      )
+    ) {
+      const delCache = await db.trackSources.orderBy('createTime').first();
+      if (!delCache) {
+        tracksCacheBytes = 0;
+        return;
+      }
+
+      await db.trackSources.delete(delCache.id);
+      tracksCacheBytes = Math.max(
+        0,
+        tracksCacheBytes - (delCache.source?.byteLength || 0)
+      );
+      console.debug(
+        `[debug][db.js] deleteExcessCacheSuccess, track: ${delCache.name}, size: ${delCache.source?.byteLength || 0}, cacheSize:${tracksCacheBytes}`
+      );
+    }
   } catch (error) {
     console.debug('[debug][db.js] deleteExcessCacheFailed', error);
   }
@@ -120,7 +129,7 @@ export function cacheTrackSource(trackInfo, url, bitRate, from = 'netease') {
       });
       console.debug(`[debug][db.js] cached track 👉 ${name} by ${artist}`);
       tracksCacheBytes += response.data.byteLength;
-      deleteExcessCache();
+      trimTrackSourceCache();
       return { trackID: trackInfo.id, source: response.data, bitRate };
     });
 }
@@ -214,11 +223,7 @@ export function countDBSize() {
   );
 }
 
-export function clearDB() {
-  return new Promise(resolve => {
-    db.tables.forEach(function (table) {
-      table.clear();
-    });
-    resolve();
-  });
+export async function clearTrackSourceCache() {
+  await db.trackSources.clear();
+  tracksCacheBytes = 0;
 }
