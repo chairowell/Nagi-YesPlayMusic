@@ -374,6 +374,8 @@ import {
   listen,
   startVisibilityAwareInterval,
 } from '@/utils/mediaLifecycle';
+import { invokeDesktop, sendDesktop } from '@/services/desktopTransport';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 export default {
   name: 'Lyrics',
@@ -572,13 +574,10 @@ export default {
     // 组件被重建（HMR、或初始就处于歌词页）时不会触发，这里补上
     if (this.showLyrics) this.setLyricsInterval();
     this.checkMini();
-    if (process.env.IS_ELECTRON) {
-      window
-        .require('electron')
-        .ipcRenderer.invoke('isAlwaysOnTop')
-        .then(v => {
-          this.isAlwaysOnTop = v;
-        });
+    if (isDesktopRuntime) {
+      invokeDesktop('isAlwaysOnTop').then(v => {
+        this.isAlwaysOnTop = v;
+      });
     }
   },
   beforeUnmount: function () {
@@ -616,8 +615,8 @@ export default {
       this.pushToTray();
     },
     pushToTray() {
-      if (!process.env.IS_ELECTRON) return;
-      window.require('electron').ipcRenderer.send('updateTrayNowPlaying', {
+      if (!isDesktopRuntime) return;
+      void sendDesktop('updateTrayNowPlaying', {
         // 要不要在菜单栏显示文字由主进程定：
         // 它还要考虑窗口是不是被隐藏了，这边看不到
         title: this.displayLyric || this.currentTrack.name,
@@ -629,15 +628,12 @@ export default {
       });
     },
     setWindowButtons(visible) {
-      if (!process.env.IS_ELECTRON) return;
-      window
-        .require('electron')
-        .ipcRenderer.send('setWindowButtonVisibility', visible);
+      if (!isDesktopRuntime) return;
+      void sendDesktop('setWindowButtonVisibility', visible);
     },
     async toggleAlwaysOnTop() {
-      if (!process.env.IS_ELECTRON) return;
-      const { ipcRenderer } = window.require('electron');
-      this.isAlwaysOnTop = await ipcRenderer.invoke('toggleAlwaysOnTop');
+      if (!isDesktopRuntime) return;
+      this.isAlwaysOnTop = await invokeDesktop('toggleAlwaysOnTop');
     },
     initDate() {
       var _this = this;

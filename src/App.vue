@@ -47,11 +47,12 @@ import Scrollbar from './components/Scrollbar.vue';
 import Navbar from './components/Navbar.vue';
 import Player from './components/Player.vue';
 import Toast from './components/Toast.vue';
-import { ipcRenderer } from './electron/ipcRenderer';
 import { isAccountLoggedIn, isLooseLoggedIn } from '@/utils/auth';
 import Lyrics from './views/lyrics.vue';
 import { mapState } from 'vuex';
 import { observeDocumentVisibility } from '@/utils/mediaLifecycle';
+import { connectDesktopEvents } from '@/services/desktopBridge';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 export default {
   name: 'App',
@@ -75,7 +76,7 @@ export default {
   },
   data() {
     return {
-      isElectron: process.env.IS_ELECTRON, // true || undefined
+      isDesktop: isDesktopRuntime,
       userSelectNone: false,
       autoOpenedLyrics: false, // 迷你模式是我们自动打开的，拖回大窗口要还原
       windowHidden: document.hidden,
@@ -105,7 +106,9 @@ export default {
     },
   },
   created() {
-    if (this.isElectron) ipcRenderer(this);
+    if (this.isDesktop) {
+      this.desktopEventsCleanup = connectDesktopEvents(this);
+    }
     window.addEventListener('keydown', this.handleKeydown);
     window.addEventListener('resize', this.handleMiniResize);
     this.visibilityCleanup = observeDocumentVisibility(
@@ -119,6 +122,7 @@ export default {
     window.removeEventListener('keydown', this.handleKeydown);
     window.removeEventListener('resize', this.handleMiniResize);
     this.visibilityCleanup?.();
+    this.desktopEventsCleanup?.then(cleanup => cleanup());
   },
   methods: {
     // 窗口拖窄时自动切到歌词页（里面是迷你播放器布局），拖回来再收起

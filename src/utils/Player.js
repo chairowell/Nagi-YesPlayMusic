@@ -22,6 +22,8 @@ import {
   getActiveTrackIndex,
   pickRandomTrackID,
 } from '@/utils/playerQueue';
+import { sendDesktop } from '@/services/desktopTransport';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -57,14 +59,14 @@ function setTitle(track) {
     ? `${track.name} · ${track.ar[0].name} - YesPlayMusic`
     : 'YesPlayMusic';
   if (isCreateTray) {
-    ipcRenderer?.send('updateTrayTooltip', document.title);
+    void sendDesktop('updateTrayTooltip', document.title);
   }
   store.commit('updateTitle', document.title);
 }
 
 function setTrayLikeState(isLiked) {
   if (isCreateTray) {
-    ipcRenderer?.send('updateTrayLikeState', isLiked);
+    void sendDesktop('updateTrayLikeState', isLiked);
   }
 }
 
@@ -215,7 +217,7 @@ export default class {
     if (this._howler) {
       this._howler.seek(value);
       if (isCreateMpris) {
-        ipcRenderer?.send('seeked', this._howler.seek());
+        void sendDesktop('seeked', this._howler.seek());
       }
     }
   }
@@ -253,7 +255,7 @@ export default class {
   _setPlaying(isPlaying) {
     this._playing = isPlaying;
     if (isCreateTray) {
-      ipcRenderer?.send('updateTrayPlayState', this._playing);
+      void sendDesktop('updateTrayPlayState', this._playing);
     }
   }
   _setIntervals() {
@@ -265,7 +267,7 @@ export default class {
       this._progress = this._howler.seek();
       localStorage.setItem('playerCurrentTrackTime', this._progress);
       if (isCreateMpris) {
-        ipcRenderer?.send('playerCurrentTrackTime', this._progress);
+        void sendDesktop('playerCurrentTrackTime', this._progress);
       }
     }, 1000);
   }
@@ -852,7 +854,7 @@ export default class {
   }
   seek(time = null, sendMpris = true) {
     if (isCreateMpris && sendMpris && time) {
-      ipcRenderer?.send('seeked', time);
+      void sendDesktop('seeked', time);
     }
     if (time !== null) {
       this._howler?.seek(time);
@@ -969,9 +971,9 @@ export default class {
   }
 
   sendSelfToIpcMain() {
-    if (process.env.IS_ELECTRON !== true) return false;
+    if (!isDesktopRuntime) return false;
     let liked = store.state.liked.songs.includes(this.currentTrack.id);
-    ipcRenderer?.send('player', {
+    void sendDesktop('player', {
       playing: this.playing,
       likedCurrentTrack: liked,
     });
@@ -987,13 +989,13 @@ export default class {
       this.repeatMode = 'on';
     }
     if (isCreateMpris) {
-      ipcRenderer?.send('switchRepeatMode', this.repeatMode);
+      void sendDesktop('switchRepeatMode', this.repeatMode);
     }
   }
   switchShuffle() {
     this.shuffle = !this.shuffle;
     if (isCreateMpris) {
-      ipcRenderer?.send('switchShuffle', this.shuffle);
+      void sendDesktop('switchShuffle', this.shuffle);
     }
   }
   switchReversed() {

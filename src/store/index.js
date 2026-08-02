@@ -7,9 +7,10 @@ import Player from '@/utils/Player';
 // vuex 自定义插件
 import saveToLocalStorage from './plugins/localStorage';
 import { getSendSettingsPlugin } from './plugins/sendSettings';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 let plugins = [saveToLocalStorage];
-if (process.env.IS_ELECTRON === true) {
+if (isDesktopRuntime) {
   let sendSettings = getSendSettingsPlugin();
   plugins.push(sendSettings);
 }

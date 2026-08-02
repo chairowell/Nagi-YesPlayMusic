@@ -6,7 +6,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent,
+};
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
@@ -17,6 +22,120 @@ const DEV_WEB_PORT: u16 = 1_420;
 const RELEASE_WEB_PORT: u16 = 28_232;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
+
+fn emit_desktop_event(app: &AppHandle, event: &str) {
+    let _ = app.emit(&format!("desktop://{event}"), ());
+}
+
+#[tauri::command]
+fn desktop_event(
+    app: AppHandle,
+    channel: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    match channel.as_str() {
+        "updateTrayTooltip" => {
+            if let (Some(tray), Some(title)) = (app.tray_by_id("main-tray"), payload.as_str()) {
+                tray.set_tooltip(Some(title))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        "updateTrayNowPlaying" => {
+            if let (Some(tray), Some(title)) = (
+                app.tray_by_id("main-tray"),
+                payload.get("title").and_then(serde_json::Value::as_str),
+            ) {
+                tray.set_title(Some(title.trim()))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        // 这些事件在 Electron 里由 MPRIS、Discord、代理或动态图标消费；
+        // Tauri macOS 端明确接收迁移期的 no-op，避免 renderer 出现未处理拒绝。
+        "settings"
+        | "updateTrayPlayState"
+        | "updateTrayLikeState"
+        | "updateTrayIcon"
+        | "player"
+        | "setProxy"
+        | "removeProxy"
+        | "switchGlobalShortcutStatusTemporary"
+        | "updateShortcut"
+        | "restoreDefaultShortcuts"
+        | "setWindowButtonVisibility"
+        | "seeked"
+        | "playerCurrentTrackTime"
+        | "switchRepeatMode"
+        | "switchShuffle" => {}
+        _ => return Err(format!("不允许的桌面事件：{channel}")),
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn is_always_on_top(window: WebviewWindow) -> Result<bool, String> {
+    window.is_always_on_top().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn toggle_always_on_top(window: WebviewWindow) -> Result<bool, String> {
+    let next = !window
+        .is_always_on_top()
+        .map_err(|error| error.to_string())?;
+    window
+        .set_always_on_top(next)
+        .map_err(|error| error.to_string())?;
+    Ok(next)
+}
+
+fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let play = MenuItem::with_id(app, "play", "播放/暂停", true, None::<&str>)?;
+    let previous = MenuItem::with_id(app, "previous", "上一首", true, None::<&str>)?;
+    let next = MenuItem::with_id(app, "next", "下一首", true, None::<&str>)?;
+    let like = MenuItem::with_id(app, "like", "喜欢/取消喜欢", true, None::<&str>)?;
+    let repeat = MenuItem::with_id(app, "repeat", "切换循环", true, None::<&str>)?;
+    let shuffle = MenuItem::with_id(app, "shuffle", "切换随机播放", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[&play, &previous, &next, &like, &repeat, &shuffle, &quit],
+    )?;
+
+    let mut builder = TrayIconBuilder::with_id("main-tray")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .tooltip("YesPlayMusic")
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "quit" => app.exit(0),
+            "play" | "previous" | "next" | "like" | "repeat" | "shuffle" => {
+                emit_desktop_event(app, event.id.as_ref());
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false)
+                    {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    Ok(())
+}
 
 fn is_smoke_test<I, S>(args: I) -> bool
 where
@@ -148,9 +267,15 @@ fn main() {
                 });
             } else {
                 create_main_window(app)?;
+                create_tray(app)?;
             }
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            desktop_event,
+            is_always_on_top,
+            toggle_always_on_top
+        ])
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application");
 
