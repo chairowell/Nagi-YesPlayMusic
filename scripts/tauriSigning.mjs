@@ -12,7 +12,7 @@ const defaultEntitlements = path.join(
 
 export const defaultTauriAppPath = path.join(
   projectRoot,
-  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic Tauri.app'
+  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app'
 );
 
 function signingArgs(entitlements, target) {

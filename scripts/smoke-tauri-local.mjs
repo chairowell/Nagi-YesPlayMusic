@@ -9,7 +9,7 @@ const projectRoot = path.resolve(
 );
 const executable = path.join(
   projectRoot,
-  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic Tauri.app/Contents/MacOS/yesplaymusic-tauri'
+  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app/Contents/MacOS/yesplaymusic-tauri'
 );
 const baseUrl = 'http://127.0.0.1:28232';
 const sleep = milliseconds =>

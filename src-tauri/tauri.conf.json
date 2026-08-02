@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "YesPlayMusic Tauri",
+  "productName": "YesPlayMusic",
   "version": "0.5.0",
-  "identifier": "com.electron.yesplaymusic.tauri",
+  "identifier": "com.electron.yesplaymusic",
   "mainBinaryName": "yesplaymusic-tauri",
   "build": {
     "beforeDevCommand": "bun run build:sidecar && bun run dev:tauri:renderer",
