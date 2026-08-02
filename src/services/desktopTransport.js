@@ -31,3 +31,9 @@ export function invokeDesktop(channel, ...args) {
   }
   return Promise.resolve(null);
 }
+
+export async function startDesktopWindowDragging() {
+  if (!isTauriRuntime) return;
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  await getCurrentWindow().startDragging();
+}

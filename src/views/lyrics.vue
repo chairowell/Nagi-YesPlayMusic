@@ -38,19 +38,19 @@
       <!-- 迷你模式：小封面 + 一行歌词。窗口拖窄时自动切换 -->
       <div
         v-if="isMini"
-        data-tauri-drag-region
         class="mini-player"
         @mouseenter="setWindowButtons(true)"
         @mouseleave="handleMiniMouseLeave"
+        @mousedown="handleMiniMouseDown"
       >
         <img class="mini-cover" :src="imageUrl" loading="lazy" />
-        <div class="mini-info">
+        <div class="mini-info mini-copyable">
           <div class="mini-title" :title="currentTrack.name">
             {{ currentTrack.name }}
           </div>
           <div class="mini-artist">{{ artist.name }}</div>
         </div>
-        <div class="mini-lyric" :title="displayLyric">
+        <div class="mini-lyric mini-copyable" :title="displayLyric">
           <div class="mini-lyric-origin" :style="lyricFontSize">
             {{ displayLyric }}
           </div>
@@ -408,9 +408,14 @@ import {
   listen,
   startVisibilityAwareInterval,
 } from '@/utils/mediaLifecycle';
-import { invokeDesktop, sendDesktop } from '@/services/desktopTransport';
-import { isDesktopRuntime } from '@/utils/runtime';
+import {
+  invokeDesktop,
+  sendDesktop,
+  startDesktopWindowDragging,
+} from '@/services/desktopTransport';
+import { isDesktopRuntime, isTauriRuntime } from '@/utils/runtime';
 import { calculateMiniSeekTime } from '@/utils/miniPlayer';
+import { shouldStartMiniWindowDrag } from '@/utils/miniWindow';
 
 export default {
   name: 'Lyrics',
@@ -686,6 +691,12 @@ export default {
     handleMiniMouseLeave() {
       this.pinDismissed = false;
       this.setWindowButtons(false);
+    },
+    handleMiniMouseDown(event) {
+      if (!isTauriRuntime || !shouldStartMiniWindowDrag(event)) return;
+      // Tauri 的拖拽属性不会继承到子元素；这里明确排除文本、按钮和进度条。
+      event.preventDefault();
+      void startDesktopWindowDragging();
     },
     updateMiniSeekPreview(event) {
       const bounds = event.currentTarget.getBoundingClientRect();
@@ -974,6 +985,7 @@ export default {
   gap: 12px;
   padding: 0 16px 0 76px; // 左边留出红绿灯的位置
   -webkit-app-region: drag;
+  user-select: none;
   overflow: hidden;
 
   // 跟着窗口高度缩，压到最扁也不会溢出
@@ -985,6 +997,13 @@ export default {
     object-fit: cover;
     flex-shrink: 0;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+    -webkit-user-drag: none;
+  }
+
+  .mini-copyable {
+    -webkit-app-region: no-drag;
+    user-select: text;
+    cursor: text;
   }
 
   // 固定宽度，不然长歌名会一路挤占歌词的空间

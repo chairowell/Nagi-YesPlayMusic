@@ -9,5 +9,5 @@
       "http://127.0.0.1:28232/*"
     ]
   },
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }
