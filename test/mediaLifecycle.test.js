@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  disposeListeners,
   destroyMediaPlayer,
+  listen,
   stopInterval,
 } from '../src/utils/mediaLifecycle';
 
@@ -27,5 +29,26 @@ describe('轮询生命周期', () => {
     const cleared = [];
     stopInterval(null, timer => cleared.push(timer));
     expect(cleared).toEqual([]);
+  });
+});
+
+describe('全局事件生命周期', () => {
+  test('注册和销毁使用同一个事件处理函数', () => {
+    const calls = [];
+    const target = {
+      addEventListener: (type, handler) => calls.push(['add', type, handler]),
+      removeEventListener: (type, handler) =>
+        calls.push(['remove', type, handler]),
+    };
+    const handler = () => {};
+    const cleanups = [listen(target, 'keydown', handler)];
+
+    disposeListeners(cleanups);
+
+    expect(calls).toEqual([
+      ['add', 'keydown', handler],
+      ['remove', 'keydown', handler],
+    ]);
+    expect(cleanups).toEqual([]);
   });
 });

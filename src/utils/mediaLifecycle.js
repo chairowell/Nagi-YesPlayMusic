@@ -8,3 +8,13 @@ export function destroyMediaPlayer(player) {
 export function stopInterval(timer, clear = clearInterval) {
   if (timer !== null && timer !== undefined) clear(timer);
 }
+
+export function listen(target, type, handler, options) {
+  target.addEventListener(type, handler, options);
+  return () => target.removeEventListener(type, handler, options);
+}
+
+export function disposeListeners(cleanups) {
+  for (const cleanup of cleanups) cleanup();
+  cleanups.length = 0;
+}

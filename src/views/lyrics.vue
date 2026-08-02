@@ -369,6 +369,7 @@ import Color from 'color';
 import { isAccountLoggedIn } from '@/utils/auth';
 import { hasListSource, getListSourcePath } from '@/utils/playList';
 import locale from '@/locale';
+import { disposeListeners, listen } from '@/utils/mediaLifecycle';
 
 export default {
   name: 'Lyrics',
@@ -380,6 +381,8 @@ export default {
   data() {
     return {
       lyricsInterval: null,
+      timer: null,
+      listenerCleanups: [],
       lyric: [],
       tlyric: [],
       romalyric: [],
@@ -556,20 +559,15 @@ export default {
     this.getLyric();
     this.getCoverColor();
     this.initDate();
-    document.addEventListener('keydown', e => {
-      if (e.key === 'F11') {
-        e.preventDefault();
-        this.fullscreen();
-      }
-    });
-    document.addEventListener('fullscreenchange', () => {
-      this.isFullscreen = !!document.fullscreenElement;
-    });
+    this.listenerCleanups.push(
+      listen(document, 'keydown', this.handleLyricsKeydown),
+      listen(document, 'fullscreenchange', this.handleFullscreenChange),
+      listen(window, 'resize', this.checkMini)
+    );
     // showLyrics 的 watcher 只在「切换」时才启动计时器；
     // 组件被重建（HMR、或初始就处于歌词页）时不会触发，这里补上
     if (this.showLyrics) this.setLyricsInterval();
     this.checkMini();
-    window.addEventListener('resize', this.checkMini);
     if (process.env.IS_ELECTRON) {
       window
         .require('electron')
@@ -583,7 +581,7 @@ export default {
     if (this.timer) {
       clearInterval(this.timer);
     }
-    window.removeEventListener('resize', this.checkMini);
+    disposeListeners(this.listenerCleanups);
     this.setWindowButtons(true); // 离开歌词页别把红绿灯留在隐藏状态
   },
   destroyed() {
@@ -592,6 +590,14 @@ export default {
   methods: {
     ...mapMutations(['toggleLyrics', 'updateModal']),
     ...mapActions(['likeATrack']),
+    handleLyricsKeydown(event) {
+      if (event.key !== 'F11') return;
+      event.preventDefault();
+      this.fullscreen();
+    },
+    handleFullscreenChange() {
+      this.isFullscreen = !!document.fullscreenElement;
+    },
     // 窗口拖到这个尺寸以下就切成迷你播放器
     checkMini() {
       const next = window.innerWidth < 620 || window.innerHeight < 340;
