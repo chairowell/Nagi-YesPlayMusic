@@ -6,7 +6,7 @@
     >
       <Cover
         :id="playlist.id"
-        :image-url="playlist.coverImgUrl | resizeImage(1024)"
+        :image-url="$filters.resizeImage(playlist.coverImgUrl, 1024)"
         :show-play-button="true"
         :always-show-shadow="true"
         :click-cover-to-play="true"
@@ -14,7 +14,7 @@
         type="playlist"
         :cover-hover="false"
         :play-button-size="18"
-        @click.right.native="openMenu"
+        @click.right="openMenu"
       />
       <div class="info">
         <div class="title" @click.right="openMenu"
@@ -42,14 +42,14 @@
         </div>
         <div class="date-and-count">
           {{ $t('playlist.updatedAt') }}
-          {{ playlist.updateTime | formatDate }} · {{ playlist.trackCount }}
+          {{ $filters.formatDate(playlist.updateTime) }} · {{ playlist.trackCount }}
           {{ $t('common.songs') }}
         </div>
         <div class="description" @click="toggleFullDescription">
           {{ playlist.description }}
         </div>
         <div class="buttons">
-          <ButtonTwoTone icon-class="play" @click.native="playPlaylistByID()">
+          <ButtonTwoTone icon-class="play" @click="playPlaylistByID()">
             {{ $t('common.play') }}
           </ButtonTwoTone>
           <ButtonTwoTone
@@ -62,7 +62,7 @@
             :background-color="
               playlist.subscribed ? 'var(--color-secondary-bg)' : ''
             "
-            @click.native="likePlaylist"
+            @click="likePlaylist"
           >
           </ButtonTwoTone>
           <ButtonTwoTone
@@ -70,7 +70,7 @@
             :icon-button="true"
             :horizontal-padding="0"
             color="grey"
-            @click.native="openMenu"
+            @click="openMenu"
           >
           </ButtonTwoTone>
         </div>
@@ -97,7 +97,6 @@
         :class="specialPlaylistInfo.gradient"
         @click.right="openMenu"
       >
-        <!-- <img :src="playlist.coverImgUrl | resizeImage" /> -->
         {{ specialPlaylistInfo.name }}
       </div>
       <div class="subtitle"
@@ -109,7 +108,7 @@
           class="play-button"
           icon-class="play"
           color="grey"
-          @click.native="playPlaylistByID()"
+          @click="playPlaylistByID()"
         >
           {{ $t('common.play') }}
         </ButtonTwoTone>
@@ -123,7 +122,7 @@
           :background-color="
             playlist.subscribed ? 'var(--color-secondary-bg)' : ''
           "
-          @click.native="likePlaylist"
+          @click="likePlaylist"
         >
         </ButtonTwoTone>
         <ButtonTwoTone
@@ -131,7 +130,7 @@
           :icon-button="true"
           :horizontal-padding="0"
           color="grey"
-          @click.native="openMenu"
+          @click="openMenu"
         >
         </ButtonTwoTone>
       </div>
@@ -141,7 +140,7 @@
       <h1>
         <img
           class="avatar"
-          :src="data.user.avatarUrl | resizeImage"
+          :src="$filters.resizeImage(data.user.avatarUrl)"
           loading="lazy"
         />
         {{ data.user.nickname }}{{ $t('library.sLikedSongs') }}
@@ -178,7 +177,7 @@
         v-show="hasMore"
         color="grey"
         :loading="loadingMore"
-        @click.native="loadMore(100)"
+        @click="loadMore(100)"
         >{{ $t('explore.loadMore') }}</ButtonTwoTone
       >
     </div>

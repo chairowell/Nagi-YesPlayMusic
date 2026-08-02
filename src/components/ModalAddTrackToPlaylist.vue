@@ -7,7 +7,7 @@
     title="添加到歌单"
     width="25vw"
   >
-    <template slot="default">
+    <template #default>
       <div class="new-playlist-button" @click="newPlaylist"
         ><svg-icon icon-class="plus" />新建歌单</div
       >
@@ -17,7 +17,7 @@
         class="playlist"
         @click="addTrackToPlaylist(playlist.id)"
       >
-        <img :src="playlist.coverImgUrl | resizeImage(224)" loading="lazy" />
+        <img :src="$filters.resizeImage(playlist.coverImgUrl, 224)" loading="lazy" />
         <div class="info">
           <div class="title">{{ playlist.name }}</div>
           <div class="track-count">{{ playlist.trackCount }} 首</div>

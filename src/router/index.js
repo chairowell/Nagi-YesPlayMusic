@@ -1,8 +1,10 @@
-import Vue from 'vue';
-import VueRouter from 'vue-router';
+import {
+  createRouter,
+  createWebHashHistory,
+  createWebHistory,
+} from 'vue-router';
 import { isLooseLoggedIn, isAccountLoggedIn } from '@/utils/auth';
 
-Vue.use(VueRouter);
 const routes = [
   {
     path: '/',
@@ -134,38 +136,24 @@ const routes = [
   },
 ];
 
-const router = new VueRouter({
-  mode: process.env.IS_ELECTRON ? 'hash' : 'history',
+const router = createRouter({
+  history: process.env.IS_ELECTRON
+    ? createWebHashHistory()
+    : createWebHistory(),
   routes,
 });
 
-const originalPush = VueRouter.prototype.push;
-VueRouter.prototype.push = function push(location) {
-  return originalPush.call(this, location).catch(err => err);
-};
-
-router.beforeEach((to, from, next) => {
+router.beforeEach(to => {
   // 需要登录的逻辑
-  if (to.meta.requireAccountLogin) {
-    if (isAccountLoggedIn()) {
-      next();
-    } else {
-      next({ path: '/login/account' });
-    }
+  if (to.meta.requireAccountLogin && !isAccountLoggedIn()) {
+    return { path: '/login/account' };
   }
-  if (to.meta.requireLogin) {
-    if (isLooseLoggedIn()) {
-      next();
-    } else {
-      if (process.env.IS_ELECTRON === true) {
-        next({ path: '/login/account' });
-      } else {
-        next({ path: '/login' });
-      }
-    }
-  } else {
-    next();
+  if (to.meta.requireLogin && !isLooseLoggedIn()) {
+    return {
+      path: process.env.IS_ELECTRON === true ? '/login/account' : '/login',
+    };
   }
+  return true;
 });
 
 export default router;

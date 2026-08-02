@@ -6,7 +6,7 @@
     title="新建歌单"
     width="25vw"
   >
-    <template slot="default">
+    <template #default>
       <input
         v-model="title"
         type="text"
@@ -22,7 +22,7 @@
         <label for="checkbox-private">设置为隐私歌单</label>
       </div>
     </template>
-    <template slot="footer">
+    <template #footer>
       <button class="primary block" @click="createPlaylist">创建</button>
     </template>
   </Modal>

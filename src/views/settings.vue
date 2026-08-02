@@ -1408,7 +1408,7 @@ export default {
     this.countDBSize('tracks');
     if (process.env.IS_ELECTRON) this.getAllOutputDevices();
   },
-  beforeDestroy() {
+  beforeUnmount() {
     this.stopLastfmChecker();
   },
   methods: {

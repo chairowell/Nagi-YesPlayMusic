@@ -7,10 +7,12 @@
       :style="{ overflow: enableScrolling ? 'auto' : 'hidden' }"
       @scroll="handleScroll"
     >
-      <keep-alive>
-        <router-view v-if="$route.meta.keepAlive"></router-view>
-      </keep-alive>
-      <router-view v-if="!$route.meta.keepAlive"></router-view>
+      <router-view v-slot="{ Component }">
+        <keep-alive>
+          <component :is="Component" v-if="$route.meta.keepAlive" />
+        </keep-alive>
+        <component :is="Component" v-if="!$route.meta.keepAlive" />
+      </router-view>
     </main>
     <transition name="slide-up">
       <Player v-if="enablePlayer" v-show="showPlayer" ref="player" />
@@ -84,7 +86,8 @@ export default {
     this.handleMiniResize();
     this.fetchData();
   },
-  beforeDestroy() {
+  beforeUnmount() {
+    window.removeEventListener('keydown', this.handleKeydown);
     window.removeEventListener('resize', this.handleMiniResize);
   },
   methods: {
@@ -158,7 +161,7 @@ main::-webkit-scrollbar {
 .slide-up-leave-active {
   transition: transform 0.4s;
 }
-.slide-up-enter,
+.slide-up-enter-from,
 .slide-up-leave-to {
   transform: translateY(100%);
 }

@@ -18,8 +18,8 @@
 
 ## 技术栈
 
-Vue 2.7 + Vuex 3 + Vite 7 + electron-vite 5 + Electron 43，包管理用 bun。
-业务代码仍是 Vue 2 选项式 API，没有 TypeScript。
+Vue 3.5 + Vuex 4 + Vue Router 4 + Vite 7 + electron-vite 5 + Electron 43，包管理用 bun。
+业务代码保留选项式 API，没有 TypeScript。
 
 原项目用的是 Vue CLI 4（webpack 4），在 node 26 上跑不起来、`electron:serve` 会卡死。
 构建链已整体迁到 Vite，构建时间从三四分钟降到约 1.5 秒。渲染进程和主进程的配置都在

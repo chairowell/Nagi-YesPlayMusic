@@ -2,7 +2,7 @@
   <div v-show="show" class="artist-page">
     <div class="artist-info">
       <div class="head">
-        <img :src="artist.img1v1Url | resizeImage(1024)" loading="lazy" />
+        <img :src="$filters.resizeImage(artist.img1v1Url, 1024)" loading="lazy" />
       </div>
       <div>
         <div class="name">{{ artist.name }}</div>
@@ -24,10 +24,10 @@
           {{ artist.briefDesc }}
         </div>
         <div class="buttons">
-          <ButtonTwoTone icon-class="play" @click.native="playPopularSongs()">
+          <ButtonTwoTone icon-class="play" @click="playPopularSongs()">
             {{ $t('common.play') }}
           </ButtonTwoTone>
-          <ButtonTwoTone color="grey" @click.native="followArtist">
+          <ButtonTwoTone color="grey" @click="followArtist">
             <span v-if="artist.followed">{{ $t('artist.following') }}</span>
             <span v-else>{{ $t('artist.follow') }}</span>
           </ButtonTwoTone>
@@ -36,7 +36,7 @@
             :icon-button="true"
             :horizontal-padding="0"
             color="grey"
-            @click.native="openMenu"
+            @click="openMenu"
           >
           </ButtonTwoTone>
         </div>
@@ -48,7 +48,7 @@
         <div class="container">
           <Cover
             :id="latestRelease.id"
-            :image-url="latestRelease.picUrl | resizeImage"
+            :image-url="$filters.resizeImage(latestRelease.picUrl)"
             type="album"
             :fixed-size="128"
             :play-button-size="30"
@@ -60,10 +60,10 @@
               }}</router-link>
             </div>
             <div class="date">
-              {{ latestRelease.publishTime | formatDate }}
+              {{ $filters.formatDate(latestRelease.publishTime) }}
             </div>
             <div class="type">
-              {{ latestRelease.type | formatAlbumType(latestRelease) }} ·
+              {{ $filters.formatAlbumType(latestRelease.type, latestRelease) }} ·
               {{ latestRelease.size }} {{ $t('common.songs') }}
             </div>
           </div>
@@ -93,7 +93,7 @@
               }}</router-link>
             </div>
             <div class="date">
-              {{ latestMV.publishTime | formatDate }}
+              {{ $filters.formatDate(latestMV.publishTime) }}
             </div>
             <div class="type">{{ $t('artist.latestMV') }}</div>
           </div>
@@ -540,7 +540,7 @@ export default {
   .fade-leave-active {
     transition: opacity 0.3s;
   }
-  .fade-enter, .fade-leave-to /* .fade-leave-active below version 2.1.8 */ {
+  .fade-enter-from, .fade-leave-to {
     opacity: 0;
   }
 }

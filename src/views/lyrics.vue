@@ -57,17 +57,17 @@
             class="mini-pin"
             :class="{ active: isAlwaysOnTop }"
             :title="isAlwaysOnTop ? '取消置顶' : '窗口置顶'"
-            @click.native="toggleAlwaysOnTop"
+            @click="toggleAlwaysOnTop"
           >
             <svg-icon icon-class="pin" />
           </button-icon>
-          <button-icon @click.native="playPrevTrack">
+          <button-icon @click="playPrevTrack">
             <svg-icon icon-class="previous" />
           </button-icon>
-          <button-icon class="mini-play" @click.native="playOrPause">
+          <button-icon class="mini-play" @click="playOrPause">
             <svg-icon :icon-class="player.playing ? 'pause' : 'play'" />
           </button-icon>
-          <button-icon @click.native="playNextTrack">
+          <button-icon @click="playNextTrack">
             <svg-icon icon-class="next" />
           </button-icon>
         </div>
@@ -101,7 +101,7 @@
                   <router-link
                     v-if="hasList()"
                     :to="`${getListPath()}`"
-                    @click.native="toggleLyrics"
+                    @click="toggleLyrics"
                     >{{ currentTrack.name }}
                   </router-link>
                   <span v-else>
@@ -112,7 +112,7 @@
                   <router-link
                     v-if="artist.id !== 0"
                     :to="`/artist/${artist.id}`"
-                    @click.native="toggleLyrics"
+                    @click="toggleLyrics"
                     >{{ artist.name }}
                   </router-link>
                   <span v-else>
@@ -123,7 +123,7 @@
                     <router-link
                       :to="`/album/${album.id}`"
                       :title="album.name"
-                      @click.native="toggleLyrics"
+                      @click="toggleLyrics"
                       >{{ album.name }}
                     </router-link>
                   </span>
@@ -131,7 +131,7 @@
               </div>
               <div class="top-right">
                 <div class="volume-control">
-                  <button-icon :title="$t('player.mute')" @click.native="mute">
+                  <button-icon :title="$t('player.mute')" @click="mute">
                     <svg-icon v-show="volume > 0.5" icon-class="volume" />
                     <svg-icon v-show="volume === 0" icon-class="volume-mute" />
                     <svg-icon
@@ -155,7 +155,7 @@
                 <div class="buttons">
                   <button-icon
                     :title="$t('player.like')"
-                    @click.native="likeATrack(player.currentTrack.id)"
+                    @click="likeATrack(player.currentTrack.id)"
                   >
                     <svg-icon
                       :icon-class="
@@ -165,11 +165,11 @@
                   </button-icon>
                   <button-icon
                     :title="$t('contextMenu.addToPlaylist')"
-                    @click.native="addToPlaylist"
+                    @click="addToPlaylist"
                   >
                     <svg-icon icon-class="plus" />
                   </button-icon>
-                  <!-- <button-icon @click.native="openMenu" title="Menu"
+                  <!-- <button-icon @click="openMenu" title="Menu"
                     ><svg-icon icon-class="more"
                   /></button-icon> -->
                 </div>
@@ -203,7 +203,7 @@
                     : $t('player.repeat')
                 "
                 :class="{ active: player.repeatMode !== 'off' }"
-                @click.native="switchRepeatMode"
+                @click="switchRepeatMode"
               >
                 <svg-icon
                   v-show="player.repeatMode !== 'one'"
@@ -218,27 +218,27 @@
                 <button-icon
                   v-show="!player.isPersonalFM"
                   :title="$t('player.previous')"
-                  @click.native="playPrevTrack"
+                  @click="playPrevTrack"
                 >
                   <svg-icon icon-class="previous" />
                 </button-icon>
                 <button-icon
                   v-show="player.isPersonalFM"
                   title="不喜欢"
-                  @click.native="moveToFMTrash"
+                  @click="moveToFMTrash"
                 >
                   <svg-icon icon-class="thumbs-down" />
                 </button-icon>
                 <button-icon
                   id="play"
                   :title="$t(player.playing ? 'player.pause' : 'player.play')"
-                  @click.native="playOrPause"
+                  @click="playOrPause"
                 >
                   <svg-icon :icon-class="player.playing ? 'pause' : 'play'" />
                 </button-icon>
                 <button-icon
                   :title="$t('player.next')"
-                  @click.native="playNextTrack"
+                  @click="playNextTrack"
                 >
                   <svg-icon icon-class="next" />
                 </button-icon>
@@ -247,7 +247,7 @@
                 v-show="!player.isPersonalFM"
                 :title="$t('player.shuffle')"
                 :class="{ active: player.shuffle }"
-                @click.native="switchShuffle"
+                @click="switchShuffle"
               >
                 <svg-icon icon-class="shuffle" />
               </button-icon>
@@ -258,7 +258,7 @@
                   lyricType === 'translation'
                 "
                 :title="$t('player.translationLyric')"
-                @click.native="switchLyricType"
+                @click="switchLyricType"
               >
                 <span class="lyric-switch-icon">译</span>
               </button-icon>
@@ -269,7 +269,7 @@
                   lyricType === 'romaPronunciation'
                 "
                 :title="$t('player.PronunciationLyric')"
-                @click.native="switchLyricType"
+                @click="switchLyricType"
               >
                 <span class="lyric-switch-icon">音</span>
               </button-icon>
@@ -577,14 +577,14 @@ export default {
         });
     }
   },
-  beforeDestroy: function () {
+  beforeUnmount: function () {
     if (this.timer) {
       clearInterval(this.timer);
     }
     disposeListeners(this.listenerCleanups);
     this.setWindowButtons(true); // 离开歌词页别把红绿灯留在隐藏状态
   },
-  destroyed() {
+  unmounted() {
     clearInterval(this.lyricsInterval);
   },
   methods: {
@@ -1396,7 +1396,7 @@ export default {
   transition: all 0.4s;
 }
 
-.slide-up-enter,
+.slide-up-enter-from,
 .slide-up-leave-to
 
 /* .fade-leave-active below version 2.1.8 */ {
@@ -1411,7 +1411,7 @@ export default {
   transition: all 0.5s cubic-bezier(0.2, 0.2, 0, 1);
 }
 
-.slide-fade-enter,
+.slide-fade-enter-from,
 .slide-fade-leave-to {
   transform: translateX(27vh);
   opacity: 0;
