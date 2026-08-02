@@ -42,6 +42,7 @@
         @mouseenter="setWindowButtons(true)"
         @mouseleave="handleMiniMouseLeave"
         @mousedown="handleMiniMouseDown"
+        @dblclick="handleMiniDoubleClick"
       >
         <img class="mini-cover" :src="imageUrl" loading="lazy" />
         <div class="mini-info mini-copyable">
@@ -415,10 +416,14 @@ import {
 } from '@/services/desktopTransport';
 import { isDesktopRuntime, isTauriRuntime } from '@/utils/runtime';
 import { calculateMiniSeekTime } from '@/utils/miniPlayer';
-import { shouldStartMiniWindowDrag } from '@/utils/miniWindow';
+import {
+  shouldStartMiniWindowDrag,
+  shouldToggleMiniWindow,
+} from '@/utils/miniWindow';
 
 export default {
   name: 'Lyrics',
+  emits: ['expand-compact-window'],
   components: {
     VueSlider,
     ButtonIcon,
@@ -697,6 +702,11 @@ export default {
       // Tauri 的拖拽属性不会继承到子元素；这里明确排除文本、按钮和进度条。
       event.preventDefault();
       void startDesktopWindowDragging();
+    },
+    handleMiniDoubleClick(event) {
+      if (!shouldToggleMiniWindow(event)) return;
+      event.preventDefault();
+      this.$emit('expand-compact-window');
     },
     updateMiniSeekPreview(event) {
       const bounds = event.currentTarget.getBoundingClientRect();

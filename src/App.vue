@@ -7,7 +7,12 @@
     }"
   >
     <Scrollbar v-show="!showLyrics" ref="scrollbar" />
-    <Navbar v-show="showNavbar" ref="navbar" />
+    <Navbar
+      v-show="showNavbar"
+      ref="navbar"
+      :compact-window-expanded="compactWindowExpanded"
+      @restore-compact-window="restoreCompactWindow"
+    />
     <main
       ref="main"
       :style="{ overflow: enableScrolling ? 'auto' : 'hidden' }"
@@ -35,7 +40,10 @@
     <ModalAddTrackToPlaylist v-if="isAccountLoggedIn" />
     <ModalNewPlaylist v-if="isAccountLoggedIn" />
     <transition v-if="enablePlayer" name="slide-up">
-      <Lyrics v-show="showLyrics" />
+      <Lyrics
+        v-show="showLyrics"
+        @expand-compact-window="expandCompactWindow"
+      />
     </transition>
   </div>
 </template>
@@ -53,6 +61,10 @@ import { mapState } from 'vuex';
 import { observeDocumentVisibility } from '@/utils/mediaLifecycle';
 import { connectDesktopEvents } from '@/services/desktopBridge';
 import { isDesktopRuntime } from '@/utils/runtime';
+import {
+  expandCompactWindow,
+  restoreCompactWindow,
+} from '@/services/compactWindow';
 
 export default {
   name: 'App',
@@ -79,6 +91,7 @@ export default {
       isDesktop: isDesktopRuntime,
       userSelectNone: false,
       autoOpenedLyrics: false, // 迷你模式是我们自动打开的，拖回大窗口要还原
+      compactWindowExpanded: false,
       windowHidden: document.hidden,
     };
   },
@@ -125,6 +138,17 @@ export default {
     this.desktopEventsCleanup?.then(cleanup => cleanup());
   },
   methods: {
+    async expandCompactWindow() {
+      if (!(await expandCompactWindow())) return;
+      this.compactWindowExpanded = true;
+      if (this.$route.name !== 'next') {
+        await this.$router.push({ name: 'next' });
+      }
+    },
+    async restoreCompactWindow() {
+      if (!(await restoreCompactWindow())) return;
+      this.compactWindowExpanded = false;
+    },
     // 窗口拖窄时自动切到歌词页（里面是迷你播放器布局），拖回来再收起
     handleMiniResize() {
       const isMini = window.innerWidth < 620 || window.innerHeight < 340;

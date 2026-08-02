@@ -77,6 +77,7 @@ export function initIpcMain(win, store, trayEventEmitter) {
   // WIP: Do not enable logging as it has some issues in non-blocking I/O environment.
   // UNM.enableLogging(UNM.LoggingType.ConsoleEnv);
   const unblockMusic = createUnblockMusicService({ log });
+  let compactWindowBounds = null;
 
   ipcMain.handle(
     'unblock-music',
@@ -130,6 +131,24 @@ export function initIpcMain(win, store, trayEventEmitter) {
   });
 
   ipcMain.handle('isAlwaysOnTop', () => win.isAlwaysOnTop());
+
+  ipcMain.handle('expandCompactWindow', (_, { width, height }) => {
+    if (compactWindowBounds) return false;
+    const [currentWidth, currentHeight] = win.getContentSize();
+    if (currentWidth >= 620 && currentHeight >= 340) return false;
+    compactWindowBounds = win.getBounds();
+    win.setContentSize(width, height, true);
+    win.center();
+    return true;
+  });
+
+  ipcMain.handle('restoreCompactWindow', () => {
+    if (!compactWindowBounds) return false;
+    const bounds = compactWindowBounds;
+    compactWindowBounds = null;
+    win.setBounds(bounds, true);
+    return true;
+  });
 
   // 迷你模式下默认藏起红绿灯，鼠标悬浮时再显示（仅 macOS 支持）
   ipcMain.on('setWindowButtonVisibility', (e, visible) => {

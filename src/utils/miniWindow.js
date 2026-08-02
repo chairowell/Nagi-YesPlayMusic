@@ -21,3 +21,14 @@ export function shouldStartMiniWindowDrag(event) {
     !isMiniWindowInteractiveTarget(event.target)
   );
 }
+
+export function shouldToggleMiniWindow(event) {
+  return (
+    event?.button === 0 &&
+    !isMiniWindowInteractiveTarget(event.target)
+  );
+}
+
+export function isMiniWindowSize(size) {
+  return Number(size?.width) < 620 || Number(size?.height) < 340;
+}

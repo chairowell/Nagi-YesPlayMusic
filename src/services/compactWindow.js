@@ -1,0 +1,46 @@
+import { electronRenderer } from '@/services/desktopTransport';
+import { isTauriRuntime } from '@/utils/runtime';
+import { isMiniWindowSize } from '@/utils/miniWindow';
+
+export const COMPACT_EXPANDED_SIZE = Object.freeze({ width: 920, height: 620 });
+
+let tauriMiniFrame = null;
+
+export async function expandCompactWindow() {
+  if (electronRenderer) {
+    return electronRenderer.invoke('expandCompactWindow', COMPACT_EXPANDED_SIZE);
+  }
+  if (!isTauriRuntime || tauriMiniFrame) return false;
+
+  const { getCurrentWindow, LogicalSize } = await import(
+    '@tauri-apps/api/window'
+  );
+  const window = getCurrentWindow();
+  const size = await window.innerSize();
+  if (!isMiniWindowSize(size)) return false;
+
+  tauriMiniFrame = {
+    size,
+    position: await window.outerPosition(),
+  };
+  await window.setSize(
+    new LogicalSize(COMPACT_EXPANDED_SIZE.width, COMPACT_EXPANDED_SIZE.height)
+  );
+  await window.center();
+  return true;
+}
+
+export async function restoreCompactWindow() {
+  if (electronRenderer) {
+    return electronRenderer.invoke('restoreCompactWindow');
+  }
+  if (!isTauriRuntime || !tauriMiniFrame) return false;
+
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  const window = getCurrentWindow();
+  const frame = tauriMiniFrame;
+  tauriMiniFrame = null;
+  await window.setSize(frame.size);
+  await window.setPosition(frame.position);
+  return true;
+}

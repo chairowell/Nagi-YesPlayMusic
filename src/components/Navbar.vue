@@ -13,6 +13,14 @@
         <button-icon @click="go('forward')"
           ><svg-icon icon-class="arrow-right"
         /></button-icon>
+        <button-icon
+          v-if="compactWindowExpanded"
+          class="restore-compact-window"
+          title="回到迷你播放器"
+          @click="$emit('restore-compact-window')"
+        >
+          <svg-icon icon-class="arrow-down" />
+        </button-icon>
       </div>
       <div class="navigation-links">
         <router-link to="/" :class="{ active: $route.name === 'home' }">{{
@@ -94,6 +102,13 @@ import { isLinux, isWindows } from '@/utils/platform';
 
 export default {
   name: 'Navbar',
+  props: {
+    compactWindowExpanded: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  emits: ['restore-compact-window'],
   components: {
     Win32Titlebar,
     LinuxTitlebar,
@@ -221,6 +236,10 @@ nav.has-custom-titlebar {
   }
   button {
     -webkit-app-region: no-drag;
+  }
+  .restore-compact-window {
+    margin-left: 8px;
+    color: var(--color-primary);
   }
 }
 @media (max-width: 970px) {
