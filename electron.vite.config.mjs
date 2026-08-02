@@ -89,8 +89,18 @@ export default defineConfig(({ mode }) => {
       },
       build: {
         sourcemap: false,
+        // electron-vite 的 renderer 默认不压缩；Vue 3 迁移后未压缩入口超过 1.5MB，
+        // 会增加每次冷启动的读取和解析成本。
+        minify: 'esbuild',
         rollupOptions: {
           input: path.resolve(root, 'index.html'),
+          output: {
+            manualChunks: {
+              'audio-vendor': ['howler', 'vue-slider-component'],
+              'data-vendor': ['axios', 'dexie'],
+              'vue-vendor': ['vue', 'vue-i18n', 'vue-router', 'vuex'],
+            },
+          },
         },
       },
     },

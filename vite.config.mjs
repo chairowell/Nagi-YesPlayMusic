@@ -60,6 +60,15 @@ export default defineConfig(({ mode }) => {
     build: {
       sourcemap: false,
       outDir: 'dist',
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'audio-vendor': ['howler', 'vue-slider-component'],
+            'data-vendor': ['axios', 'dexie'],
+            'vue-vendor': ['vue', 'vue-i18n', 'vue-router', 'vuex'],
+          },
+        },
+      },
     },
   };
 });
