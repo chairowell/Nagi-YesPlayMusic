@@ -1,5 +1,6 @@
 import clc from 'cli-color';
-import checkAuthToken from '../utils/checkAuthToken';
+// 这个模块没有导出，靠导入时的副作用创建 anonymous_token 文件
+import '../utils/checkAuthToken';
 import server from '@neteaseapireborn/api/server';
 // 必须是静态 import：运行时 require('../ncmModDef') 打包后会相对 out/main 解析而找不到
 import ncmModDef from '../ncmModDef';

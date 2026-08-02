@@ -60,6 +60,10 @@ export default defineConfig(({ mode }) => {
       // dev 必须照做，否则 5173 -> 10754 属于跨站，登录 cookie 会被
       // Chromium 的 SameSite 策略丢掉，表现为头像不刷新、library 空。
       server: {
+        // 锁死端口。让 Vite 自己漂到 5174 的话 origin 就变了，
+        // IndexedDB 按 origin 隔离，等于凭空多出一份空的歌曲缓存。
+        port: 5173,
+        strictPort: true,
         proxy: {
           '^/api': {
             target: 'http://127.0.0.1:10754',

@@ -130,7 +130,10 @@ class Background {
   async initDevtools() {
     // Install Vue Devtools extension
     try {
-      await installExtension(VUEJS_DEVTOOLS);
+      // electron-devtools-installer 是 CommonJS 包，被打包后默认导出会多包一层，
+      // 直接调用会报 installExtension is not a function
+      const install = installExtension.default ?? installExtension;
+      await install(VUEJS_DEVTOOLS);
     } catch (e) {
       console.error('Vue Devtools failed to install:', e.toString());
     }
