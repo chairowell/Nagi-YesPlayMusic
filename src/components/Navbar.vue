@@ -77,6 +77,7 @@
 <script>
 import { mapState } from 'vuex';
 import { isLooseLoggedIn, doLogout } from '@/utils/auth';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 // import icons for win32 title bar
 // icons by https://github.com/microsoft/vscode-codicons
@@ -159,7 +160,7 @@ export default {
       window.open('https://github.com/qier222/YesPlayMusic');
     },
     toLogin() {
-      if (process.env.IS_ELECTRON === true) {
+      if (isDesktopRuntime) {
         this.$router.push({ name: 'loginAccount' });
       } else {
         this.$router.push({ name: 'login' });

@@ -4,6 +4,7 @@ import {
   createWebHistory,
 } from 'vue-router';
 import { isLooseLoggedIn, isAccountLoggedIn } from '@/utils/auth';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 const routes = [
   {
@@ -137,9 +138,7 @@ const routes = [
 ];
 
 const router = createRouter({
-  history: process.env.IS_ELECTRON
-    ? createWebHashHistory()
-    : createWebHistory(),
+  history: isDesktopRuntime ? createWebHashHistory() : createWebHistory(),
   routes,
 });
 
@@ -150,7 +149,7 @@ router.beforeEach(to => {
   }
   if (to.meta.requireLogin && !isLooseLoggedIn()) {
     return {
-      path: process.env.IS_ELECTRON === true ? '/login/account' : '/login',
+      path: isDesktopRuntime ? '/login/account' : '/login',
     };
   }
   return true;

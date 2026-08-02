@@ -1,10 +1,11 @@
 import router from '@/router';
 import { doLogout, getCookie } from '@/utils/auth';
 import axios from 'axios';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 let baseURL = '';
 // Web 和 Electron 跑在不同端口避免同时启动时冲突
-if (process.env.IS_ELECTRON) {
+if (isDesktopRuntime) {
   if (process.env.NODE_ENV === 'production') {
     baseURL = process.env.VUE_APP_ELECTRON_API_URL;
   } else {
@@ -25,7 +26,7 @@ service.interceptors.request.use(function (config) {
   if (baseURL.length) {
     if (
       baseURL[0] !== '/' &&
-      !process.env.IS_ELECTRON &&
+      !isDesktopRuntime &&
       getCookie('MUSIC_U') !== null
     ) {
       config.params.cookie = `MUSIC_U=${getCookie('MUSIC_U')};`;
@@ -34,7 +35,7 @@ service.interceptors.request.use(function (config) {
     console.error("You must set up the baseURL in the service's config");
   }
 
-  if (!process.env.IS_ELECTRON && !config.url.includes('/login')) {
+  if (!isDesktopRuntime && !config.url.includes('/login')) {
     config.params.realIP = '211.161.244.70';
   }
 
@@ -87,7 +88,7 @@ service.interceptors.response.use(
       doLogout();
 
       // 導向登入頁面
-      if (process.env.IS_ELECTRON === true) {
+      if (isDesktopRuntime) {
         router.push({ name: 'loginAccount' });
       } else {
         router.push({ name: 'login' });

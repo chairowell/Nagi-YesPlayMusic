@@ -1,5 +1,6 @@
 import { playlistCategories } from '@/utils/staticData';
 import shortcuts from '@/utils/shortcuts';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 console.debug('[debug][initLocalStorage.js]');
 const enabledPlaylistCategories = playlistCategories
@@ -51,7 +52,7 @@ let localStorage = {
   },
 };
 
-if (process.env.IS_ELECTRON === true) {
+if (isDesktopRuntime) {
   localStorage.settings.automaticallyCacheSongs = true;
 }
 

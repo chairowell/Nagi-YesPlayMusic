@@ -2,6 +2,7 @@
 
 import axios from 'axios';
 import md5 from 'crypto-js/md5';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 const apiKey = process.env.VUE_APP_LASTFM_API_KEY;
 const apiSharedSecret = process.env.VUE_APP_LASTFM_API_SHARED_SECRET;
@@ -22,7 +23,7 @@ const sign = params => {
 };
 
 export function auth() {
-  const url = process.env.IS_ELECTRON
+  const url = isDesktopRuntime
     ? `https://www.last.fm/api/auth/?api_key=${apiKey}&cb=${baseUrl}/#/lastfm/callback`
     : `https://www.last.fm/api/auth/?api_key=${apiKey}&cb=${baseUrl}/lastfm/callback`;
   window.open(url);

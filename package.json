@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev --watch",
     "build:renderer": "vite build",
+    "dev:tauri:renderer": "IS_TAURI=true vite",
+    "build:tauri:renderer": "IS_TAURI=true vite build",
     "build:sidecar": "mkdir -p src-tauri/binaries && bun build src/sidecar.js --compile --target=bun-darwin-arm64 --outfile src-tauri/binaries/yesplaymusic-sidecar-aarch64-apple-darwin",
     "test": "bun test",
     "build:electron": "electron-vite build",
@@ -25,6 +27,7 @@
   },
   "dependencies": {
     "@neteaseapireborn/api": "^4.29.7",
+    "@tauri-apps/api": "^2.11.1",
     "@unblockneteasemusic/rust-napi": "^0.4.0",
     "axios": "^0.26.1",
     "change-case": "^4.1.2",
@@ -68,6 +71,7 @@
     "x11": "^2.3.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^17.0.0",
     "@vitejs/plugin-vue": "^6",
     "@vue/compiler-sfc": "^3",

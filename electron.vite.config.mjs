@@ -77,6 +77,8 @@ export default defineConfig(({ mode }) => {
           NODE_ENV: isDev ? 'development' : 'production',
           BASE_URL: '/',
           IS_ELECTRON: true,
+          IS_TAURI: false,
+          IS_DESKTOP: true,
           VUE_APP_NETEASE_API_URL: env.VUE_APP_NETEASE_API_URL,
           VUE_APP_ELECTRON_API_URL: env.VUE_APP_ELECTRON_API_URL,
           // 不用 .env 里的 http://127.0.0.1:10754，改走上面的同源代理
@@ -86,6 +88,8 @@ export default defineConfig(({ mode }) => {
             env.VUE_APP_LASTFM_API_SHARED_SECRET,
         },
         IS_ELECTRON: JSON.stringify(true),
+        IS_TAURI: JSON.stringify(false),
+        IS_DESKTOP: JSON.stringify(true),
       },
       build: {
         sourcemap: false,

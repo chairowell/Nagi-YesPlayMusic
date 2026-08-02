@@ -9,6 +9,8 @@ import path from 'node:path';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const isElectron = process.env.IS_ELECTRON === 'true';
+  const isTauri = process.env.IS_TAURI === 'true';
+  const isDesktop = isElectron || isTauri;
 
   return {
     resolve: {
@@ -39,19 +41,31 @@ export default defineConfig(({ mode }) => {
         NODE_ENV: mode === 'production' ? 'production' : 'development',
         BASE_URL: '/',
         IS_ELECTRON: isElectron,
+        IS_TAURI: isTauri,
+        IS_DESKTOP: isDesktop,
         VUE_APP_NETEASE_API_URL: env.VUE_APP_NETEASE_API_URL,
-        VUE_APP_ELECTRON_API_URL: env.VUE_APP_ELECTRON_API_URL,
-        VUE_APP_ELECTRON_API_URL_DEV: env.VUE_APP_ELECTRON_API_URL_DEV,
+        VUE_APP_ELECTRON_API_URL: isTauri
+          ? '/api'
+          : env.VUE_APP_ELECTRON_API_URL,
+        VUE_APP_ELECTRON_API_URL_DEV: isTauri
+          ? '/api'
+          : env.VUE_APP_ELECTRON_API_URL_DEV,
         VUE_APP_LASTFM_API_KEY: env.VUE_APP_LASTFM_API_KEY,
         VUE_APP_LASTFM_API_SHARED_SECRET: env.VUE_APP_LASTFM_API_SHARED_SECRET,
       },
       IS_ELECTRON: JSON.stringify(isElectron),
+      IS_TAURI: JSON.stringify(isTauri),
+      IS_DESKTOP: JSON.stringify(isDesktop),
     },
     server: {
-      port: Number(env.DEV_SERVER_PORT) || 8080,
+      host: isTauri ? '127.0.0.1' : undefined,
+      port: isTauri ? 1420 : Number(env.DEV_SERVER_PORT) || 8080,
+      strictPort: isTauri,
       proxy: {
         '^/api': {
-          target: 'http://localhost:3000',
+          target: isTauri
+            ? 'http://127.0.0.1:12754'
+            : 'http://localhost:3000',
           changeOrigin: true,
           rewrite: p => p.replace(/^\/api/, ''),
         },
@@ -59,7 +73,7 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       sourcemap: false,
-      outDir: 'dist',
+      outDir: isTauri ? 'dist-tauri' : 'dist',
       rollupOptions: {
         output: {
           manualChunks: {

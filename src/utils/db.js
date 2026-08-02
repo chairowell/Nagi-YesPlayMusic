@@ -6,6 +6,7 @@ import {
   sumTrackSourceStats,
 } from '@/utils/cacheStats';
 import { isCacheLimitExceeded } from '@/utils/cachePolicy';
+import { isDesktopRuntime } from '@/utils/runtime';
 // import pkg from "../../package.json";
 
 const db = new Dexie('yesplaymusic');
@@ -55,7 +56,7 @@ async function waitForSettingsReady(timeoutMs = 5000) {
 
 // 初始化现有缓存总大小，确保应用启动时能正确判断并清理超限缓存
 async function initTracksCacheBytes() {
-  if (!process.env.IS_ELECTRON) return;
+  if (!isDesktopRuntime) return;
   try {
     await waitForSettingsReady();
     const stats = await sumTrackSourceStats(visitor =>
@@ -104,7 +105,7 @@ export async function trimTrackSourceCache() {
 }
 
 export function cacheTrackSource(trackInfo, url, bitRate, from = 'netease') {
-  if (!process.env.IS_ELECTRON) return;
+  if (!isDesktopRuntime) return;
   return runTrackSourceCacheOnce(trackInfo.id, async () => {
     // 正在播放的缓存命中会从读取路径返回，不应再次覆盖并重复累计大小。
     if (await hasTrackSource(trackInfo.id)) return null;

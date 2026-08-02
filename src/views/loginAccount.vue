@@ -112,6 +112,7 @@
 </template>
 
 <script>
+import { isDesktopRuntime } from '@/utils/runtime';
 import QRCode from 'qrcode';
 import md5 from 'crypto-js/md5';
 import NProgress from 'nprogress';
@@ -145,7 +146,7 @@ export default {
   },
   computed: {
     isElectron() {
-      return process.env.IS_ELECTRON;
+      return isDesktopRuntime;
     },
   },
   created() {

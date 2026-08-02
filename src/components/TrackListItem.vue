@@ -87,6 +87,7 @@
 </template>
 
 <script>
+import { isDesktopRuntime } from '@/utils/runtime';
 import ArtistsInLine from '@/components/ArtistsInLine.vue';
 import ExplicitSymbol from '@/components/ExplicitSymbol.vue';
 import { mapState } from 'vuex';
@@ -192,7 +193,7 @@ export default {
       );
     },
     showUnavailableSongInGreyStyle() {
-      return process.env.IS_ELECTRON
+      return isDesktopRuntime
         ? !this.$store.state.settings.enableUnblockNeteaseMusic
         : true;
     },
