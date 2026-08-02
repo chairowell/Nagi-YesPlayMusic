@@ -115,12 +115,8 @@ export default {
       this.$store.dispatch('fetchLikedSongs');
       this.$store.dispatch('fetchLikedSongsWithDetails');
       this.$store.dispatch('fetchLikedPlaylist');
-      if (isAccountLoggedIn()) {
-        this.$store.dispatch('fetchLikedAlbums');
-        this.$store.dispatch('fetchLikedArtists');
-        this.$store.dispatch('fetchLikedMVs');
-        this.$store.dispatch('fetchCloudDisk');
-      }
+      // 专辑、歌手、MV 和云盘可能各有上千条，只在进入“资料库”时加载。
+      // 这些数据没有被全局播放器或侧栏使用，启动时预取只会常驻占内存。
     },
     handleScroll() {
       this.$refs.scrollbar.handleScroll();
