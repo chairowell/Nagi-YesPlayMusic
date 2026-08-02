@@ -54,13 +54,22 @@ export function createUnblockMusicService({
   log = console.log,
 } = {}) {
   return async (sourceListString, ncmTrack, context) => {
-    const sourceList = parseSourceString(executor, sourceListString, log);
+    const { excludedSources = [], ...unmContext } = context || {};
+    const excluded = new Set(
+      excludedSources.map(source => String(source).toLowerCase())
+    );
+    const sourceList = parseSourceString(
+      executor,
+      sourceListString,
+      log
+    ).filter(source => !excluded.has(source));
     const song = normalizeNeteaseTrack(ncmTrack);
     log(`[UNM] 使用音源：${sourceList.join(', ')}`);
 
     try {
-      const matchedAudio = await executor.search(sourceList, song, context);
-      const retrievedSong = await executor.retrieve(matchedAudio, context);
+      if (!sourceList.length) return null;
+      const matchedAudio = await executor.search(sourceList, song, unmContext);
+      const retrievedSong = await executor.retrieve(matchedAudio, unmContext);
       if (retrievedSong.url.includes('bilivideo.com')) {
         retrievedSong.url = await fetchBiliVideoFile(retrievedSong.url);
       }

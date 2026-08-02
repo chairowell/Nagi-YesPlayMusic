@@ -8,6 +8,7 @@ import store from '@/store';
 import { isAccountLoggedIn } from '@/utils/auth';
 import {
   cacheTrackSource,
+  deleteTrackSource,
   getTrackSource,
   hasTrackSource,
 } from '@/utils/db';
@@ -25,6 +26,13 @@ import {
 import { sendDesktop } from '@/services/desktopTransport';
 import { isDesktopRuntime } from '@/utils/runtime';
 import { requestUnblockedSong } from '@/services/unblockMusicTransport';
+import {
+  createBlobAudioSource,
+  createRemoteAudioSource,
+  discardFailedCache,
+  resolveAudioSource,
+  toHowlSourceOptions,
+} from '@/utils/audioSource';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -333,40 +341,42 @@ export default class {
       });
     }
   }
-  _playAudioSource(source, autoplay = true) {
+  _playAudioSource(
+    source,
+    autoplay = true,
+    ifUnplayableThen = UNPLAYABLE_CONDITION.PLAY_NEXT_TRACK
+  ) {
     Howler.unload();
-    this._howler = new Howl({
-      src: [source],
+    let handlingLoadError = false;
+    const howlerOptions = toHowlSourceOptions(source);
+    let howler;
+    const handleLoadError = (_, errCode) => {
+      if (handlingLoadError) return;
+      handlingLoadError = true;
+      void this._retryAudioSourceAfterFailure({
+        failedHowler: howler,
+        failedSource: source,
+        autoplay,
+        ifUnplayableThen,
+        errCode,
+      });
+    };
+    howler = new Howl({
+      ...howlerOptions,
       html5: true,
       preload: true,
-      format: ['mp3', 'flac'],
+      onload: () => {
+        Promise.resolve(source.cacheAfterLoad?.()).catch(error => {
+          console.warn('[Player] 音频播放成功，但写入缓存失败', error);
+        });
+      },
       onend: () => {
         this._nextTrackCallback();
       },
+      // Howler 会在构造函数内立即 load；必须同时注册，否则无扩展名等同步错误会漏掉。
+      onloaderror: handleLoadError,
     });
-    this._howler.on('loaderror', (_, errCode) => {
-      // https://developer.mozilla.org/en-US/docs/Web/API/MediaError/code
-      // code 3: MEDIA_ERR_DECODE
-      if (errCode === 3) {
-        this._playNextTrack(this._isPersonalFM);
-      } else if (errCode === 4) {
-        // code 4: MEDIA_ERR_SRC_NOT_SUPPORTED
-        store.dispatch('showToast', `无法播放: 不支持的音频格式`);
-        this._playNextTrack(this._isPersonalFM);
-      } else {
-        const t = this.progress;
-        this._replaceCurrentTrackAudio(this.currentTrack, false, false).then(
-          replaced => {
-            // 如果 replaced 为 false，代表当前的 track 已经不是这里想要替换的track
-            // 此时则不修改当前的歌曲进度
-            if (replaced) {
-              this._howler?.seek(t);
-              this.play();
-            }
-          }
-        );
-      }
-    });
+    this._howler = howler;
     if (autoplay) {
       this.play();
       if (this._currentTrack.name) {
@@ -376,9 +386,85 @@ export default class {
     }
     this.setOutputDevice();
   }
-  _getAudioSourceBlobURL(data) {
-    // Create a new object URL.
-    const source = URL.createObjectURL(new Blob([data]));
+
+  async _retryAudioSourceAfterFailure({
+    failedHowler,
+    failedSource,
+    autoplay,
+    ifUnplayableThen,
+    errCode,
+  }) {
+    if (this._howler !== failedHowler) return;
+    const failedTrack = this.currentTrack;
+    if (failedSource.origin === 'cache') {
+      await discardFailedCache(deleteTrackSource, failedTrack.id, error =>
+        console.warn('[Player] 删除损坏缓存失败，继续尝试备用源', error)
+      );
+    }
+    if (failedSource.url.startsWith('blob:')) {
+      URL.revokeObjectURL(failedSource.url);
+      this.createdBlobRecords = this.createdBlobRecords.filter(
+        url => url !== failedSource.url
+      );
+    }
+
+    let fallback;
+    if (failedSource.origin === 'unm' && failedSource.provider) {
+      const excludedProviders = new Set(failedSource.excludedProviders || []);
+      if (!excludedProviders.has(failedSource.provider)) {
+        excludedProviders.add(failedSource.provider);
+        fallback = await resolveAudioSource(
+          {
+            unm: () =>
+              this._getAudioSourceFromUnblockMusic(failedTrack, [
+                ...excludedProviders,
+              ]),
+          },
+          'netease',
+          (_origin, error) =>
+            console.warn('[Player] 备用 provider 请求失败', error)
+        );
+      }
+    } else {
+      fallback = await this._getAudioSource(failedTrack, {
+        afterOrigin: failedSource.origin,
+      });
+    }
+    if (
+      this.currentTrackID !== failedTrack.id ||
+      this._howler !== failedHowler
+    ) {
+      return;
+    }
+    if (fallback) {
+      console.warn(
+        `[Player] ${failedSource.origin} 音源加载失败 (${errCode})，改用 ${fallback.origin}`
+      );
+      this._playAudioSource(fallback, autoplay, ifUnplayableThen);
+      return;
+    }
+
+    store.dispatch(
+      'showToast',
+      `无法播放 ${failedTrack.name}: 网易云及可用备用源均不可用`
+    );
+    switch (ifUnplayableThen) {
+      case UNPLAYABLE_CONDITION.PLAY_PREV_TRACK:
+        this.playPrevTrack();
+        break;
+      case UNPLAYABLE_CONDITION.PLAY_NEXT_TRACK:
+      default:
+        this._playNextTrack(this._isPersonalFM);
+        break;
+    }
+  }
+
+  _getAudioSourceBlobURL(data, origin = 'cache') {
+    const source = createBlobAudioSource(
+      data,
+      blob => URL.createObjectURL(blob),
+      origin
+    );
 
     // Clean up the previous object URLs since we've created a new one.
     // Revoke object URLs can release the memory taken by a Blob,
@@ -387,14 +473,14 @@ export default class {
 
     // Then, we replace the createBlobRecords with new one with
     // our newly created object URL.
-    this.createdBlobRecords = [source];
+    this.createdBlobRecords = [source.url];
 
     return source;
   }
   _getAudioSourceFromCache(id) {
     return getTrackSource(id).then(t => {
       if (!t) return null;
-      return this._getAudioSourceBlobURL(t.source);
+      return this._getAudioSourceBlobURL(t.source, 'cache');
     });
   }
   _getAudioSourceFromNetease(track) {
@@ -404,18 +490,26 @@ export default class {
         if (!result.data[0].url) return null;
         if (result.data[0].freeTrialInfo !== null) return null; // 跳过只能试听的歌曲
         const source = result.data[0].url.replace(/^http:/, 'https:');
-        if (store.state.settings.automaticallyCacheSongs) {
-          cacheTrackSource(track, source, result.data[0].br);
-        }
-        return source;
+        return createRemoteAudioSource(source, {
+          origin: 'netease',
+          format: result.data[0].type,
+          cacheAfterLoad: store.state.settings.automaticallyCacheSongs
+            ? () => cacheTrackSource(track, source, result.data[0].br)
+            : null,
+        });
       });
     } else {
       return new Promise(resolve => {
-        resolve(`https://music.163.com/song/media/outer/url?id=${track.id}`);
+        resolve(
+          createRemoteAudioSource(
+            `https://music.163.com/song/media/outer/url?id=${track.id}`,
+            { origin: 'netease', format: 'mp3' }
+          )
+        );
       });
     }
   }
-  async _getAudioSourceFromUnblockMusic(track) {
+  async _getAudioSourceFromUnblockMusic(track, excludedProviders = []) {
     console.debug(`[debug][Player.js] _getAudioSourceFromUnblockMusic`);
 
     if (
@@ -452,6 +546,7 @@ export default class {
         enableFlac: store.state.settings.unmEnableFlac || null,
         proxyUri: store.state.settings.unmProxyUri || null,
         searchMode: determineSearchMode(store.state.settings.unmSearchMode),
+        excludedSources: excludedProviders,
         config: {
           'joox:cookie': store.state.settings.unmJooxCookie || null,
           'qq:cookie': store.state.settings.unmQQCookie || null,
@@ -460,36 +555,54 @@ export default class {
       }
     );
 
-    if (store.state.settings.automaticallyCacheSongs && retrieveSongInfo?.url) {
-      // 对于来自 bilibili 的音源
-      // retrieveSongInfo.url 是音频数据的base64编码
-      // 其他音源为实际url
-      const url =
-        retrieveSongInfo.source === 'bilibili'
-          ? `data:application/octet-stream;base64,${retrieveSongInfo.url}`
-          : retrieveSongInfo.url;
-      cacheTrackSource(track, url, 128000, `unm:${retrieveSongInfo.source}`);
-    }
-
     if (!retrieveSongInfo) {
       return null;
     }
 
     if (retrieveSongInfo.source !== 'bilibili') {
-      return retrieveSongInfo.url;
+      return createRemoteAudioSource(retrieveSongInfo.url, {
+        origin: 'unm',
+        provider: retrieveSongInfo.source,
+        excludedProviders,
+        // 一些 provider 返回无扩展名的签名 URL；这个值只帮助 Howler 通过
+        // 能力预检，响应自己的 MIME 和字节仍由 WebKit 负责实际解码。
+        fallbackFormat: 'mp3',
+        cacheAfterLoad: store.state.settings.automaticallyCacheSongs
+          ? () =>
+              cacheTrackSource(
+                track,
+                retrieveSongInfo.url,
+                128000,
+                `unm:${retrieveSongInfo.source}`
+              )
+          : null,
+      });
     }
 
     const buffer = base642Buffer(retrieveSongInfo.url);
-    return this._getAudioSourceBlobURL(buffer);
+    const source = this._getAudioSourceBlobURL(buffer, 'unm');
+    source.provider = retrieveSongInfo.source;
+    source.excludedProviders = excludedProviders;
+    if (store.state.settings.automaticallyCacheSongs) {
+      source.cacheAfterLoad = () =>
+        cacheTrackSource(
+          track,
+          `data:${source.mimeType};base64,${retrieveSongInfo.url}`,
+          128000,
+          'unm:bilibili'
+        );
+    }
+    return source;
   }
-  _getAudioSource(track) {
-    return this._getAudioSourceFromCache(String(track.id))
-      .then(source => {
-        return source ?? this._getAudioSourceFromNetease(track);
-      })
-      .then(source => {
-        return source ?? this._getAudioSourceFromUnblockMusic(track);
-      });
+  async _getAudioSource(track, { afterOrigin = null } = {}) {
+    const resolvers = {
+      cache: () => this._getAudioSourceFromCache(String(track.id)),
+      netease: () => this._getAudioSourceFromNetease(track),
+      unm: () => this._getAudioSourceFromUnblockMusic(track),
+    };
+    return resolveAudioSource(resolvers, afterOrigin, (origin, error) => {
+      console.warn(`[Player] ${origin} 音源请求失败，继续尝试下一层`, error);
+    });
   }
   _replaceCurrentTrack(
     id,
@@ -524,7 +637,7 @@ export default class {
       if (source) {
         let replaced = false;
         if (track.id === this.currentTrackID) {
-          this._playAudioSource(source, autoplay);
+          this._playAudioSource(source, autoplay, ifUnplayableThen);
           replaced = true;
         }
         if (isCacheNextTrack) {
@@ -565,7 +678,8 @@ export default class {
 
       // 预缓存只触发网络下载；读取已缓存音频会创建无人使用的 Blob URL，
       // 还会提前回收当前正在播放的 URL。
-      await this._getAudioSourceFromNetease(track);
+      const source = await this._getAudioSourceFromNetease(track);
+      await source?.cacheAfterLoad?.();
     });
   }
   _loadSelfFromLocalStorage() {

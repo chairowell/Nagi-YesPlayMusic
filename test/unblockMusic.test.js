@@ -50,15 +50,15 @@ describe('UNM 桌面服务', () => {
   });
 
   test('缺失专辑和歌手时仍能生成 UNM 输入', () => {
-    expect(normalizeNeteaseTrack({ id: 123, name: '测试歌曲', dt: 456 })).toEqual(
-      {
-        id: '123',
-        name: '测试歌曲',
-        duration: 456,
-        album: undefined,
-        artists: [],
-      }
-    );
+    expect(
+      normalizeNeteaseTrack({ id: 123, name: '测试歌曲', dt: 456 })
+    ).toEqual({
+      id: '123',
+      name: '测试歌曲',
+      duration: 456,
+      album: undefined,
+      artists: [],
+    });
   });
 
   test('单次检索失败沿用旧版行为并返回 null', async () => {
@@ -73,5 +73,40 @@ describe('UNM 桌面服务', () => {
     });
 
     expect(await unblock(null, { id: 1 }, {})).toBeNull();
+  });
+
+  test('解码失败后可排除当前 provider，有界尝试下一个备用源', async () => {
+    const calls = [];
+    const unblock = createUnblockMusicService({
+      executor: {
+        list: () => ['ytdl', 'bilibili', 'pyncm', 'kugou'],
+        search: async (sources, _song, context) => {
+          calls.push({ sources, context });
+          return { source: sources[0], identifier: 'next' };
+        },
+        retrieve: async matched => ({
+          source: matched.source,
+          url: 'https://example.com/audio.mp3',
+        }),
+      },
+      log: () => {},
+    });
+
+    const result = await unblock(
+      null,
+      { id: 1 },
+      {
+        searchMode: 0,
+        excludedSources: ['ytdl', 'bilibili'],
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        sources: ['pyncm', 'kugou'],
+        context: { searchMode: 0 },
+      },
+    ]);
+    expect(result.source).toBe('pyncm');
   });
 });

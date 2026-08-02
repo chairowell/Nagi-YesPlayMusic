@@ -1,10 +1,7 @@
 import axios from 'axios';
 import Dexie from 'dexie';
 import store from '@/store';
-import {
-  createKeyedTaskPool,
-  sumTrackSourceStats,
-} from '@/utils/cacheStats';
+import { createKeyedTaskPool, sumTrackSourceStats } from '@/utils/cacheStats';
 import { isCacheLimitExceeded } from '@/utils/cachePolicy';
 import { isDesktopRuntime } from '@/utils/runtime';
 // import pkg from "../../package.json";
@@ -79,10 +76,7 @@ initTracksCacheBytes();
 export async function trimTrackSourceCache() {
   try {
     while (
-      isCacheLimitExceeded(
-        tracksCacheBytes,
-        store.state.settings.cacheLimit
-      )
+      isCacheLimitExceeded(tracksCacheBytes, store.state.settings.cacheLimit)
     ) {
       const delCache = await db.trackSources.orderBy('createTime').first();
       if (!delCache) {
@@ -96,7 +90,11 @@ export async function trimTrackSourceCache() {
         tracksCacheBytes - (delCache.source?.byteLength || 0)
       );
       console.debug(
-        `[debug][db.js] deleteExcessCacheSuccess, track: ${delCache.name}, size: ${delCache.source?.byteLength || 0}, cacheSize:${tracksCacheBytes}`
+        `[debug][db.js] deleteExcessCacheSuccess, track: ${
+          delCache.name
+        }, size: ${
+          delCache.source?.byteLength || 0
+        }, cacheSize:${tracksCacheBytes}`
       );
     }
   } catch (error) {
@@ -150,6 +148,18 @@ export function getTrackSource(id) {
     );
     return track;
   });
+}
+
+export async function deleteTrackSource(id) {
+  const trackID = Number(id);
+  const track = await db.trackSources.get(trackID);
+  if (!track) return false;
+  await db.trackSources.delete(trackID);
+  tracksCacheBytes = Math.max(
+    0,
+    tracksCacheBytes - (track.source?.byteLength || 0)
+  );
+  return true;
 }
 
 export function hasTrackSource(id) {
