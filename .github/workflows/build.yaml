@@ -46,15 +46,15 @@ jobs:
         run: bun run verify:tauri:version -- "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
 
       - name: Build locally signed Tauri app
-        if: github.ref_type != 'tag'
+        if: github.ref_type != 'tag' || vars.APPLE_SIGNING_ENABLED != 'true'
         run: bun run build:tauri
 
       - name: Package local DMG
-        if: github.ref_type != 'tag'
+        if: github.ref_type != 'tag' || vars.APPLE_SIGNING_ENABLED != 'true'
         run: bun run package:tauri:dmg
 
       - name: Verify Apple release secrets
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -66,7 +66,7 @@ jobs:
         run: bun run verify:tauri:release-env
 
       - name: Import Developer ID certificate
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -84,7 +84,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
       - name: Build Developer ID signed and notarized DMG
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -93,7 +93,7 @@ jobs:
         run: bun run build:tauri:release
 
       - name: Validate Developer ID signature and notarization ticket
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
         run: |
           APP_PATH="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
@@ -102,7 +102,7 @@ jobs:
           xcrun stapler validate src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
 
       - name: Collect notarized release DMG
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
         run: bun run collect:tauri:release-dmg
 
       - name: Verify release checksum
@@ -117,7 +117,7 @@ jobs:
           retention-days: 14
 
       - name: Remove temporary signing keychain
-        if: always() && github.ref_type == 'tag'
+        if: always() && github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
         run: |
           security delete-keychain "$RUNNER_TEMP/yesplaymusic-build.keychain-db" || true
           rm -f "$RUNNER_TEMP/yesplaymusic-certificate.p12"

@@ -15,7 +15,7 @@ const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 );
 
-test('Tauri CI 只构建 Apple Silicon 并上传签名后的 DMG', () => {
+test('Tauri CI 只构建 Apple Silicon，并保留无签名和签名两条发布路径', () => {
   expect(workflow).toContain('targets: aarch64-apple-darwin');
   expect(workflow).toContain('run: bun run build:tauri');
   expect(workflow).toContain('run: bun run package:tauri:dmg');
@@ -28,7 +28,14 @@ test('Tauri CI 只构建 Apple Silicon 并上传签名后的 DMG', () => {
   expect(workflow).not.toContain('dist_electron');
 });
 
-test('版本 tag 必须经过 Developer ID 签名、公证和 stapler 验证', () => {
+test('版本 tag 默认走无 Developer ID 签名路径', () => {
+  expect(workflow).toContain("vars.APPLE_SIGNING_ENABLED != 'true'");
+  expect(workflow).toContain('run: bun run build:tauri');
+  expect(workflow).toContain('run: bun run package:tauri:dmg');
+});
+
+test('显式开启 Apple 签名后才要求公证和 stapler 验证', () => {
+  expect(workflow).toContain("vars.APPLE_SIGNING_ENABLED == 'true'");
   for (const secret of [
     'APPLE_CERTIFICATE',
     'APPLE_CERTIFICATE_PASSWORD',
