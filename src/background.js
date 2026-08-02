@@ -18,7 +18,7 @@ import {
   isCreateMpris,
 } from '@/utils/platform';
 import path from 'node:path';
-import { startNeteaseMusicApi } from './electron/services';
+import { startNeteaseMusicApi } from './services/neteaseApi';
 import { initIpcMain } from './electron/ipcMain.js';
 import { createMenu } from './electron/menu';
 import { createTray } from '@/electron/tray';

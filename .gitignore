@@ -45,3 +45,6 @@ devenv.local.nix
 # electron-vite build output
 out
 dist_electron
+
+# Tauri 的 Bun sidecar 是 60MB 以上的架构产物，只在构建时生成
+/src-tauri/binaries/*
