@@ -8,3 +8,13 @@ export function getActiveTrackIndex({ shuffle, list, shuffledList }, trackID) {
   const activeList = shuffle ? shuffledList : list;
   return activeList.findIndex(id => id === trackID);
 }
+
+/**
+ * 从歌单中选一首作为心动模式种子。
+ * 随机数只能乘列表长度；多加一会让最大下标越过数组末尾。
+ */
+export function pickRandomTrackID(trackIds, random = Math.random) {
+  if (trackIds.length === 0) return undefined;
+  const index = Math.floor(random() * trackIds.length);
+  return trackIds[index]?.id;
+}

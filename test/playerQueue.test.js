@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { getActiveTrackIndex } from '../src/utils/playerQueue';
+import {
+  getActiveTrackIndex,
+  pickRandomTrackID,
+} from '../src/utils/playerQueue';
 
 describe('播放队列位置', () => {
   test('随机模式按随机队列定位手动选择的歌曲', () => {
@@ -26,5 +29,17 @@ describe('播放队列位置', () => {
         2
       )
     ).toBe(1);
+  });
+});
+
+describe('心动模式随机种子', () => {
+  test('随机数接近 1 时仍返回最后一首而不是越界', () => {
+    expect(
+      pickRandomTrackID([{ id: 1 }, { id: 2 }, { id: 3 }], () => 0.999999)
+    ).toBe(3);
+  });
+
+  test('空歌单安全返回 undefined', () => {
+    expect(pickRandomTrackID([], () => 0.5)).toBeUndefined();
   });
 });

@@ -11,7 +11,10 @@ import { isCreateMpris, isCreateTray } from '@/utils/platform';
 import { Howl, Howler } from 'howler';
 import shuffle from 'lodash/shuffle';
 import { decode as base642Buffer } from '@/utils/base64';
-import { getActiveTrackIndex } from '@/utils/playerQueue';
+import {
+  getActiveTrackIndex,
+  pickRandomTrackID,
+} from '@/utils/playerQueue';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -935,10 +938,11 @@ export default class {
   }
   playIntelligenceListById(id, trackID = 'first', noCache = false) {
     getPlaylistDetail(id, noCache).then(data => {
-      const randomId = Math.floor(
-        Math.random() * (data.playlist.trackIds.length + 1)
-      );
-      const songId = data.playlist.trackIds[randomId].id;
+      const songId = pickRandomTrackID(data.playlist.trackIds);
+      if (songId === undefined) {
+        store.dispatch('showToast', '歌单里没有可用于心动模式的歌曲');
+        return;
+      }
       intelligencePlaylist({ id: songId, pid: id }).then(result => {
         let trackIDs = result.data.map(t => t.id);
         this.replacePlaylist(trackIDs, id, 'playlist', trackID);
