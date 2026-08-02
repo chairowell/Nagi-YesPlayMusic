@@ -1,7 +1,10 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { tauriDmgName } from '../scripts/package-tauri-dmg.mjs';
-import { validateTauriVersions } from '../scripts/verify-tauri-version.mjs';
+import {
+  validateTauriVersions,
+  verifyTauriVersions,
+} from '../scripts/verify-tauri-version.mjs';
 
 const workflow = readFileSync(
   new URL('../.github/workflows/build.yaml', import.meta.url),
@@ -36,6 +39,10 @@ test('tag 和三个应用版本字段必须完全一致', () => {
       tag: 'v0.6.0',
     })
   ).toThrow('版本号不一致');
+});
+
+test('本轮 Tauri 重构使用独立 beta 版本线', async () => {
+  expect(await verifyTauriVersions()).toBe('0.6.0-beta.1');
 });
 
 test('只有版本 tag 获得写权限并创建草稿 release', () => {
