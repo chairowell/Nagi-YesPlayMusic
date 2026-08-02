@@ -203,6 +203,8 @@ export default {
         // do nothing
       } else if (this.dbclickTrackFunc === 'playTrackOnListByID') {
         this.player.playTrackOnListByID(trackID);
+      } else if (this.dbclickTrackFunc === 'playQueuedTrackByID') {
+        this.player.playTrackOnListByID(trackID, 'playNext');
       } else if (this.dbclickTrackFunc === 'playPlaylistByID') {
         this.player.playPlaylistByID(this.id, trackID);
       } else if (this.dbclickTrackFunc === 'playAList') {

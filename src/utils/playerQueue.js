@@ -18,3 +18,13 @@ export function pickRandomTrackID(trackIds, random = Math.random) {
   const index = Math.floor(random() * trackIds.length);
   return trackIds[index]?.id;
 }
+
+/**
+ * 用户直接播放插队歌曲时要消费掉这一项，否则下一次切歌会再次命中它。
+ * 只移除第一项，保留用户有意把同一首歌插队多次的语义。
+ */
+export function consumeQueuedTrack(queue, trackID) {
+  const index = queue.findIndex(id => id === trackID);
+  if (index !== -1) queue.splice(index, 1);
+  return index;
+}

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  consumeQueuedTrack,
   getActiveTrackIndex,
   pickRandomTrackID,
 } from '../src/utils/playerQueue';
@@ -29,6 +30,20 @@ describe('播放队列位置', () => {
         2
       )
     ).toBe(1);
+  });
+});
+
+describe('插队歌曲消费', () => {
+  test('手动播放后从插队队列移除，避免下一首重复', () => {
+    const queue = [7, 8];
+    expect(consumeQueuedTrack(queue, 7)).toBe(0);
+    expect(queue).toEqual([8]);
+  });
+
+  test('同一首被插队多次时只消费一次', () => {
+    const queue = [7, 7, 8];
+    consumeQueuedTrack(queue, 7);
+    expect(queue).toEqual([7, 8]);
   });
 });
 

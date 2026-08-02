@@ -12,6 +12,7 @@ import { Howl, Howler } from 'howler';
 import shuffle from 'lodash/shuffle';
 import { decode as base642Buffer } from '@/utils/base64';
 import {
+  consumeQueuedTrack,
   getActiveTrackIndex,
   pickRandomTrackID,
 } from '@/utils/playerQueue';
@@ -933,6 +934,8 @@ export default class {
         },
         id
       );
+    } else if (listName === 'playNext') {
+      consumeQueuedTrack(this._playNextList, id);
     }
     this._replaceCurrentTrack(id);
   }

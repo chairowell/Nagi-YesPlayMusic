@@ -15,7 +15,7 @@
       :tracks="playNextTracks"
       type="playlist"
       :highlight-playing-track="false"
-      dbclick-track-func="playTrackOnListByID"
+      dbclick-track-func="playQueuedTrackByID"
       item-key="id+index"
       :extra-context-menu-item="['removeTrackFromQueue']"
     />
