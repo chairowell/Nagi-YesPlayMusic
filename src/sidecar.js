@@ -9,6 +9,7 @@ import {
   hardenAuthCookieHeaders,
   installLocalRequestBoundary,
 } from './services/localRequestBoundary';
+import { applyRendererSecurityHeaders } from './services/contentSecurityPolicy';
 
 const HOST = '127.0.0.1';
 
@@ -52,6 +53,8 @@ function startRendererServer(
 ) {
   const app = express();
   installLocalRequestBoundary(app, { allowedOrigins });
+  // 正式版页面由 sidecar 的 HTTP origin 提供，必须在真实响应上设置 CSP。
+  app.use(applyRendererSecurityHeaders);
 
   // API 必须和页面同源，否则登录 cookie 会被 WebView 的 SameSite 规则丢弃。
   app.use(
