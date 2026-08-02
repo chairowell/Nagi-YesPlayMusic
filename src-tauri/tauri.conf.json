@@ -1,0 +1,39 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "YesPlayMusic Tauri",
+  "version": "0.5.0",
+  "identifier": "com.electron.yesplaymusic.tauri",
+  "mainBinaryName": "yesplaymusic-tauri",
+  "build": {
+    "beforeDevCommand": "bun run build:sidecar && bun run dev:tauri:renderer",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "bun run build:tauri:renderer && bun run build:sidecar",
+    "frontendDist": "http://127.0.0.1:28232"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null,
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "category": "Music",
+    "externalBin": ["binaries/yesplaymusic-sidecar"],
+    "resources": {
+      "../dist-tauri/": "renderer/"
+    },
+    "icon": [
+      "../build/icons/32x32.png",
+      "../build/icons/128x128.png",
+      "../build/icons/256x256.png",
+      "../build/icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "Entitlements.plist"
+    }
+  }
+}
