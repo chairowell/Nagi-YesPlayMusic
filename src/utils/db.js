@@ -1,6 +1,7 @@
 import axios from 'axios';
 import Dexie from 'dexie';
 import store from '@/store';
+import { sumTrackSourceStats } from '@/utils/cacheStats';
 // import pkg from "../../package.json";
 
 const db = new Dexie('yesplaymusic');
@@ -52,11 +53,10 @@ async function initTracksCacheBytes() {
   if (!process.env.IS_ELECTRON) return;
   try {
     await waitForSettingsReady();
-    const all = await db.trackSources.toArray();
-    tracksCacheBytes = all.reduce(
-      (sum, t) => sum + (t?.source?.byteLength || 0),
-      0
+    const stats = await sumTrackSourceStats(visitor =>
+      db.trackSources.each(visitor)
     );
+    tracksCacheBytes = stats.bytes;
     console.debug(
       '[debug][db.js] initTracksCacheBytes, total bytes:',
       tracksCacheBytes
@@ -195,22 +195,15 @@ export function getAlbumFromCache(id) {
 }
 
 export function countDBSize() {
-  const trackSizes = [];
-  return db.trackSources
-    .each(track => {
-      trackSizes.push(track.source.byteLength);
-    })
-    .then(() => {
-      const res = {
-        bytes: trackSizes.reduce((s1, s2) => s1 + s2, 0),
-        length: trackSizes.length,
-      };
+  return sumTrackSourceStats(visitor => db.trackSources.each(visitor)).then(
+    res => {
       tracksCacheBytes = res.bytes;
       console.debug(
         `[debug][db.js] load tracksCacheBytes: ${tracksCacheBytes}`
       );
       return res;
-    });
+    }
+  );
 }
 
 export function clearDB() {
