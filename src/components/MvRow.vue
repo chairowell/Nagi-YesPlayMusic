@@ -20,7 +20,15 @@
         <div class="title">
           <router-link :to="'/mv/' + getID(mv)">{{ getTitle(mv) }}</router-link>
         </div>
-        <div class="artist" v-html="getSubtitle(mv)"></div>
+        <div class="artist">
+          <router-link
+            v-if="subtitle === 'artist'"
+            :to="`/artist/${getArtist(mv).id}`"
+          >
+            {{ getArtist(mv).name }}
+          </router-link>
+          <span v-else>{{ getSubtitle(mv) }}</span>
+        </div>
       </div>
     </div>
   </div>
@@ -62,19 +70,17 @@ export default {
       if (mv.name !== undefined) return mv.name;
       if (mv.title !== undefined) return mv.title;
     },
+    getArtist(mv) {
+      if (mv.artistName !== undefined) {
+        return { name: mv.artistName, id: mv.artistId };
+      }
+      const creator = mv.creator?.[0];
+      return creator
+        ? { name: creator.userName, id: creator.userId }
+        : { name: 'null', id: 0 };
+    },
     getSubtitle(mv) {
-      if (this.subtitle === 'artist') {
-        let artistName = 'null';
-        let artistID = 0;
-        if (mv.artistName !== undefined) {
-          artistName = mv.artistName;
-          artistID = mv.artistId;
-        } else if (mv.creator !== undefined) {
-          artistName = mv.creator[0].userName;
-          artistID = mv.creator[0].userId;
-        }
-        return `<a href="/artist/${artistID}">${artistName}</a>`;
-      } else if (this.subtitle === 'publishTime') {
+      if (this.subtitle === 'publishTime') {
         return mv.publishTime;
       }
     },

@@ -105,8 +105,9 @@
       <div
         v-show="mode !== 'qrCode'"
         class="notice"
-        v-html="isElectron ? $t('login.noticeElectron') : $t('login.notice')"
-      ></div>
+      >
+        {{ loginNotice }}
+      </div>
     </div>
   </div>
 </template>
@@ -119,6 +120,7 @@ import NProgress from 'nprogress';
 import { mapMutations } from 'vuex';
 import { setCookies } from '@/utils/auth';
 import nativeAlert from '@/utils/nativeAlert';
+import { stripMarkupToText } from '@/utils/safeText';
 import {
   loginWithPhone,
   loginWithEmail,
@@ -147,6 +149,13 @@ export default {
   computed: {
     isElectron() {
       return isDesktopRuntime;
+    },
+    loginNotice() {
+      return stripMarkupToText(
+        this.isElectron
+          ? this.$t('login.noticeElectron')
+          : this.$t('login.notice')
+      );
     },
   },
   created() {
@@ -440,6 +449,7 @@ export default {
   font-size: 12px;
   color: var(--color-text);
   opacity: 0.48;
+  white-space: pre-line;
 }
 
 @keyframes loading {

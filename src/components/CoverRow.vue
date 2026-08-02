@@ -30,7 +30,13 @@
           <router-link :to="getTitleLink(item)">{{ item.name }}</router-link>
         </div>
         <div v-if="type !== 'artist' && subText !== 'none'" class="info">
-          <span v-html="getSubText(item)"></span>
+          <router-link
+            v-if="getSubTextArtist(item)"
+            :to="`/artist/${getSubTextArtist(item).id}`"
+          >
+            {{ getSubTextArtist(item).name }}
+          </router-link>
+          <span v-else>{{ getSubText(item) }}</span>
         </div>
       </div>
     </div>
@@ -73,12 +79,6 @@ export default {
       if (this.subText === 'creator') return 'by ' + item.creator.nickname;
       if (this.subText === 'releaseYear')
         return new Date(item.publishTime).getFullYear();
-      if (this.subText === 'artist') {
-        if (item.artist !== undefined)
-          return `<a href="/artist/${item.artist.id}">${item.artist.name}</a>`;
-        if (item.artists !== undefined)
-          return `<a href="/artist/${item.artists[0].id}">${item.artists[0].name}</a>`;
-      }
       if (this.subText === 'albumType+releaseYear') {
         let albumType = item.type;
         if (item.type === 'EP/Single') {
@@ -91,6 +91,10 @@ export default {
         return `${albumType} · ${new Date(item.publishTime).getFullYear()}`;
       }
       if (this.subText === 'appleMusic') return 'by Apple Music';
+    },
+    getSubTextArtist(item) {
+      if (this.subText !== 'artist') return null;
+      return item.artist ?? item.artists?.[0] ?? null;
     },
     isPrivacy(item) {
       return this.type === 'playlist' && item.privacy === 10;
