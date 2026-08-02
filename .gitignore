@@ -2,6 +2,7 @@
 node_modules
 /dist
 /dist-tauri
+/dist_tauri
 
 # local env files
 .env
