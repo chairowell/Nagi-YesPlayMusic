@@ -1,0 +1,42 @@
+import { describe, expect, test } from 'bun:test';
+import { hasReachableWindowArea } from '../src/utils/windowGeometry';
+
+const displays = [
+  { x: 0, y: 0, width: 2560, height: 1410 },
+  { x: 2560, y: 0, width: 3024, height: 1900 },
+];
+
+describe('窗口可见边界', () => {
+  test('拒绝本次真实出现的屏幕外坐标', () => {
+    expect(
+      hasReachableWindowArea(
+        { x: 8064, y: 2640, width: 3812, height: 268 },
+        displays
+      )
+    ).toBe(false);
+  });
+
+  test('正常窗口和跨屏窗口仍可恢复', () => {
+    expect(
+      hasReachableWindowArea(
+        { x: 837, y: 30, width: 920, height: 620 },
+        displays
+      )
+    ).toBe(true);
+    expect(
+      hasReachableWindowArea(
+        { x: 2400, y: 100, width: 600, height: 100 },
+        displays
+      )
+    ).toBe(true);
+  });
+
+  test('只剩几个像素贴在屏幕边缘不算可操作', () => {
+    expect(
+      hasReachableWindowArea(
+        { x: 5560, y: 1880, width: 500, height: 200 },
+        displays
+      )
+    ).toBe(false);
+  });
+});

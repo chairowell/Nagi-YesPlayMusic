@@ -17,7 +17,10 @@ export function isCompactWindowPhysicalSize(size, scaleFactor = 1) {
 
 export async function expandCompactWindow() {
   if (electronRenderer) {
-    return electronRenderer.invoke('expandCompactWindow', COMPACT_EXPANDED_SIZE);
+    return electronRenderer.invoke(
+      'expandCompactWindow',
+      COMPACT_EXPANDED_SIZE
+    );
   }
   if (!isTauriRuntime || tauriMiniFrame) return false;
 
@@ -47,11 +50,15 @@ export async function restoreCompactWindow() {
   }
   if (!isTauriRuntime || !tauriMiniFrame) return false;
 
-  const { getCurrentWindow } = await import('@tauri-apps/api/window');
-  const window = getCurrentWindow();
   const frame = tauriMiniFrame;
   tauriMiniFrame = null;
-  await window.setSize(frame.size);
-  await window.setPosition(frame.position);
+  const { invoke } = await import('@tauri-apps/api/core');
+  // 原生层掌握完整显示器工作区；在那里校验后再恢复，避免旧外接屏坐标让窗口消失。
+  await invoke('restore_compact_window', {
+    x: frame.position.x,
+    y: frame.position.y,
+    width: frame.size.width,
+    height: frame.size.height,
+  });
   return true;
 }

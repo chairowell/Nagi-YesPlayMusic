@@ -13,8 +13,8 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
-    AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-    WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_shell::{
@@ -402,6 +402,80 @@ fn toggle_always_on_top(window: WebviewWindow) -> Result<bool, String> {
     Ok(next)
 }
 
+fn window_frame_has_reachable_area(
+    frame: (i32, i32, u32, u32),
+    monitors: &[(i32, i32, u32, u32)],
+) -> bool {
+    let (window_x, window_y, window_width, window_height) = frame;
+    if window_width == 0 || window_height == 0 {
+        return false;
+    }
+    let minimum_width = i64::from(window_width.min(48));
+    let minimum_height = i64::from(window_height.min(48));
+    monitors.iter().any(|&(x, y, width, height)| {
+        let overlap_width = (i64::from(window_x) + i64::from(window_width))
+            .min(i64::from(x) + i64::from(width))
+            - i64::from(window_x).max(i64::from(x));
+        let overlap_height = (i64::from(window_y) + i64::from(window_height))
+            .min(i64::from(y) + i64::from(height))
+            - i64::from(window_y).max(i64::from(y));
+        overlap_width >= minimum_width && overlap_height >= minimum_height
+    })
+}
+
+fn monitor_work_areas(window: &WebviewWindow) -> Result<Vec<(i32, i32, u32, u32)>, String> {
+    window
+        .available_monitors()
+        .map_err(|error| error.to_string())
+        .map(|monitors| {
+            monitors
+                .iter()
+                .map(|monitor| {
+                    let area = monitor.work_area();
+                    (
+                        area.position.x,
+                        area.position.y,
+                        area.size.width,
+                        area.size.height,
+                    )
+                })
+                .collect()
+        })
+}
+
+fn ensure_main_window_reachable(window: &WebviewWindow) -> Result<(), String> {
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let frame = (position.x, position.y, size.width, size.height);
+    if !window_frame_has_reachable_area(frame, &monitor_work_areas(window)?) {
+        window.center().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn restore_compact_window(
+    window: WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let frame = (x, y, width, height);
+    let reachable = window_frame_has_reachable_area(frame, &monitor_work_areas(&window)?);
+    window
+        .set_size(PhysicalSize::new(width, height))
+        .map_err(|error| error.to_string())?;
+    if reachable {
+        window
+            .set_position(PhysicalPosition::new(x, y))
+            .map_err(|error| error.to_string())?;
+    } else {
+        window.center().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let play = MenuItem::with_id(app, "play", "播放/暂停", true, None::<&str>)?;
     let previous = MenuItem::with_id(app, "previous", "上一首", true, None::<&str>)?;
@@ -615,6 +689,7 @@ fn create_main_window(
             }
         })
         .build()?;
+    ensure_main_window_reachable(&window)?;
 
     let window_for_close = window.clone();
     window.on_window_event(move |event| {
@@ -723,6 +798,7 @@ fn main() {
             desktop_event,
             is_always_on_top,
             toggle_always_on_top,
+            restore_compact_window,
             read_legacy_settings
         ])
         .build(tauri::generate_context!())
@@ -751,6 +827,7 @@ mod tests {
     use super::{
         decode_tray_cover, is_smoke_test, is_webview_smoke_test, normalize_electron_shortcut,
         parse_legacy_settings, response_has_sidecar_identity, tray_cover_url,
+        window_frame_has_reachable_area,
     };
     use tauri_plugin_global_shortcut::Shortcut;
 
@@ -794,6 +871,23 @@ mod tests {
         assert!(!response_has_sidecar_identity(
             "HTTP/1.1 404 Not Found\r\n\r\n",
             &expected_token
+        ));
+    }
+
+    #[test]
+    fn restored_window_must_have_a_reachable_area() {
+        let monitors = [(0, 0, 2560, 1410), (2560, 0, 3024, 1900)];
+        assert!(window_frame_has_reachable_area(
+            (837, 30, 920, 620),
+            &monitors
+        ));
+        assert!(!window_frame_has_reachable_area(
+            (8064, 2640, 3812, 268),
+            &monitors
+        ));
+        assert!(!window_frame_has_reachable_area(
+            (5560, 1880, 500, 200),
+            &monitors
         ));
     }
 

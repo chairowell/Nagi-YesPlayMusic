@@ -1,10 +1,11 @@
-import { app, dialog, globalShortcut, ipcMain } from 'electron';
+import { app, dialog, globalShortcut, ipcMain, screen } from 'electron';
 import { registerGlobalShortcut } from '@/electron/globalShortcut';
 import { createUnblockMusicService } from '@/services/unblockMusic';
 import cloneDeep from 'lodash/cloneDeep';
 import shortcuts from '@/utils/shortcuts';
 import { createMenu } from './menu';
 import { isCreateTray, isMac } from '@/utils/platform';
+import { hasReachableWindowArea } from '@/utils/windowGeometry';
 
 const clc = require('cli-color');
 const log = text => {
@@ -146,7 +147,13 @@ export function initIpcMain(win, store, trayEventEmitter) {
     if (!compactWindowBounds) return false;
     const bounds = compactWindowBounds;
     compactWindowBounds = null;
-    win.setBounds(bounds, true);
+    if (hasReachableWindowArea(bounds, screen.getAllDisplays())) {
+      win.setBounds(bounds, true);
+    } else {
+      // 外接屏拔掉后只恢复尺寸，位置交给当前显示器重新居中。
+      win.setSize(bounds.width, bounds.height, true);
+      win.center();
+    }
     return true;
   });
 
