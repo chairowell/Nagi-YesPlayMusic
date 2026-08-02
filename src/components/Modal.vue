@@ -153,7 +153,7 @@ export default {
   display: flex;
   justify-content: flex-end;
   margin-bottom: -8px;
-  button {
+  :deep(button) {
     color: var(--color-text);
     background: var(--color-secondary-bg-for-transparent);
     border-radius: 8px;
@@ -165,12 +165,12 @@ export default {
       transform: scale(0.94);
     }
   }
-  button.primary {
+  :deep(button.primary) {
     color: var(--color-primary-bg);
     background: var(--color-primary-gradient);
     font-weight: 500;
   }
-  button.block {
+  :deep(button.block) {
     width: 100%;
     margin-left: 0;
     &:active {
