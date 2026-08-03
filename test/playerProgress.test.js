@@ -32,4 +32,21 @@ describe('播放器进度响应式绑定', () => {
     expect(observedProgress).toEqual([0, 17]);
     expect(persisted).toBe(0);
   });
+
+  test('Howler 实例保留原始身份，结束事件不会被误判为旧实例', () => {
+    const state = reactive({ player: null });
+    const howler = {};
+    const rawPlayer = {
+      _howler: null,
+      initialize() {
+        this._howler = howler;
+      },
+      saveSelfToLocalStorage() {},
+      sendSelfToIpcMain() {},
+    };
+
+    mountPlayerState({ state }, rawPlayer, {});
+
+    expect(state.player._howler).toBe(howler);
+  });
 });

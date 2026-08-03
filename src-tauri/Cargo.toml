@@ -1,6 +1,6 @@
 [package]
 name = "yesplaymusic-tauri"
-version = "0.6.1"
+version = "0.6.2"
 description = "YesPlayMusic 的 macOS Tauri 客户端"
 authors = ["YesPlayMusic contributors"]
 edition = "2021"

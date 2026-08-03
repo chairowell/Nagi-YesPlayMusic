@@ -43,6 +43,7 @@ import {
   warmTrackArtwork,
 } from '@/utils/trackPrefetch';
 import { buildArtworkURL } from '@/utils/artwork';
+import { resolvePlaybackDuration } from '@/utils/playbackDuration';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -69,6 +70,7 @@ const delay = ms =>
   });
 const excludeSaveKeys = [
   '_playing',
+  '_audioDuration',
   '_personalFMLoading',
   '_personalFMNextLoading',
 ];
@@ -94,6 +96,7 @@ export default class {
     // 播放器状态
     this._playing = false; // 是否正在播放中
     this._progress = 0; // 当前播放歌曲的进度
+    this._audioDuration = 0; // 浏览器实际解码出的音频长度
     this._enabled = false; // 是否启用Player
     this._repeatMode = 'off'; // off | on | one
     this._shuffle = false; // true | false
@@ -247,9 +250,10 @@ export default class {
     return this._personalFMTrack;
   }
   get currentTrackDuration() {
-    const trackDuration = this._currentTrack.dt || 1000;
-    let duration = ~~(trackDuration / 1000);
-    return duration > 1 ? duration - 1 : duration;
+    return resolvePlaybackDuration(
+      this._currentTrack.dt,
+      this._audioDuration
+    );
   }
   get progress() {
     return this._progress;
@@ -406,6 +410,9 @@ export default class {
       html5: true,
       preload: true,
       onload: () => {
+        if (this._howler === howler) {
+          this._audioDuration = howler.duration();
+        }
         Promise.resolve(source.cacheAfterLoad?.()).catch(error => {
           console.warn('[Player] 音频播放成功，但写入缓存失败', error);
         });
@@ -667,6 +674,7 @@ export default class {
         previousHowler?.stop();
         Howler.unload();
         this._progress = 0;
+        this._audioDuration = 0;
         localStorage.setItem('playerCurrentTrackTime', '0');
         if (this._playing) this._setPlaying(false);
       },

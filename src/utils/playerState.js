@@ -1,6 +1,9 @@
+import { markRaw } from 'vue';
+
 const TRANSIENT_PLAYER_FIELDS = new Set([
   '_howler',
   '_progress',
+  '_audioDuration',
   '_initialized',
 ]);
 
@@ -11,7 +14,9 @@ const TRANSIENT_PLAYER_FIELDS = new Set([
 export function mountPlayerState(store, rawPlayer, exposureTarget) {
   const persistedPlayer = new Proxy(rawPlayer, {
     set(target, prop, value) {
-      target[prop] = value;
+      // Howler 会用实例身份过滤过期的异步回调；被 Vue 深层代理后，
+      // 同一实例也会与创建时的 raw object 严格不等，导致结束事件被误丢弃。
+      target[prop] = prop === '_howler' && value ? markRaw(value) : value;
       if (TRANSIENT_PLAYER_FIELDS.has(prop)) return true;
       target.saveSelfToLocalStorage();
       target.sendSelfToIpcMain();
