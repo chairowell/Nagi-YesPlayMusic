@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="images/logo.png" alt="Logo" width="156" height="156">
+  <img src="images/logo.png" alt="YesPlayMusic Logo" width="156" height="156">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://tauri.app"><img src="images/tauri-glyph.svg" alt="Built with Tauri 2" height="72"></a>
 </p>
 
 <h2 align="center" style="font-weight: 600">YesPlayMusic</h2>
@@ -35,7 +37,17 @@ Tauri v0.6.0 约为 80.8 MiB，减少约 79%。内存仍按完整进程树继续
 中文翻译，纯音乐则显示「纯音乐，请欣赏」。拖回大窗口自动还原成完整歌词页。
 原版最小窗口是 1080×720，这里放开到了 300×48。
 
-![迷你播放器](images/mini-player.png)
+**普通歌词**
+
+![迷你播放器：普通歌词](images/mini-player.png)
+
+**纯音乐**
+
+![迷你播放器：纯音乐](images/mini-player-instrumental.png)
+
+**双语歌词**
+
+![迷你播放器：双语歌词](images/mini-player-bilingual.png)
 
 **窗口置顶。** 迷你条上有个图钉按钮，点一下把窗口钉在最上层，切到别的桌面或者全屏应用上面
 它也会跟着走，适合一边干活一边扫一眼歌词。按钮平时藏着，鼠标移到播放条上才浮现，
@@ -126,6 +138,9 @@ DMG 和校验文件在 `dist_tauri/`。
 沿用上游的 [MIT license](https://opensource.org/licenses/MIT)。
 
 仅供个人学习研究使用，禁止用于商业及非法用途。音乐版权归网易云音乐及各版权方所有。
+
+TAURI is a trademark of The Tauri Programme within the Commons Conservancy. README 中使用的
+Tauri 标识来自官方 Logopack，仅作技术栈说明。
 
 <!-- MARKDOWN LINKS & IMAGES -->
 
