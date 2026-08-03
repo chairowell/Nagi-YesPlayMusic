@@ -76,6 +76,19 @@ export function hasRememberedBarFrame(storage = browserStorage()) {
   return Boolean(loadCompactWindowMemory(storage).bar);
 }
 
+export function buildCompactWindowTransitionFrame(currentFrame, targetFrame) {
+  const current = normalizeCompactWindowFrame(currentFrame);
+  const target = normalizeCompactWindowFrame(targetFrame);
+  if (!current || !target) return null;
+
+  return {
+    x: current.x,
+    y: current.y,
+    width: target.width,
+    height: target.height,
+  };
+}
+
 export function isCompactWindowPhysicalSize(size, scaleFactor = 1) {
   const scale = Number(scaleFactor);
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
@@ -152,9 +165,12 @@ export async function expandCompactWindow() {
   if (!current || !isMiniWindowSize(current)) return false;
 
   const memory = rememberCompactWindowFrame(current);
-  const target =
+  const rememberedTarget =
     memory.browse ||
     normalizeCompactWindowFrame({ ...COMPACT_EXPANDED_SIZE, x: null, y: null });
+  // 档位只负责恢复尺寸；位置跟随当前窗口，避免双屏时跳回另一块屏的旧坐标。
+  const target = buildCompactWindowTransitionFrame(current, rememberedTarget);
+  if (!target) return false;
   compactWindowTransitioning = true;
   try {
     const expanded = await applyCompactWindowFrame(
@@ -175,13 +191,16 @@ export async function restoreCompactWindow() {
 
   const memory = rememberCompactWindowFrame(current);
   if (!memory.bar) return false;
+  // ESC 收回时留在用户正在操作的屏幕，不套用播放条上一次所在屏幕的绝对坐标。
+  const target = buildCompactWindowTransitionFrame(current, memory.bar);
+  if (!target) return false;
   compactWindowTransitioning = true;
   try {
     const restored = await applyCompactWindowFrame(
-      memory.bar,
+      target,
       'restoreCompactWindow'
     );
-    if (restored) rememberCompactWindowFrame(memory.bar);
+    if (restored) rememberCompactWindowFrame(target);
     return restored;
   } finally {
     compactWindowTransitioning = false;

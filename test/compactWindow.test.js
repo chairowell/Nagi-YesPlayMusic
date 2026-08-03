@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import {
+  buildCompactWindowTransitionFrame,
   COMPACT_RESIZE_SETTLE_MS,
   isCompactWindowPhysicalSize,
   loadCompactWindowMemory,
@@ -72,6 +73,18 @@ test('Bar 和浏览尺寸分别记忆，更新一档不会覆盖另一档', () =
     lastMode: 'bar',
   });
   expect(COMPACT_RESIZE_SETTLE_MS).toBeGreaterThanOrEqual(200);
+});
+
+test('双屏切换档位时沿用当前屏位置，只恢复目标档位尺寸', () => {
+  const currentOnRetina = { x: 5480, y: 220, width: 920, height: 620 };
+  const rememberedBarOnExternal = { x: 180, y: 90, width: 520, height: 72 };
+
+  expect(
+    buildCompactWindowTransitionFrame(
+      currentOnRetina,
+      rememberedBarOnExternal
+    )
+  ).toEqual({ x: 5480, y: 220, width: 520, height: 72 });
 });
 
 test('中窗提供明确返回按钮和 Escape 快捷键', () => {
