@@ -33,6 +33,7 @@ import {
   resolveAudioSource,
   toHowlSourceOptions,
 } from '@/utils/audioSource';
+import { findMatchingAudioResponse } from '@/utils/audioCacheIntegrity';
 import {
   createTrackSwitchGuard,
   runLatestTrackSwitch,
@@ -504,15 +505,21 @@ export default class {
   _getAudioSourceFromNetease(track) {
     if (isAccountLoggedIn()) {
       return getMP3(track.id).then(result => {
-        if (!result.data[0]) return null;
-        if (!result.data[0].url) return null;
-        if (result.data[0].freeTrialInfo !== null) return null; // 跳过只能试听的歌曲
-        const source = result.data[0].url.replace(/^http:/, 'https:');
+        const audio = findMatchingAudioResponse(result.data, track.id);
+        if (!audio) {
+          console.warn(
+            `[Player] 网易云音源响应没有当前歌曲 ID，拒绝使用可能串台的结果：${track.id}`
+          );
+          return null;
+        }
+        if (!audio.url) return null;
+        if (audio.freeTrialInfo !== null) return null; // 跳过只能试听的歌曲
+        const source = audio.url.replace(/^http:/, 'https:');
         return createRemoteAudioSource(source, {
           origin: 'netease',
-          format: result.data[0].type,
+          format: audio.type,
           cacheAfterLoad: store.state.settings.automaticallyCacheSongs
-            ? () => cacheTrackSource(track, source, result.data[0].br)
+            ? () => cacheTrackSource(track, source, audio.br)
             : null,
         });
       });

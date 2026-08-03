@@ -1,6 +1,7 @@
 import axios from 'axios';
 import Dexie from 'dexie';
 import store from '@/store';
+import { isTrustedTrackSource } from '@/utils/audioCacheIntegrity';
 import { createKeyedTaskPool, sumTrackSourceStats } from '@/utils/cacheStats';
 import { isCacheLimitExceeded } from '@/utils/cachePolicy';
 import { isDesktopRuntime } from '@/utils/runtime';
@@ -126,6 +127,7 @@ export function cacheTrackSource(trackInfo, url, bitRate, from = 'netease') {
     });
     await db.trackSources.put({
       id: trackInfo.id,
+      validatedTrackID: Number(trackInfo.id),
       source: response.data,
       bitRate,
       from,
@@ -140,14 +142,20 @@ export function cacheTrackSource(trackInfo, url, bitRate, from = 'netease') {
   });
 }
 
-export function getTrackSource(id) {
-  return db.trackSources.get(Number(id)).then(track => {
-    if (!track) return null;
-    console.debug(
-      `[debug][db.js] get track from cache 👉 ${track.name} by ${track.artist}`
-    );
-    return track;
-  });
+export async function getTrackSource(id) {
+  const trackID = Number(id);
+  const track = await db.trackSources.get(trackID);
+  if (!track) return null;
+  if (!isTrustedTrackSource(track, trackID)) {
+    // 老缓存没有记录音源响应对应的歌曲 ID，无法排除曾被路径级 API 缓存串台。
+    await deleteTrackSource(trackID);
+    console.warn(`[Player] 已丢弃未校验的历史音频缓存：${track.name}`);
+    return null;
+  }
+  console.debug(
+    `[debug][db.js] get track from cache 👉 ${track.name} by ${track.artist}`
+  );
+  return track;
 }
 
 export async function deleteTrackSource(id) {
