@@ -33,6 +33,10 @@ import {
   resolveAudioSource,
   toHowlSourceOptions,
 } from '@/utils/audioSource';
+import {
+  createTrackSwitchGuard,
+  runLatestTrackSwitch,
+} from '@/utils/trackSwitch';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -125,6 +129,11 @@ export default class {
       enumerable: false,
       value: false,
       writable: true,
+    });
+
+    Object.defineProperty(this, '_trackSwitchGuard', {
+      enumerable: false,
+      value: createTrackSwitchGuard(),
     });
   }
 
@@ -248,8 +257,14 @@ export default class {
 
     if (this._enabled) {
       // 恢复当前播放歌曲
-      this._replaceCurrentTrack(this.currentTrackID, false).then(() => {
-        this._howler?.seek(localStorage.getItem('playerCurrentTrackTime') ?? 0);
+      const savedTrackTime = Number(
+        localStorage.getItem('playerCurrentTrackTime') ?? 0
+      );
+      this._replaceCurrentTrack(this.currentTrackID, false).then(replaced => {
+        // 初始化请求若已被用户切歌淘汰，不能把旧进度写进后来那首歌。
+        if (!replaced || !Number.isFinite(savedTrackTime)) return;
+        this._howler?.seek(savedTrackTime);
+        this._progress = savedTrackTime;
       }); // update audio source and init howler
       this._initMediaSession();
     }
@@ -373,6 +388,7 @@ export default class {
         });
       },
       onend: () => {
+        if (this._howler !== howler) return;
         this._nextTrackCallback();
       },
       // Howler 会在构造函数内立即 load；必须同时注册，否则无扩展名等同步错误会漏掉。
@@ -614,39 +630,28 @@ export default class {
     if (autoplay && this._currentTrack.name) {
       this._scrobble(this.currentTrack, this._howler?.seek());
     }
-    return getTrackDetail(id).then(data => {
-      const track = data.songs[0];
-      this._currentTrack = track;
-      this._updateMediaSessionMetaData(track);
-      return this._replaceCurrentTrackAudio(
-        track,
-        autoplay,
-        true,
-        ifUnplayableThen
-      );
-    });
-  }
-  /**
-   * @returns 是否成功加载音频，并使用加载完成的音频替换了howler实例
-   */
-  _replaceCurrentTrackAudio(
-    track,
-    autoplay,
-    isCacheNextTrack,
-    ifUnplayableThen = UNPLAYABLE_CONDITION.PLAY_NEXT_TRACK
-  ) {
-    return this._getAudioSource(track).then(source => {
-      if (source) {
-        let replaced = false;
-        if (track.id === this.currentTrackID) {
-          this._playAudioSource(source, autoplay, ifUnplayableThen);
-          replaced = true;
-        }
-        if (isCacheNextTrack) {
-          this._cacheNextTrack();
-        }
-        return replaced;
-      } else {
+    return runLatestTrackSwitch(this._trackSwitchGuard, {
+      onBegin: () => {
+        // 网络请求开始前就切断旧音频，否则新封面加载后仍会短暂播放上一首。
+        const previousHowler = this._howler;
+        this._howler = null;
+        previousHowler?.stop();
+        Howler.unload();
+        this._progress = 0;
+        localStorage.setItem('playerCurrentTrackTime', '0');
+        if (this._playing) this._setPlaying(false);
+      },
+      loadTrack: () => getTrackDetail(id).then(data => data.songs[0]),
+      commitTrack: track => {
+        this._currentTrack = track;
+        this._updateMediaSessionMetaData(track);
+      },
+      loadSource: track => this._getAudioSource(track),
+      commitSource: source => {
+        this._playAudioSource(source, autoplay, ifUnplayableThen);
+        this._cacheNextTrack();
+      },
+      onMissingSource: track => {
         store.dispatch('showToast', `无法播放 ${track.name}`);
         switch (ifUnplayableThen) {
           case UNPLAYABLE_CONDITION.PLAY_NEXT_TRACK:
@@ -662,8 +667,7 @@ export default class {
             );
             break;
         }
-        return false;
-      }
+      },
     });
   }
   _cacheNextTrack() {
@@ -931,22 +935,27 @@ export default class {
   }
 
   pause() {
-    this._howler?.fade(this.volume, 0, PLAY_PAUSE_FADE_DURATION);
+    const howler = this._howler;
+    if (!howler) return;
+    howler.fade(this.volume, 0, PLAY_PAUSE_FADE_DURATION);
 
-    this._howler?.once('fade', () => {
-      this._howler?.pause();
+    howler.once('fade', () => {
+      if (this._howler !== howler) return;
+      howler.pause();
       this._setPlaying(false);
       setTitle(null);
       this._pauseDiscordPresence(this._currentTrack);
     });
   }
   play() {
-    if (this._howler?.playing()) return;
+    const howler = this._howler;
+    if (!howler || howler.playing()) return;
 
-    this._howler?.play();
+    howler.play();
 
-    this._howler?.once('play', () => {
-      this._howler?.fade(0, this.volume, PLAY_PAUSE_FADE_DURATION);
+    howler.once('play', () => {
+      if (this._howler !== howler) return;
+      howler.fade(0, this.volume, PLAY_PAUSE_FADE_DURATION);
 
       // 播放时确保开启player.
       // 避免因"忘记设置"导致在播放时播放器不显示的Bug
