@@ -39,10 +39,10 @@ import {
   runLatestTrackSwitch,
 } from '@/utils/trackSwitch';
 import {
-  buildArtworkURL,
   createNextTrackPrefetcher,
   warmTrackArtwork,
 } from '@/utils/trackPrefetch';
+import { buildArtworkURL } from '@/utils/artwork';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 

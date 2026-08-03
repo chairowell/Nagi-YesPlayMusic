@@ -1,14 +1,4 @@
-export function buildArtworkURL(rawURL, size) {
-  if (typeof rawURL !== 'string' || rawURL.trim() === '') return '';
-
-  try {
-    const baseURL = new URL(rawURL.trim().replace(/^http:/, 'https:'));
-    baseURL.searchParams.set('param', `${size}y${size}`);
-    return baseURL.toString();
-  } catch {
-    return '';
-  }
-}
+import { buildArtworkURL } from '@/utils/artwork';
 
 function artworkURLs(track) {
   const rawURL = track?.al?.picUrl ?? track?.album?.picUrl;

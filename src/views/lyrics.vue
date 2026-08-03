@@ -425,7 +425,7 @@ import {
   shouldStartMiniWindowDrag,
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
-import { buildArtworkURL } from '@/utils/trackPrefetch';
+import { buildArtworkURL } from '@/utils/artwork';
 
 export default {
   name: 'Lyrics',

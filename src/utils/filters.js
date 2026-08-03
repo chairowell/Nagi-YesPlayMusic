@@ -2,6 +2,7 @@ import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import locale from '@/locale';
+import { buildArtworkURL } from '@/utils/artwork';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -63,12 +64,7 @@ export function formatAlbumType(type, album) {
 }
 
 export function resizeImage(imgUrl, size = 512) {
-  if (!imgUrl) return '';
-  let httpsImgUrl = imgUrl;
-  if (imgUrl.slice(0, 5) !== 'https') {
-    httpsImgUrl = 'https' + imgUrl.slice(4);
-  }
-  return `${httpsImgUrl}?param=${size}y${size}`;
+  return buildArtworkURL(imgUrl, size);
 }
 
 export function formatPlayCount(count) {
