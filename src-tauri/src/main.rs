@@ -10,7 +10,7 @@ use std::{
 
 use tauri::{
     image::Image as TauriImage,
-    menu::{Menu, MenuItem},
+    menu::{AboutMetadata, AboutMetadataBuilder, Menu, MenuItem, MenuItemKind, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewUrl,
@@ -31,6 +31,34 @@ const RELEASE_WEB_PORT: u16 = 28_232;
 const SIDECAR_HEALTH_PATH: &str = "/__yesplaymusic/health";
 const SIDECAR_HEALTH_BODY: &str = r#"{"service":"yesplaymusic-sidecar","protocol":1}"#;
 const SIDECAR_HEALTH_TOKEN_HEADER: &str = "X-YesPlayMusic-Health-Token";
+
+fn app_about_metadata(version: &str) -> AboutMetadata<'static> {
+    AboutMetadataBuilder::new()
+        .name(Some("YesPlayMusic"))
+        // macOS 会从 Info.plist 读取 build number；这里只提供短版本，避免显示成 0.6.0 (0.6.0)。
+        .short_version(Some(version.to_string()))
+        .credits(Some("macOS Tauri 2 重构版\n由 Nagi Studio 独立维护"))
+        .copyright(Some("基于 qier222/YesPlayMusic 的开源工作重构"))
+        .build()
+}
+
+fn create_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+
+    #[cfg(target_os = "macos")]
+    if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+        // 默认 About 只带名称和版本；替换首项即可保留完整的原生 File/Edit/View 菜单。
+        app_menu.remove_at(0)?;
+        let about = PredefinedMenuItem::about(
+            app,
+            Some("关于 YesPlayMusic"),
+            Some(app_about_metadata(&app.package_info().version.to_string())),
+        )?;
+        app_menu.insert(&about, 0)?;
+    }
+
+    Ok(menu)
+}
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 
@@ -721,6 +749,7 @@ fn create_main_window(
 
 fn main() {
     let app = tauri::Builder::default()
+        .menu(create_app_menu)
         // 单实例必须最先注册，避免第二个实例先启动 sidecar 抢占端口。
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -845,9 +874,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_tray_cover, is_smoke_test, is_webview_smoke_test, normalize_electron_shortcut,
-        parse_legacy_settings, response_has_sidecar_identity, tray_cover_url,
-        window_frame_has_reachable_area,
+        app_about_metadata, decode_tray_cover, is_smoke_test, is_webview_smoke_test,
+        normalize_electron_shortcut, parse_legacy_settings, response_has_sidecar_identity,
+        tray_cover_url, window_frame_has_reachable_area,
     };
     use tauri_plugin_global_shortcut::Shortcut;
 
@@ -867,6 +896,23 @@ mod tests {
             "yesplaymusic-tauri",
             "--smoke-test"
         ]));
+    }
+
+    #[test]
+    fn app_about_identifies_the_tauri_rebuild() {
+        let metadata = app_about_metadata("0.6.0");
+
+        assert_eq!(metadata.name.as_deref(), Some("YesPlayMusic"));
+        assert_eq!(metadata.version, None);
+        assert_eq!(metadata.short_version.as_deref(), Some("0.6.0"));
+        assert_eq!(
+            metadata.credits.as_deref(),
+            Some("macOS Tauri 2 重构版\n由 Nagi Studio 独立维护")
+        );
+        assert_eq!(
+            metadata.copyright.as_deref(),
+            Some("基于 qier222/YesPlayMusic 的开源工作重构")
+        );
     }
 
     #[test]
