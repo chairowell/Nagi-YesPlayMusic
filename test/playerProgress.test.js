@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { effect, isReactive, reactive } from 'vue';
 import { mountPlayerState } from '../src/utils/playerState';
 
@@ -48,5 +50,15 @@ describe('播放器进度响应式绑定', () => {
     mountPlayerState({ state }, rawPlayer, {});
 
     expect(state.player._howler).toBe(howler);
+  });
+
+  test('恢复上次播放位置也必须走统一 seek，不能保存未经媒体确认的请求值', () => {
+    const playerSource = readFileSync(
+      fileURLToPath(new URL('../src/utils/Player.js', import.meta.url)),
+      'utf8'
+    );
+
+    expect(playerSource).toContain('this.seek(savedTrackTime, false);');
+    expect(playerSource).not.toContain('this._howler?.seek(savedTrackTime);');
   });
 });

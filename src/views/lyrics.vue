@@ -105,9 +105,12 @@
             class="mini-progress"
             :class="{ anon: settings.anonStyle }"
             :style="{ width: miniProgressPercent + '%' }"
-          >
-            <span v-if="settings.anonStyle" class="mini-progress-rider"></span>
-          </div>
+          ></div>
+          <span
+            v-if="settings.anonStyle"
+            class="mini-progress-rider"
+            :style="miniProgressRiderStyle"
+          ></span>
         </div>
       </div>
 
@@ -420,7 +423,10 @@ import {
   startDesktopWindowDragging,
 } from '@/services/desktopTransport';
 import { isDesktopRuntime, isTauriRuntime } from '@/utils/runtime';
-import { calculateMiniSeekTime } from '@/utils/miniPlayer';
+import {
+  calculateMiniSeekTime,
+  getMiniProgressRiderStyle,
+} from '@/utils/miniPlayer';
 import {
   hasCrossedMiniWindowDragThreshold,
   shouldStartMiniWindowDrag,
@@ -505,6 +511,9 @@ export default {
       if (!duration) return 0;
       const progress = this.miniSeekPreview ?? this.player.progress;
       return Math.min(100, (progress / duration) * 100);
+    },
+    miniProgressRiderStyle() {
+      return getMiniProgressRiderStyle(this.miniProgressPercent);
     },
     currentTrack() {
       return this.player.currentTrack;
@@ -780,11 +789,12 @@ export default {
       const seekTime = this.miniSeekPreview;
       if (Number.isFinite(seekTime)) {
         this.player.progress = seekTime;
-        // WKWebView 可能把真实拖动结束为 pointercancel；用最后一个有效落点
-        // 立即重定位歌词，不能把它当成“撤销拖动”后留在旧时间轴。
+        const actualSeekTime = this.player.progress;
+        // WKWebView 可能修正流媒体 seek 的落点；歌词必须跟随读回的实际
+        // 播放位置，不能继续使用指针请求值。
         this.highlightLyricIndex = findActiveLyricIndex(
           this.lyricToShow,
-          seekTime
+          actualSeekTime
         );
       }
       this.miniSeekDragging = false;
@@ -1212,21 +1222,22 @@ export default {
           #f76d99 100%
         );
       }
-
-      // Anon 骑在进度末端，往上站在线条上
-      .mini-progress-rider {
-        position: absolute;
-        right: -11px;
-        bottom: 1px;
-        width: 22px;
-        height: 22px;
-        background: url('/img/logos/anon.gif') center / 22px no-repeat;
-        image-rendering: pixelated;
-        pointer-events: none;
-      }
     }
 
-    &.dragging .mini-progress {
+    // 角色在轨道内部完成整段行程；它的右边缘只在 100% 时碰到终点。
+    .mini-progress-rider {
+      position: absolute;
+      bottom: 1px;
+      width: 22px;
+      height: 22px;
+      background: url('/img/logos/anon.gif') center / 22px no-repeat;
+      image-rendering: pixelated;
+      pointer-events: none;
+      transition: left 0.4s linear, transform 0.4s linear;
+    }
+
+    &.dragging .mini-progress,
+    &.dragging .mini-progress-rider {
       transition: none;
     }
   }

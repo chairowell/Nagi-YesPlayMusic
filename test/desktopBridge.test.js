@@ -12,7 +12,7 @@ test('Tauri 与 Electron 的播放控制事件共用同一组动作', () => {
     playPrevTrack: () => calls.push('previous'),
     switchRepeatMode: () => calls.push('repeat'),
     switchShuffle: () => calls.push('shuffle'),
-    _howler: { seek: position => calls.push(['seek', position]) },
+    seek: position => calls.push(['seek', position]),
   };
   const self = {
     $router: { push: path => calls.push(['route', path]) },

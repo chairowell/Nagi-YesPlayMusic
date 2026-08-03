@@ -27,6 +27,6 @@ export function createDesktopEventHandlers(self, store, player) {
     nextUp: () => self.$refs.player.goToNextTracksPage(),
     rememberCloseAppOption: value =>
       store.commit('updateSettings', { key: 'closeAppOption', value }),
-    setPosition: position => player._howler.seek(position),
+    setPosition: position => player.seek(position),
   };
 }

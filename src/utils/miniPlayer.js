@@ -17,3 +17,16 @@ export function calculateMiniSeekTime(
   const ratio = Math.min(1, Math.max(0, (clientX - trackLeft) / trackWidth));
   return ratio * duration;
 }
+
+export function getMiniProgressRiderStyle(progressPercent) {
+  const numericPercent = Number(progressPercent);
+  const percent = Number.isFinite(numericPercent)
+    ? Math.min(100, Math.max(0, numericPercent))
+    : 0;
+  return {
+    left: `${percent}%`,
+    // 角色自身也按进度逐渐向左收回：起点露出完整身体，终点的右边缘
+    // 才刚好碰到轨道末端，不会因半个角色宽度而提前“跑完”。
+    transform: `translateX(-${percent}%)`,
+  };
+}

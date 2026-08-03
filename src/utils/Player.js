@@ -44,6 +44,7 @@ import {
 } from '@/utils/trackPrefetch';
 import { buildArtworkURL } from '@/utils/artwork';
 import { resolvePlaybackDuration } from '@/utils/playbackDuration';
+import { commitHowlerSeek } from '@/utils/playbackSeek';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -259,14 +260,7 @@ export default class {
     return this._progress;
   }
   set progress(value) {
-    if (this._howler) {
-      this._howler.seek(value);
-      // 拖拽时先同步 UI；等待下一次时钟采样会让滑块短暂跳回旧位置。
-      this._progress = value;
-      if (isCreateMpris) {
-        void sendDesktop('seeked', this._howler.seek());
-      }
-    }
+    this.seek(value);
   }
   get isCurrentTrackLiked() {
     return store.state.liked.songs.includes(this.currentTrack.id);
@@ -290,8 +284,7 @@ export default class {
       this._replaceCurrentTrack(this.currentTrackID, false).then(replaced => {
         // 初始化请求若已被用户切歌淘汰，不能把旧进度写进后来那首歌。
         if (!replaced || !Number.isFinite(savedTrackTime)) return;
-        this._howler?.seek(savedTrackTime);
-        this._progress = savedTrackTime;
+        this.seek(savedTrackTime, false);
       }); // update audio source and init howler
       this._initMediaSession();
     }
@@ -1025,13 +1018,18 @@ export default class {
     }
   }
   seek(time = null, sendMpris = true) {
-    if (isCreateMpris && sendMpris && time) {
-      void sendDesktop('seeked', time);
-    }
     if (time !== null) {
-      this._howler?.seek(time);
+      const actualPosition = commitHowlerSeek(this._howler, time);
+      if (actualPosition === null) return 0;
+      // 所有 seek 入口都同步同一个真实落点；不能让拖拽预览、桌面控制
+      // 和 Howler 各自保留一份时间。
+      this._progress = actualPosition;
+      if (isCreateMpris && sendMpris) {
+        void sendDesktop('seeked', actualPosition);
+      }
       if (this._playing)
-        this._playDiscordPresence(this._currentTrack, this.seek(null, false));
+        this._playDiscordPresence(this._currentTrack, actualPosition);
+      return actualPosition;
     }
     return this._howler === null ? 0 : this._howler.seek();
   }
