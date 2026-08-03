@@ -38,6 +38,10 @@ import {
   createTrackSwitchGuard,
   runLatestTrackSwitch,
 } from '@/utils/trackSwitch';
+import {
+  createNextTrackPrefetcher,
+  warmTrackArtwork,
+} from '@/utils/trackPrefetch';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -136,6 +140,20 @@ export default class {
       enumerable: false,
       value: createTrackSwitchGuard(),
     });
+
+    Object.defineProperty(this, '_nextTrackPrefetcher', {
+      enumerable: false,
+      value: createNextTrackPrefetcher({
+        loadTrack: id =>
+          getTrackDetail(id).then(data =>
+            data?.songs?.find(track => Number(track.id) === Number(id))
+          ),
+        loadLyric: id => getLyric(id),
+        warmArtwork: track => warmTrackArtwork(track),
+        cacheAudio: (track, isCurrent) =>
+          this._cachePrefetchedAudio(track, isCurrent),
+      }),
+    });
   }
 
   get repeatMode() {
@@ -148,6 +166,7 @@ export default class {
       return;
     }
     this._repeatMode = mode;
+    this._prefetchNextTrack();
   }
   get shuffle() {
     return this._shuffle;
@@ -164,6 +183,7 @@ export default class {
     }
     // 同步当前歌曲在列表中的下标
     this.current = this.list.indexOf(this.currentTrackID);
+    this._prefetchNextTrack();
   }
   get reversed() {
     return this._reversed;
@@ -176,6 +196,7 @@ export default class {
     }
     console.log('changing reversed to:', reversed);
     this._reversed = reversed;
+    this._prefetchNextTrack();
   }
   get volume() {
     return this._volume;
@@ -656,7 +677,7 @@ export default class {
       loadSource: track => this._getAudioSource(track),
       commitSource: source => {
         this._playAudioSource(source, autoplay, ifUnplayableThen);
-        this._cacheNextTrack();
+        this._prefetchNextTrack();
       },
       onMissingSource: track => {
         store.dispatch('showToast', `无法播放 ${track.name}`);
@@ -677,22 +698,26 @@ export default class {
       },
     });
   }
-  _cacheNextTrack() {
-    if (!store.state.settings.automaticallyCacheSongs) return;
+  async _cachePrefetchedAudio(track, isCurrent) {
+    if (!isCurrent() || (await hasTrackSource(track.id))) return;
+    if (!isCurrent()) return;
 
-    let nextTrackID = this._isPersonalFM
+    // 这里只请求远端 URL；真正下载音频前再检查一次目标，避免旧随机队列继续占网速。
+    const source = await this._getAudioSourceFromNetease(track);
+    if (!isCurrent()) return;
+    await source?.cacheAfterLoad?.();
+  }
+  _prefetchNextTrack() {
+    const nextTrackID = this._isPersonalFM
       ? this._personalFMNextTrack?.id ?? 0
       : this._getNextTrack()[0];
-    if (!nextTrackID) return;
-    if (this._personalFMTrack.id == nextTrackID) return;
-    getTrackDetail(nextTrackID).then(async data => {
-      let track = data.songs[0];
-      if (!track || (await hasTrackSource(track.id))) return;
+    if (!nextTrackID || this._personalFMTrack.id == nextTrackID) {
+      this._nextTrackPrefetcher.clear();
+      return Promise.resolve(null);
+    }
 
-      // 预缓存只触发网络下载；读取已缓存音频会创建无人使用的 Blob URL，
-      // 还会提前回收当前正在播放的 URL。
-      const source = await this._getAudioSourceFromNetease(track);
-      await source?.cacheAfterLoad?.();
+    return this._nextTrackPrefetcher.prefetch(nextTrackID, {
+      includeAudio: store.state.settings.automaticallyCacheSongs === true,
     });
   }
   _loadSelfFromLocalStorage() {
@@ -816,7 +841,7 @@ export default class {
           this._personalFMNextTrack = undefined;
         } else {
           this._personalFMNextTrack = result.data[0];
-          this._cacheNextTrack(); // cache next track
+          this._prefetchNextTrack();
         }
         this._personalFMNextLoading = false;
         return [true, this._personalFMNextTrack];
@@ -1090,6 +1115,8 @@ export default class {
     this._playNextList.push(trackID);
     if (playNow) {
       this.playNextTrack();
+    } else {
+      this._prefetchNextTrack();
     }
   }
   playPersonalFM() {
@@ -1142,8 +1169,10 @@ export default class {
 
   clearPlayNextList() {
     this._playNextList = [];
+    this._prefetchNextTrack();
   }
   removeTrackFromQueue(index) {
     this._playNextList.splice(index, 1);
+    this._prefetchNextTrack();
   }
 }
