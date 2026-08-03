@@ -18,6 +18,15 @@ export function lyricClockInterval(showLyrics) {
   return showLyrics ? 50 : 250;
 }
 
+export function hasNoLyric(lyricCount, lyricLoading) {
+  return !lyricLoading && lyricCount === 0;
+}
+
+export function resolveLyricDisplay(currentLyric, lyricCount, lyricLoading) {
+  if (currentLyric) return currentLyric;
+  return hasNoLyric(lyricCount, lyricLoading) ? '纯音乐，请欣赏' : '';
+}
+
 // regexr.com/6e52n
 const extractLrcRegex =
   /^(?<lyricTimestamps>(?:\[.+?\])+)(?!\[)(?<content>.+)$/gm;

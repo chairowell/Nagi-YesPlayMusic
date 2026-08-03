@@ -1,8 +1,16 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
+  hasNoLyric,
   lyricClockInterval,
+  resolveLyricDisplay,
   shouldRunLyricClock,
 } from '../src/utils/lyrics';
+
+const lyricsView = readFileSync(
+  new URL('../src/views/lyrics.vue', import.meta.url),
+  'utf8'
+);
 
 describe('菜单栏逐句歌词时钟', () => {
   test('桌面端在歌词页收起后仍以低频率跟随播放进度', () => {
@@ -17,5 +25,28 @@ describe('菜单栏逐句歌词时钟', () => {
 
   test('纯 Web 模式收起歌词页后不保留后台时钟', () => {
     expect(shouldRunLyricClock(false, false)).toBe(false);
+  });
+});
+
+describe('切歌时的歌词占位', () => {
+  test('歌词仍在加载时不误报纯音乐', () => {
+    expect(hasNoLyric(0, true)).toBe(false);
+    expect(resolveLyricDisplay('', 0, true)).toBe('');
+  });
+
+  test('请求完成并确认没有歌词后才显示纯音乐提示', () => {
+    expect(hasNoLyric(0, false)).toBe(true);
+    expect(resolveLyricDisplay('', 0, false)).toBe('纯音乐，请欣赏');
+  });
+
+  test('当前歌词优先于占位状态', () => {
+    expect(resolveLyricDisplay('正在播放的歌词', 1, false)).toBe(
+      '正在播放的歌词'
+    );
+  });
+
+  test('普通歌曲和云盘歌曲都在请求完成后结束加载状态', () => {
+    expect(lyricsView).toContain('this.lyricLoading = true');
+    expect(lyricsView.match(/\.finally\(finishLyricRequest\)/g)).toHaveLength(2);
   });
 });

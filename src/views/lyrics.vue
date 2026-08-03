@@ -395,9 +395,11 @@ import { formatTrackTime } from '@/utils/common';
 import { getLyric, getCloudLyric } from '@/api/track';
 import {
   copyLyric,
+  hasNoLyric,
   lyricClockInterval,
   lyricParser,
   parseLyric,
+  resolveLyricDisplay,
   shouldRunLyricClock,
 } from '@/utils/lyrics';
 import ButtonIcon from '@/components/ButtonIcon.vue';
@@ -440,6 +442,8 @@ export default {
       lyric: [],
       tlyric: [],
       romalyric: [],
+      lyricLoading: false,
+      lyricRequestVersion: 0,
       lyricType: 'translation', // or 'romaPronunciation'
       highlightLyricIndex: -1,
       minimize: true,
@@ -466,8 +470,11 @@ export default {
     },
     // 纯音乐没有歌词，用网易云那套标准引导词占位
     displayLyric() {
-      if (this.currentLyric) return this.currentLyric;
-      return this.noLyric ? '纯音乐，请欣赏' : '';
+      return resolveLyricDisplay(
+        this.currentLyric,
+        this.lyric.length,
+        this.lyricLoading
+      );
     },
     currentLyricTranslation() {
       const line = this.lyricToShow[this.highlightLyricIndex];
@@ -580,7 +587,7 @@ export default {
       };
     },
     noLyric() {
-      return this.lyric.length == 0;
+      return hasNoLyric(this.lyric.length, this.lyricLoading);
     },
     artist() {
       return this.currentTrack?.ar
@@ -830,11 +837,21 @@ export default {
       }
     },
     getLyric() {
-      if (!this.currentTrack.id) return;
+      if (!this.currentTrack.id) {
+        this.lyricLoading = false;
+        return;
+      }
       // 记下这次请求对应的歌曲。网络慢的时候前一首的响应可能后到，
       // 不加这个判断就会把已经切过去的新歌的歌词覆盖掉。
       const requestedId = this.currentTrack.id;
-      const isStale = () => this.currentTrack.id !== requestedId;
+      const requestVersion = ++this.lyricRequestVersion;
+      this.lyricLoading = true;
+      const isStale = () =>
+        this.currentTrack.id !== requestedId ||
+        this.lyricRequestVersion !== requestVersion;
+      const finishLyricRequest = () => {
+        if (!isStale()) this.lyricLoading = false;
+      };
       if (
         this.currentTrack.pc !== null &&
         this.currentTrack.cd === null &&
@@ -844,14 +861,16 @@ export default {
         return getCloudLyric(
           requestedId,
           this.$store.state.data.user?.userId
-        ).then(data => {
-          if (isStale()) return false;
-          this.tlyric = [];
-          this.romalyric = [];
-          this.lyric = data?.lrc?.length > 0 ? parseLyric(data.lrc) : [];
-          this.lyricType = 'translation';
-          return true;
-        });
+        )
+          .then(data => {
+            if (isStale()) return false;
+            this.tlyric = [];
+            this.romalyric = [];
+            this.lyric = data?.lrc?.length > 0 ? parseLyric(data.lrc) : [];
+            this.lyricType = 'translation';
+            return true;
+          })
+          .finally(finishLyricRequest);
       }
       return getLyric(requestedId).then(data => {
         if (isStale()) return false;
@@ -896,7 +915,7 @@ export default {
             return true;
           }
         }
-      });
+      }).finally(finishLyricRequest);
     },
     switchLyricType() {
       this.lyricType =
