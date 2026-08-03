@@ -37,17 +37,15 @@ Tauri v0.6.0 约为 80.8 MiB，减少约 79%。内存仍按完整进程树继续
 中文翻译，纯音乐则显示「纯音乐，请欣赏」。拖回大窗口自动还原成完整歌词页。
 原版最小窗口是 1080×720，这里放开到了 300×48。
 
-**普通歌词**
-
-![迷你播放器：普通歌词](images/mini-player.png)
-
 **纯音乐**
 
 ![迷你播放器：纯音乐](images/mini-player-instrumental.png)
 
 **双语歌词**
 
-![迷你播放器：双语歌词](images/mini-player-bilingual.png)
+![迷你播放器：双语歌词（Venice Bitch）](images/mini-player-bilingual.png)
+
+![迷你播放器：双语歌词（Red）](images/mini-player.png)
 
 **窗口置顶。** 迷你条上有个图钉按钮，点一下把窗口钉在最上层，切到别的桌面或者全屏应用上面
 它也会跟着走，适合一边干活一边扫一眼歌词。按钮平时藏着，鼠标移到播放条上才浮现，
