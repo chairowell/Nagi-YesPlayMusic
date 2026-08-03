@@ -109,6 +109,11 @@ test('DMG 文件名明确标记版本和 Apple Silicon 架构', () => {
 });
 
 test('README 只说明 Apple Silicon 无签名 Tauri 发布方式', () => {
+  expect(readme).toContain('macOS Tauri 重构版');
+  expect(readme).toContain('381.5 MiB');
+  expect(readme).toContain('80.8 MiB');
+  expect(readme).toContain('约 79%');
+  expect(readme).toContain('docs/performance-baseline.md');
   expect(readme).toContain('bun run build:tauri');
   expect(readme).toContain('bun run package:tauri:dmg');
   expect(readme).not.toContain('Intel 选 `x64`');

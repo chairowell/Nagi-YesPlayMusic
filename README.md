@@ -5,23 +5,30 @@
 <h2 align="center" style="font-weight: 600">YesPlayMusic</h2>
 
 <p align="center">高颜值的第三方网易云播放器</p>
-<p align="center"><sub>macOS 定制分支 · 迷你播放器与菜单栏歌词 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
+<p align="center"><sub>macOS Tauri 重构版 · 迷你播放器与菜单栏歌词 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
 
 ---
 
 ## 关于这个仓库
 
-这是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 分出来独立维护的分支，
-不再跟随上游发版，专注打磨 macOS 上的使用体验。原项目的功能和界面基本保留，
-下面这些是这个版本额外做的事。
+这是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 分出来独立维护的
+macOS Tauri 重构版，不再跟随上游发版。原项目的界面和主要功能保留下来，桌面运行时、
+本地服务、缓存和窗口交互已经针对 macOS 重新实现。
 
 如果你是来找原版的，请直接去[上游仓库](https://github.com/qier222/YesPlayMusic)，
 那边有完整的跨平台安装包和文档。
 
-**欢迎提 Issue 和 PR。** 尤其是 Windows 和 Linux，那两个平台还缺一部分功能，
-[详见下面](#关于-windows-和-linux)。
+**欢迎提 Issue 和 PR。** 这个 fork 目前只维护 Apple Silicon Mac。
 
-## 这个版本改了什么
+## Tauri 重构版改了什么
+
+**v0.6.0 是一次完整的 Tauri 重构。** 渲染层升级到 Vue 3 和 Vite 7，桌面外壳改为
+Tauri 2。应用不再捆绑 Chromium，窗口、菜单栏、媒体状态和本地服务由 Rust 主进程接管。
+
+包体积是目前可以直接复现的收益：迁移前 Electron 版 `.app` 为 381.5 MiB，当前
+Tauri v0.6.0 约为 80.8 MiB，减少约 79%。内存仍按完整进程树继续测量，已有的后台核心
+数据没有包含 WKWebView，因此这里不写不完整的内存降幅。测试口径和阶段性结果见
+[性能迁移基线](docs/performance-baseline.md)。
 
 **迷你播放器。** 把窗口拖窄（宽度小于 620 或高度小于 340）就会自动变成一条紧凑的播放条，
 左边小封面配歌名歌手，中间是当前这句歌词，右边是播放控制。空间够的时候原文下面还会跟一行
@@ -44,10 +51,6 @@
 
 **修了一个切歌的老问题。** 网络慢的时候快速切歌，前一首的歌词响应可能晚于后一首到达，
 把新歌的歌词覆盖成上一首的。现在请求前会记住是哪首歌，回来发现已经切歌就直接丢弃。
-
-**迁移到 Tauri。** 渲染层已经升级到 Vue 3 和 Vite 7，桌面外壳改为 Tauri 2。
-不再随应用捆绑一整套 Chromium，窗口、菜单栏、媒体状态和本地服务由 Rust 主进程接管；
-业务组件继续使用选项式 API。
 
 ## 安装
 
