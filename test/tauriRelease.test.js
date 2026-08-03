@@ -94,8 +94,9 @@ test('tag 和三个应用版本字段必须完全一致', () => {
   ).toThrow('版本号不一致');
 });
 
-test('本轮 Tauri 重构发布为稳定版', async () => {
-  expect(await verifyTauriVersions()).toBe('0.6.0');
+test('当前 Tauri 发布保持稳定版', async () => {
+  expect(await verifyTauriVersions()).toBe(packageJson.version);
+  expect(packageJson.version).not.toContain('-');
 });
 
 test('只有版本 tag 获得写权限并创建草稿 release', () => {

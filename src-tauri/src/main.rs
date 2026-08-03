@@ -900,11 +900,12 @@ mod tests {
 
     #[test]
     fn app_about_identifies_the_tauri_rebuild() {
-        let metadata = app_about_metadata("0.6.0");
+        let version = env!("CARGO_PKG_VERSION");
+        let metadata = app_about_metadata(version);
 
         assert_eq!(metadata.name.as_deref(), Some("YesPlayMusic"));
         assert_eq!(metadata.version, None);
-        assert_eq!(metadata.short_version.as_deref(), Some("0.6.0"));
+        assert_eq!(metadata.short_version.as_deref(), Some(version));
         assert_eq!(
             metadata.credits.as_deref(),
             Some("macOS Tauri 2 重构版\n由 Nagi Studio 独立维护")
