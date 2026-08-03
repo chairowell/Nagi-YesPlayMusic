@@ -9,7 +9,7 @@
       }"
       @click.stop
     >
-      <vue-slider
+      <player-progress-slider
         v-model="player.progress"
         :min="0"
         :max="player.currentTrackDuration"
@@ -19,9 +19,8 @@
         :dot-size="12"
         :height="2"
         :tooltip-formatter="formatTrackTime"
-        :lazy="true"
         :silent="true"
-      ></vue-slider>
+      ></player-progress-slider>
     </div>
     <div class="controls">
       <div class="playing">
@@ -186,6 +185,7 @@ import { mapState, mapMutations, mapActions } from 'vuex';
 import '@/assets/css/slider.css';
 
 import ButtonIcon from '@/components/ButtonIcon.vue';
+import PlayerProgressSlider from '@/components/PlayerProgressSlider.vue';
 import VueSlider from 'vue-slider-component';
 import { goToListSource, hasListSource } from '@/utils/playList';
 import { formatTrackTime } from '@/utils/common';
@@ -194,6 +194,7 @@ export default {
   name: 'Player',
   components: {
     ButtonIcon,
+    PlayerProgressSlider,
     VueSlider,
   },
   data() {

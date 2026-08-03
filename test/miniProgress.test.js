@@ -24,6 +24,7 @@ describe('迷你播放器进度拖拽', () => {
     expect(lyricsSource).toContain('@pointerdown="startMiniSeek"');
     expect(lyricsSource).toContain('@pointermove="moveMiniSeek"');
     expect(lyricsSource).toContain('@pointerup="finishMiniSeek"');
+    expect(lyricsSource).toContain('@pointercancel="commitMiniSeek"');
     expect(lyricsSource).toContain('-webkit-app-region: no-drag');
   });
 });

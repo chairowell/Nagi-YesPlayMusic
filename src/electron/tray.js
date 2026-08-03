@@ -317,17 +317,17 @@ class YPMTrayMacImpl {
     this.win.on('hide', () => this.renderTitle());
   }
 
-  // 迷你条正开着的时候菜单栏只留封面，避免歌词显示两遍；
-  // 窗口一旦被隐藏（比如点菜单栏图标收起），文字要自动补回来
+  // 播放窗口可见时菜单栏只留封面，避免同一首歌在上下两处重复显示；
+  // 窗口一旦被隐藏（比如点菜单栏图标收起），文字要自动补回来。
   renderTitle() {
-    const { title = '', isMini = false } = this.last || {};
-    const barVisible = isMini && this.win.isVisible();
+    const { title = '' } = this.last || {};
+    const windowVisible = this.win.isVisible();
     // 菜单栏空间有限，但不能按字符数一刀切：
     // 中日韩和全角标点占两个字宽，英文只占一个，
     // 按字符截会让英文歌词白白少显示一半。这里按显示宽度算。
     const maxWidth = this.store.get('settings.trayTitleMaxWidth') || 44;
     this.tray.setTitle(
-      barVisible ? '' : truncateByWidth(title.trim(), maxWidth)
+      windowVisible ? '' : truncateByWidth(title.trim(), maxWidth)
     );
   }
 

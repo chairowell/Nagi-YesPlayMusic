@@ -97,7 +97,7 @@
           @pointerdown="startMiniSeek"
           @pointermove="moveMiniSeek"
           @pointerup="finishMiniSeek"
-          @pointercancel="cancelMiniSeek"
+          @pointercancel="commitMiniSeek"
           @keydown.left.prevent="nudgeMiniSeek(-5)"
           @keydown.right.prevent="nudgeMiniSeek(5)"
         >
@@ -209,7 +209,7 @@
             <div class="progress-bar">
               <span>{{ formatTrackTime(player.progress) || '0:00' }}</span>
               <div class="slider">
-                <vue-slider
+                <player-progress-slider
                   v-model="player.progress"
                   :min="0"
                   :max="player.currentTrackDuration"
@@ -219,9 +219,8 @@
                   :dot-size="12"
                   :height="2"
                   :tooltip-formatter="formatTrackTime"
-                  :lazy="true"
                   :silent="true"
-                ></vue-slider>
+                ></player-progress-slider>
               </div>
               <span>{{ formatTrackTime(player.currentTrackDuration) }}</span>
             </div>
@@ -391,10 +390,12 @@
 import { mapState, mapMutations, mapActions } from 'vuex';
 import VueSlider from 'vue-slider-component';
 import ContextMenu from '@/components/ContextMenu.vue';
+import PlayerProgressSlider from '@/components/PlayerProgressSlider.vue';
 import { formatTrackTime } from '@/utils/common';
 import { getLyric, getCloudLyric } from '@/api/track';
 import {
   copyLyric,
+  findActiveLyricIndex,
   hasNoLyric,
   lyricClockInterval,
   lyricParser,
@@ -432,6 +433,7 @@ export default {
   emits: ['expand-compact-window'],
   components: {
     VueSlider,
+    PlayerProgressSlider,
     ButtonIcon,
     ContextMenu,
   },
@@ -463,9 +465,18 @@ export default {
   },
   computed: {
     ...mapState(['player', 'settings', 'showLyrics']),
+    activeLyricIndex() {
+      if (this.miniSeekDragging && Number.isFinite(this.miniSeekPreview)) {
+        return findActiveLyricIndex(
+          this.lyricToShow,
+          this.miniSeekPreview
+        );
+      }
+      return this.highlightLyricIndex;
+    },
     // 迷你模式下只显示当前这一行歌词
     currentLyric() {
-      const line = this.lyricToShow[this.highlightLyricIndex];
+      const line = this.lyricToShow[this.activeLyricIndex];
       if (!line) return '';
       return Array.isArray(line.contents) ? line.contents[0] : line.contents;
     },
@@ -478,7 +489,7 @@ export default {
       );
     },
     currentLyricTranslation() {
-      const line = this.lyricToShow[this.highlightLyricIndex];
+      const line = this.lyricToShow[this.activeLyricIndex];
       return Array.isArray(line?.contents) ? line.contents[1] : '';
     },
     // 窗口够高才塞得下两行，太扁就只留原文
@@ -762,15 +773,26 @@ export default {
     finishMiniSeek(event) {
       if (!this.miniSeekDragging) return;
       this.updateMiniSeekPreview(event);
-      const seekTime = this.miniSeekPreview;
-      this.miniSeekDragging = false;
-      this.player.progress = seekTime;
-      this.miniSeekPreview = null;
-      event.currentTarget.releasePointerCapture?.(event.pointerId);
+      this.commitMiniSeek(event);
     },
-    cancelMiniSeek() {
+    commitMiniSeek(event) {
+      if (!this.miniSeekDragging) return;
+      const seekTime = this.miniSeekPreview;
+      if (Number.isFinite(seekTime)) {
+        this.player.progress = seekTime;
+        // WKWebView 可能把真实拖动结束为 pointercancel；用最后一个有效落点
+        // 立即重定位歌词，不能把它当成“撤销拖动”后留在旧时间轴。
+        this.highlightLyricIndex = findActiveLyricIndex(
+          this.lyricToShow,
+          seekTime
+        );
+      }
       this.miniSeekDragging = false;
       this.miniSeekPreview = null;
+      const target = event?.currentTarget;
+      if (target?.hasPointerCapture?.(event.pointerId)) {
+        target.releasePointerCapture(event.pointerId);
+      }
     },
     nudgeMiniSeek(offset) {
       const duration = this.player.currentTrackDuration;
@@ -960,13 +982,10 @@ export default {
         () => {
           const progress = this.player.seek(null, false) ?? 0;
           let oldHighlightLyricIndex = this.highlightLyricIndex;
-          this.highlightLyricIndex = this.lyric.findIndex((l, index) => {
-            const nextLyric = this.lyric[index + 1];
-            return (
-              progress >= l.time &&
-              (nextLyric ? progress < nextLyric.time : true)
-            );
-          });
+          this.highlightLyricIndex = findActiveLyricIndex(
+            this.lyricToShow,
+            progress
+          );
           if (
             showLyrics &&
             oldHighlightLyricIndex !== this.highlightLyricIndex

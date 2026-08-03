@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import {
+  findActiveLyricIndex,
   hasNoLyric,
   lyricClockInterval,
   resolveLyricDisplay,
@@ -13,6 +14,14 @@ const lyricsView = readFileSync(
 );
 
 describe('菜单栏逐句歌词时钟', () => {
+  test('拖拽后按新的播放位置立即重定位歌词', () => {
+    const lyric = [{ time: 10 }, { time: 20 }, { time: 30 }];
+
+    expect(findActiveLyricIndex(lyric, 5)).toBe(-1);
+    expect(findActiveLyricIndex(lyric, 20)).toBe(1);
+    expect(findActiveLyricIndex(lyric, 999)).toBe(2);
+  });
+
   test('桌面端在歌词页收起后仍以低频率跟随播放进度', () => {
     expect(shouldRunLyricClock(false, true)).toBe(true);
     expect(lyricClockInterval(false)).toBe(250);

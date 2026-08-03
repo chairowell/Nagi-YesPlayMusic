@@ -66,6 +66,9 @@ struct SidecarState(Mutex<Option<CommandChild>>);
 struct TrayCoverState(Mutex<Option<String>>);
 
 #[derive(Default)]
+struct TrayTitleState(Mutex<String>);
+
+#[derive(Default)]
 struct GlobalShortcutRegistration {
     actions: HashMap<u32, String>,
     settings: Option<serde_json::Value>,
@@ -82,6 +85,32 @@ fn tray_cover_url(payload: &serde_json::Value) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|url| !url.is_empty())
+}
+
+fn tray_title_for_visibility(title: &str, window_visible: bool) -> &str {
+    if window_visible {
+        ""
+    } else {
+        title.trim()
+    }
+}
+
+fn render_tray_title(app: &AppHandle) -> Result<(), String> {
+    let title = app
+        .state::<TrayTitleState>()
+        .0
+        .lock()
+        .map_err(|_| "菜单栏标题状态锁已损坏".to_string())?
+        .clone();
+    let window_visible = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        tray.set_title(Some(tray_title_for_visibility(&title, window_visible)))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn decode_tray_cover(bytes: &[u8]) -> Result<TauriImage<'static>, String> {
@@ -380,13 +409,13 @@ fn desktop_event(
             }
         }
         "updateTrayNowPlaying" => {
-            if let (Some(tray), Some(title)) = (
-                app.tray_by_id("main-tray"),
-                payload.get("title").and_then(serde_json::Value::as_str),
-            ) {
-                tray.set_title(Some(title.trim()))
-                    .map_err(|error| error.to_string())?;
+            if let Some(title) = payload.get("title").and_then(serde_json::Value::as_str) {
+                *app.state::<TrayTitleState>()
+                    .0
+                    .lock()
+                    .map_err(|_| "菜单栏标题状态锁已损坏".to_string())? = title.to_string();
             }
+            render_tray_title(&app)?;
             update_tray_cover(&app, &payload);
         }
         "setWindowButtonVisibility" => {
@@ -558,6 +587,7 @@ fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
+                    let _ = render_tray_title(app);
                 }
             }
         });
@@ -738,6 +768,7 @@ fn create_main_window(
         if let WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             let _ = window_for_close.hide();
+            let _ = render_tray_title(window_for_close.app_handle());
         }
     });
 
@@ -755,6 +786,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
+                let _ = render_tray_title(app);
             }
         }))
         .plugin(
@@ -778,6 +810,7 @@ fn main() {
                                     let _ = window.show();
                                     let _ = window.set_focus();
                                 }
+                                let _ = render_tray_title(app);
                             }
                         }
                         Some(action) => emit_desktop_event(app, action),
@@ -799,6 +832,7 @@ fn main() {
                 GlobalShortcutRegistration::default(),
             )));
             app.manage(TrayCoverState::default());
+            app.manage(TrayTitleState::default());
             let health_token = generate_sidecar_health_token()?;
             let child = start_sidecar(app, &health_token)?;
             app.manage(SidecarState(Mutex::new(Some(child))));
@@ -865,6 +899,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
+                let _ = render_tray_title(app);
             }
         }
         _ => {}
@@ -876,7 +911,7 @@ mod tests {
     use super::{
         app_about_metadata, decode_tray_cover, is_smoke_test, is_webview_smoke_test,
         normalize_electron_shortcut, parse_legacy_settings, response_has_sidecar_identity,
-        tray_cover_url, window_frame_has_reachable_area,
+        tray_cover_url, tray_title_for_visibility, window_frame_has_reachable_area,
     };
     use tauri_plugin_global_shortcut::Shortcut;
 
@@ -999,6 +1034,12 @@ mod tests {
             Some("https://example.com/cover.jpg?param=64y64")
         );
         assert_eq!(tray_cover_url(&serde_json::json!({ "coverUrl": "" })), None);
+    }
+
+    #[test]
+    fn tray_title_only_appears_while_player_window_is_hidden() {
+        assert_eq!(tray_title_for_visibility(" 正在播放 ", true), "");
+        assert_eq!(tray_title_for_visibility(" 正在播放 ", false), "正在播放");
     }
 
     #[test]

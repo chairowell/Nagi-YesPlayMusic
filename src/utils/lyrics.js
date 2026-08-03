@@ -18,6 +18,15 @@ export function lyricClockInterval(showLyrics) {
   return showLyrics ? 50 : 250;
 }
 
+export function findActiveLyricIndex(lyrics, progress) {
+  if (!Array.isArray(lyrics) || !Number.isFinite(progress)) return -1;
+
+  for (let index = lyrics.length - 1; index >= 0; index -= 1) {
+    if (progress >= lyrics[index].time) return index;
+  }
+  return -1;
+}
+
 export function hasNoLyric(lyricCount, lyricLoading) {
   return !lyricLoading && lyricCount === 0;
 }
