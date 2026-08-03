@@ -425,6 +425,7 @@ import {
   shouldStartMiniWindowDrag,
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
+import { buildArtworkURL } from '@/utils/trackPrefetch';
 
 export default {
   name: 'Lyrics',
@@ -506,10 +507,10 @@ export default {
       },
     },
     imageUrl() {
-      return this.player.currentTrack?.al?.picUrl + '?param=1024y1024';
+      return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 1024);
     },
     bgImageUrl() {
-      return this.player.currentTrack?.al?.picUrl + '?param=512y512';
+      return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 512);
     },
     isShowLyricTypeSwitch() {
       return this.romalyric.length > 0 && this.tlyric.length > 0;
@@ -690,9 +691,7 @@ export default {
         title: this.displayLyric || this.currentTrack.name,
         isMini: this.isMini,
         // 菜单栏只有 18px，拉小图省流量
-        coverUrl: this.currentTrack?.al?.picUrl
-          ? `${this.currentTrack.al.picUrl}?param=64y64`
-          : '',
+        coverUrl: buildArtworkURL(this.currentTrack?.al?.picUrl, 64),
       });
     },
     setWindowButtons(visible) {
@@ -1003,7 +1002,7 @@ export default {
     },
     getCoverColor() {
       if (this.settings.lyricsBackground !== true) return;
-      const cover = this.currentTrack.al?.picUrl + '?param=256y256';
+      const cover = buildArtworkURL(this.currentTrack.al?.picUrl, 256);
       Vibrant.from(cover, { colorCount: 1 })
         .getPalette()
         .then(palette => {

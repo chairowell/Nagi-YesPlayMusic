@@ -39,6 +39,7 @@ import {
   runLatestTrackSwitch,
 } from '@/utils/trackSwitch';
 import {
+  buildArtworkURL,
   createNextTrackPrefetcher,
   warmTrackArtwork,
 } from '@/utils/trackPrefetch';
@@ -769,12 +770,12 @@ export default class {
       album: track.al.name,
       artwork: [
         {
-          src: track.al.picUrl + '?param=224y224',
+          src: buildArtworkURL(track.al.picUrl, 224),
           type: 'image/jpg',
           sizes: '224x224',
         },
         {
-          src: track.al.picUrl + '?param=512y512',
+          src: buildArtworkURL(track.al.picUrl, 512),
           type: 'image/jpg',
           sizes: '512x512',
         },

@@ -1,17 +1,20 @@
-function artworkURLs(track) {
-  const rawURL = track?.al?.picUrl ?? track?.album?.picUrl;
-  if (typeof rawURL !== 'string' || rawURL.trim() === '') return [];
+export function buildArtworkURL(rawURL, size) {
+  if (typeof rawURL !== 'string' || rawURL.trim() === '') return '';
 
   try {
     const baseURL = new URL(rawURL.trim().replace(/^http:/, 'https:'));
-    return [224, 512].map(size => {
-      const sizedURL = new URL(baseURL);
-      sizedURL.searchParams.set('param', `${size}y${size}`);
-      return sizedURL.toString();
-    });
+    baseURL.searchParams.set('param', `${size}y${size}`);
+    return baseURL.toString();
   } catch {
-    return [];
+    return '';
   }
+}
+
+function artworkURLs(track) {
+  const rawURL = track?.al?.picUrl ?? track?.album?.picUrl;
+  return [224, 512]
+    .map(size => buildArtworkURL(rawURL, size))
+    .filter(Boolean);
 }
 
 /**

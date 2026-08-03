@@ -92,6 +92,7 @@ import ArtistsInLine from '@/components/ArtistsInLine.vue';
 import ExplicitSymbol from '@/components/ExplicitSymbol.vue';
 import { mapState } from 'vuex';
 import { isNil } from 'lodash';
+import { buildArtworkURL } from '@/utils/trackPrefetch';
 
 export default {
   name: 'TrackListItem',
@@ -125,7 +126,7 @@ export default {
         this.track?.al?.picUrl ??
         this.track?.album?.picUrl ??
         'https://p2.music.126.net/UeTuwE7pvjBpypWLudqukA==/3132508627578625.jpg';
-      return image + '?param=224y224';
+      return buildArtworkURL(image, 224);
     },
     artists() {
       const { ar, artists } = this.track;
