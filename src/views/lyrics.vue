@@ -44,7 +44,7 @@
         @mousedown="handleMiniMouseDown"
         @dblclick="handleMiniDoubleClick"
       >
-        <img class="mini-cover" :src="imageUrl" loading="lazy" />
+        <img class="mini-cover" :src="miniImageUrl" />
         <!--
           只有真正压在字上才可选中复制，所以 .mini-copyable 只包住文字本身，
           不包外面的容器：容器的空白仍然是"按住挪窗口"。
@@ -532,6 +532,12 @@ export default {
     },
     imageUrl() {
       return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 1024);
+    },
+    // 迷你条那张封面只有 58px（视网膜下 116px），却一直在下大歌词页用的
+    // 1024×1024，比菜单栏那张 64px 大两个数量级。切歌时菜单栏秒换、播放条
+    // 慢半拍就是这么来的——同一份数据，只是它要等一张大图下完。
+    miniImageUrl() {
+      return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 128);
     },
     bgImageUrl() {
       return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 512);
