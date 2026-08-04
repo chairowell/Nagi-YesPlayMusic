@@ -4,11 +4,5 @@
  */
 export function getHowlerMediaNode(howler) {
   const node = howler?._sounds?.[0]?._node;
-  // Web Audio 模式下 _node 是 GainNode，同样有 addEventListener（EventTarget），
-  // 用 currentTime 区分出真正的 HTMLMediaElement。
-  return node &&
-    typeof node.addEventListener === 'function' &&
-    'currentTime' in node
-    ? node
-    : null;
+  return node && typeof node.addEventListener === 'function' ? node : null;
 }

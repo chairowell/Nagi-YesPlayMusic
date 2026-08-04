@@ -22,36 +22,7 @@ describe('音频格式识别', () => {
     expect(toHowlSourceOptions(source)).toEqual({
       src: [source.url],
       format: 'flac',
-      html5: false,
     });
-  });
-
-  test('缓存命中走 Web Audio，远程与 UNM 源保持 HTML5 流式', () => {
-    // WebKit/AVPlayer 对流式 FLAC 的 seek 会把落点放在请求位置前几秒、
-    // currentTime 却按请求值计时；Web Audio 全量解码后 seek 是纯数学，
-    // 才能保证歌词时钟读到的位置就是真实出声位置。
-    const cached = createBlobAudioSource(
-      new Uint8Array([0x66, 0x4c, 0x61, 0x43, 0, 0]),
-      url => url,
-      'cache'
-    );
-    expect(toHowlSourceOptions(cached).html5).toBe(false);
-
-    // 远程 CDN 无 CORS 头，Web Audio 的 XHR 拉不动，只能 HTML5 流式起播
-    const remote = createRemoteAudioSource('https://m804.music.126.net/a.flac', {
-      origin: 'netease',
-      format: 'flac',
-    });
-    expect(toHowlSourceOptions(remote).html5).toBe(true);
-
-    // UNM 拿到的容器五花八门（B 站 m4s 等），decodeAudioData 可能不认，
-    // 保持 HTML5 交给系统媒体栈
-    const unm = createBlobAudioSource(
-      new TextEncoder().encode('OggS____OpusHead'),
-      url => url,
-      'unm'
-    );
-    expect(toHowlSourceOptions(unm).html5).toBe(true);
   });
 
   test('网易云返回的大小写和别名格式会被规范化', () => {

@@ -132,11 +132,6 @@ export function createRemoteAudioSource(url, options = {}) {
 export function toHowlSourceOptions(source) {
   const options = { src: [source.url] };
   if (source.format) options.format = source.format;
-  // WebKit/AVPlayer 对流式 FLAC 的 seek 落点会偏早数秒且 currentTime 谎报
-  // 请求值；Web Audio 全量解码后 seek 是纯数学，位置永远真实。只有缓存源
-  // 能走这条路：远程 CDN 无 CORS 头（XHR 拉不动），UNM 的容器（B 站 m4s
-  // 等）decodeAudioData 未必认识，都保持 HTML5 交给系统媒体栈。
-  options.html5 = source.origin !== 'cache';
   return options;
 }
 
