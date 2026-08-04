@@ -69,6 +69,31 @@ input {
     Source Han Sans SC, Noto Sans CJK SC, WenQuanYi Micro Hei, sans-serif,
     microsoft uighur;
 }
+
+// 这是播放器不是网页：歌名、歌手、时长这些标签一律不参与文本选中，
+// 否则点一下就拖出一片高亮，拖窗口更是必然先选中一串字。
+// 真要复制的地方（输入框、可编辑区、标了 .selectable 的正文）单独放行。
+#app {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable='true'],
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+// 光标只对真的能敲字的地方改成 I 形；开关、滑块这类 input 保持原样。
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
+textarea,
+[contenteditable='true'],
+.selectable {
+  cursor: text;
+}
 body {
   background-color: var(--color-body-bg);
 }
