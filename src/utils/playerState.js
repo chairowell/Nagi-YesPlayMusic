@@ -7,9 +7,6 @@ const TRANSIENT_PLAYER_FIELDS = new Set([
   '_seeking',
   '_pendingSeekCancel',
   '_initialized',
-  '_currentSourceMeta',
-  '_pendingPreciseSeekTime',
-  '_preciseUpgradeInFlight',
 ]);
 
 /**

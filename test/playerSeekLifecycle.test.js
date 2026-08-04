@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { reactive } from 'vue';
 import { startHowlerSeek } from '../src/utils/playbackSeek';
-import { mountPlayerState } from '../src/utils/playerState';
 
 const playerSource = readFileSync(
   fileURLToPath(new URL('../src/utils/Player.js', import.meta.url)),
@@ -53,44 +51,5 @@ describe('seek 事务与 Howler 实例生命周期', () => {
     expect(playAudioSource).toContain('this._pendingSeekCancel?.();');
     expect(playAudioSource).toContain('this._pendingSeekCancel = null;');
     expect(playAudioSource).toContain('this._seeking = false;');
-  });
-
-  test('流式 FLAC 的拖拽会尝试升级为缓存精确源，缓存未好则回退流式 seek', () => {
-    // WebKit 对流式 FLAC 的 seek 落点偏早且 currentTime 谎报请求值；
-    // 整曲缓存写完后换 Web Audio 源，落点即读数。
-    expect(playerSource).toContain('_canUpgradeSeekPrecision()');
-    expect(playerSource).toContain("this._currentSourceMeta?.format === 'flac'");
-
-    const upgrade = playerSource.slice(
-      playerSource.indexOf('async _seekWithPreciseUpgrade('),
-      playerSource.indexOf('  mute()')
-    );
-    // 淘汰保护：等待缓存期间切歌/换源，本次升级必须作废
-    expect(upgrade).toContain(
-      'this._howler !== howlerBefore || this.currentTrackID !== trackId'
-    );
-    // 缓存未写完的回退路径仍走统一 seek 事务
-    expect(upgrade).toContain('this._startSeekTransaction(target, sendMpris)');
-    // 换源后要恢复播放状态
-    expect(upgrade).toContain('if (wasPlaying) this.play();');
-  });
-
-  test('音源元数据与升级过程的中间态不触发整份播放器持久化', () => {
-    const state = reactive({ player: null });
-    let persisted = 0;
-    const rawPlayer = {
-      initialize() {},
-      saveSelfToLocalStorage() {
-        persisted += 1;
-      },
-      sendSelfToIpcMain() {},
-    };
-
-    mountPlayerState({ state }, rawPlayer, {});
-    state.player._currentSourceMeta = { origin: 'netease', format: 'flac' };
-    state.player._pendingPreciseSeekTime = 95;
-    state.player._preciseUpgradeInFlight = true;
-
-    expect(persisted).toBe(0);
   });
 });
