@@ -1,12 +1,17 @@
 <template>
   <div>
+    <!--
+      Tauri 只看 mousedown 目标自身有没有 data-tauri-drag-region（不像 Electron
+      的 app-region 按几何区域算），而下面三个容器 flex:1 铺满整条顶栏，
+      只标 nav 的话可拖的就剩上下两条细边。空白处要能拖窗，每个容器都得标。
+    -->
     <nav
       data-tauri-drag-region
       :class="{ 'has-custom-titlebar': hasCustomTitlebar }"
     >
       <Win32Titlebar v-if="enableWin32Titlebar" />
       <LinuxTitlebar v-if="enableLinuxTitlebar" />
-      <div class="navigation-buttons">
+      <div data-tauri-drag-region class="navigation-buttons">
         <button-icon @click="go('back')"
           ><svg-icon icon-class="arrow-left"
         /></button-icon>
@@ -24,7 +29,7 @@
           <kbd>Esc</kbd>
         </button-icon>
       </div>
-      <div class="navigation-links">
+      <div data-tauri-drag-region class="navigation-links">
         <router-link to="/" :class="{ active: $route.name === 'home' }">{{
           $t('nav.home')
         }}</router-link>
@@ -39,7 +44,7 @@
           >{{ $t('nav.library') }}</router-link
         >
       </div>
-      <div class="right-part">
+      <div data-tauri-drag-region class="right-part">
         <div class="search-box">
           <div class="container" :class="{ active: inputFocus }">
             <svg-icon icon-class="search" />
