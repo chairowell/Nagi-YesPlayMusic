@@ -37,6 +37,16 @@ export function parseFlacStreamInfo(arrayBuffer) {
  * sidecar 不可达（Electron、dev server）或转换失败时返回 null，调用方
  * 退回渲染进程内的 decodeFlacToWavBlob。任何异常都不外抛。
  */
+/** 切歌时通知 sidecar 立刻清掉临时 WAV；sidecar 不存在时静默返回 false。 */
+export function discardPreciseWav(
+  fetchImpl = typeof fetch === 'function' ? fetch : null
+) {
+  if (!fetchImpl) return Promise.resolve(false);
+  return fetchImpl('/precise-wav', { method: 'DELETE' })
+    .then(response => response.ok)
+    .catch(() => false);
+}
+
 export async function requestPreciseWavURL(
   trackId,
   arrayBuffer,

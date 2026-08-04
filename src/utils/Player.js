@@ -48,6 +48,7 @@ import { startHowlerSeek } from '@/utils/playbackSeek';
 import { getHowlerMediaNode } from '@/utils/howlerMedia';
 import {
   decodeFlacToWavBlob,
+  discardPreciseWav,
   parseFlacStreamInfo,
   requestPreciseWavURL,
 } from '@/utils/pcmSeekSource';
@@ -425,6 +426,13 @@ export default class {
     this._pendingSeekCancel?.();
     this._pendingSeekCancel = null;
     this._seeking = false;
+    // 离开精确 WAV 源（切歌/换源）时立即释放 sidecar 的临时磁盘
+    if (
+      this._currentSourceMeta?.origin === 'precise-wav' &&
+      source.origin !== 'precise-wav'
+    ) {
+      void discardPreciseWav();
+    }
     Howler.unload();
     let handlingLoadError = false;
     const howlerOptions = toHowlSourceOptions(source);
@@ -513,8 +521,11 @@ export default class {
         );
       }
     } else {
+      // 临时 WAV 失效（sidecar 重启、文件被清扫）不是音源链的一环：
+      // 从头解析（缓存里的 FLAC 仍然有效），而不是顺着降级链走丢。
       fallback = await this._getAudioSource(failedTrack, {
-        afterOrigin: failedSource.origin,
+        afterOrigin:
+          failedSource.origin === 'precise-wav' ? null : failedSource.origin,
       });
     }
     if (
@@ -527,7 +538,9 @@ export default class {
       console.warn(
         `[Player] ${failedSource.origin} 音源加载失败 (${errCode})，改用 ${fallback.origin}`
       );
-      this._playAudioSource(fallback, autoplay, ifUnplayableThen);
+      // 精确源以 autoplay:false 创建，失败重试时以当前播放状态为准，
+      // 否则界面显示播放而实际无声。
+      this._playAudioSource(fallback, autoplay || this._playing, ifUnplayableThen);
       return;
     }
 
@@ -1168,8 +1181,10 @@ export default class {
       revokeBlobURLs(this.createdBlobRecords, u => URL.revokeObjectURL(u));
       this.createdBlobRecords = [url];
     }
+    // origin 必须区别于 'cache'：精确 WAV 加载失败时走重试链，
+    // 不能触发"缓存损坏"的删除逻辑误删有效的 FLAC 缓存。
     this._playAudioSource(
-      { url, origin: 'cache', format: 'wav', mimeType: 'audio/wav' },
+      { url, origin: 'precise-wav', format: 'wav', mimeType: 'audio/wav' },
       false
     );
     this._startSeekTransaction(target, sendMpris);

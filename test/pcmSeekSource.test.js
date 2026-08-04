@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   parseFlacStreamInfo,
   buildFloat32WavBlob,
+  discardPreciseWav,
   requestPreciseWavURL,
 } from '../src/utils/pcmSeekSource';
 
@@ -72,6 +73,23 @@ describe('sidecar 精确 WAV 请求', () => {
       })
     ).toBeNull();
     expect(await requestPreciseWavURL(42, new ArrayBuffer(8), 16, null)).toBeNull();
+  });
+
+  test('切歌清扫发 DELETE，失败静默不影响切歌流程', async () => {
+    const calls = [];
+    expect(
+      await discardPreciseWav(async (u, init) => {
+        calls.push({ u, method: init.method });
+        return { ok: true };
+      })
+    ).toBe(true);
+    expect(calls).toEqual([{ u: '/precise-wav', method: 'DELETE' }]);
+    expect(
+      await discardPreciseWav(async () => {
+        throw new Error('sidecar 不在');
+      })
+    ).toBe(false);
+    expect(await discardPreciseWav(null)).toBe(false);
   });
 });
 

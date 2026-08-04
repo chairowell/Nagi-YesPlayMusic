@@ -80,6 +80,23 @@ describe('seek 事务与 Howler 实例生命周期', () => {
     expect(upgrade).toContain('if (this._playing) this.play();');
     // WAV 源标记 format:'wav'，避免升级自身再次触发升级
     expect(upgrade).toContain("format: 'wav'");
+    // 精确源必须用独立 origin：加载失败不能触发"缓存损坏"的删除逻辑
+    expect(upgrade).toContain("origin: 'precise-wav'");
+  });
+
+  test('精确 WAV 失效的重试从头解析音源且不删有效缓存，并恢复播放状态', () => {
+    const retry = playerSource.slice(
+      playerSource.indexOf('async _retryAudioSourceAfterFailure('),
+      playerSource.indexOf('_getAudioSourceBlobURL(')
+    );
+    expect(retry).toContain(
+      "failedSource.origin === 'precise-wav' ? null : failedSource.origin"
+    );
+    // 只有真正的缓存源损坏才允许删缓存
+    expect(retry).toContain("if (failedSource.origin === 'cache')");
+    expect(retry).toContain(
+      'this._playAudioSource(fallback, autoplay || this._playing, ifUnplayableThen)'
+    );
   });
 
   test('音源元数据与升级中间态不触发整份播放器持久化', () => {
