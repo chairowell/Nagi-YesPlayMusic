@@ -91,15 +91,30 @@ describe('迷你播放器进度拖拽', () => {
     );
   });
 
-  test('命中区变高后，控制按钮和可复制文字仍在它上层', () => {
+  test('命中区变高后，控制按钮仍在它上层', () => {
     const css = compileLyricsScopedStyle();
-    const ruleOf = selector =>
-      css.match(new RegExp(`\\${selector}\\[data-v-test\\] \\{[^}]*\\}`))?.[0] ??
+    const rule =
+      css.match(/\.mini-controls\[data-v-test\] \{[^}]*\}/)?.[0] ?? '';
+
+    expect(rule).toContain('position: relative');
+    expect(rule).toContain('z-index: 2');
+  });
+
+  test('进度为 0 时也有一条底色轨，且和填充同粗', () => {
+    // 只画已播放部分的话，歌刚开始时播放条下沿整条是空的，角色像悬空站着。
+    const css = compileLyricsScopedStyle();
+    const rail =
+      css.match(/\.mini-progress-track\[data-v-test\]::before \{[^}]*\}/)?.[0] ??
       '';
 
-    for (const selector of ['.mini-controls', '.mini-copyable']) {
-      expect(ruleOf(selector)).toContain('position: relative');
-      expect(ruleOf(selector)).toContain('z-index: 2');
-    }
+    expect(rail).toContain('height: var(--mini-bar-height)');
+    expect(rail).toMatch(/left: 0[;\s]/);
+    expect(rail).toMatch(/right: 0[;\s]/);
+
+    const fill = css.match(/\.mini-progress\[data-v-test\] \{[^}]*\}/)?.[0];
+    expect(fill).toContain('height: var(--mini-bar-height)');
+    // anon 皮肤只换颜色，不能自己改粗细，否则和底色轨错位
+    const anon = css.match(/\.mini-progress\.anon\[data-v-test\][^}]*\}/)?.[0];
+    expect(anon).not.toContain('height:');
   });
 });

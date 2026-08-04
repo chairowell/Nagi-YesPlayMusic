@@ -1,5 +1,6 @@
+// 迷你播放条里只有这些地方保留自己的交互，其余一律是"按住挪窗口"。
+// 文字不在其中：可选文本会和窗口拖拽抢同一块区域，两种手感必须二选一。
 export const MINI_WINDOW_INTERACTIVE_SELECTOR = [
-  '.mini-copyable',
   '.mini-controls',
   '.mini-progress-track',
   'button',

@@ -45,20 +45,23 @@
         @dblclick="handleMiniDoubleClick"
       >
         <img class="mini-cover" :src="imageUrl" loading="lazy" />
+        <!--
+          整条播放条只有一种手感：按住就是挪窗口。歌名、歌手、歌词都不做
+          可选文本——文字能选中就意味着同一块地方既能拖窗又能拉高亮，
+          手一抖必然出错。要复制的话用大窗口的歌词页。
+        -->
         <div class="mini-info">
           <div class="mini-title" :title="currentTrack.name">
-            <span class="mini-copyable">{{ currentTrack.name }}</span>
+            {{ currentTrack.name }}
           </div>
-          <div class="mini-artist">
-            <span class="mini-copyable">{{ artist.name }}</span>
-          </div>
+          <div class="mini-artist" :title="artist.name">{{ artist.name }}</div>
         </div>
         <div class="mini-lyric" :title="displayLyric">
           <div class="mini-lyric-origin" :style="lyricFontSize">
-            <span class="mini-copyable">{{ displayLyric }}</span>
+            {{ displayLyric }}
           </div>
           <div v-if="showMiniTranslation" class="mini-lyric-translation">
-            <span class="mini-copyable">{{ currentLyricTranslation }}</span>
+            {{ currentLyricTranslation }}
           </div>
         </div>
         <div class="mini-controls">
@@ -1078,6 +1081,8 @@ export default {
   --mini-rider-size: 22px;
   --mini-rider-bottom: 1px;
   --mini-progress-hit-height: 24px;
+  // 底色轨和已播放的填充共用一个粗细，两者错开一像素就会看出台阶
+  --mini-bar-height: 3px;
 
   // 跟着窗口高度缩，压到最扁也不会溢出
   .mini-cover {
@@ -1089,15 +1094,6 @@ export default {
     flex-shrink: 0;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
     -webkit-user-drag: none;
-  }
-
-  .mini-copyable {
-    -webkit-app-region: no-drag;
-    user-select: text;
-    cursor: text;
-    // 命中区变高后会盖住窄窗口里歌名/歌词的下半截，抬一层保住选中和复制
-    position: relative;
-    z-index: 2;
   }
 
   // 固定宽度，不然长歌名会一路挤占歌词的空间
@@ -1221,16 +1217,29 @@ export default {
       outline-offset: -2px;
     }
 
+    // 未播放部分的底色轨。没有它，进度为 0 时播放条下沿整条是空的，
+    // 角色像悬空站着，也看不出这里可以拖。用 --color-text 是因为迷你播放器
+    // 的背景取自封面、深浅不定，只有跟着文字色走才在任何封面上都看得见。
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: var(--mini-bar-height);
+      background: var(--color-text);
+      opacity: 0.16;
+    }
+
     .mini-progress {
       position: absolute;
       left: 0;
       bottom: 0;
-      height: 2px;
+      height: var(--mini-bar-height);
       background-color: var(--color-primary);
       transition: width 0.4s linear;
 
       &.anon {
-        height: 3px;
         background: linear-gradient(
           90deg,
           #ffc2d4 0%,
