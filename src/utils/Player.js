@@ -46,6 +46,7 @@ import { buildArtworkURL } from '@/utils/artwork';
 import { resolvePlaybackDuration } from '@/utils/playbackDuration';
 import { startHowlerSeek } from '@/utils/playbackSeek';
 import { getHowlerMediaNode } from '@/utils/howlerMedia';
+import { decodeFlacToWavBlob } from '@/utils/pcmSeekSource';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -152,6 +153,25 @@ export default class {
     Object.defineProperty(this, '_pendingSeekCancel', {
       enumerable: false,
       value: null,
+      writable: true,
+    });
+
+    // 当前音源的来源与格式；FLAC 拖拽时据此决定要不要升级为 WAV 精确源
+    Object.defineProperty(this, '_currentSourceMeta', {
+      enumerable: false,
+      value: null,
+      writable: true,
+    });
+
+    Object.defineProperty(this, '_pendingPreciseSeekTime', {
+      enumerable: false,
+      value: null,
+      writable: true,
+    });
+
+    Object.defineProperty(this, '_preciseUpgradeInFlight', {
+      enumerable: false,
+      value: false,
       writable: true,
     });
 
@@ -436,6 +456,10 @@ export default class {
       onloaderror: handleLoadError,
     });
     this._howler = howler;
+    this._currentSourceMeta = {
+      origin: source.origin ?? null,
+      format: source.format ?? null,
+    };
     if (autoplay) {
       this.play();
       if (this._currentTrack.name) {
@@ -1040,31 +1064,93 @@ export default class {
   }
   seek(time = null, sendMpris = true) {
     if (time !== null) {
-      const howler = this._howler;
-      this._pendingSeekCancel?.();
-      this._pendingSeekCancel = null;
-      const transaction = startHowlerSeek(howler, time, actualPosition => {
-        if (howler !== this._howler) return;
-        // 只有原生 seeked 才代表 WebKit 的解码位置已稳定；此刻再放行歌词。
-        this._progress = actualPosition;
-        this._seeking = false;
-        this._pendingSeekCancel = null;
-        if (isCreateMpris && sendMpris) {
-          void sendDesktop('seeked', actualPosition);
-        }
-        if (this._playing) {
-          this._playDiscordPresence(this._currentTrack, actualPosition);
-        }
-      });
-      if (transaction === null) return 0;
-      this._progress = transaction.position;
-      this._seeking = transaction.pending;
-      this._pendingSeekCancel = transaction.pending
-        ? transaction.cancel
-        : null;
-      return transaction.position;
+      if (this._canUpgradeSeekPrecision(time)) {
+        void this._seekWithPreciseUpgrade(time, sendMpris);
+        return Math.max(0, Number(time) || 0);
+      }
+      return this._startSeekTransaction(time, sendMpris);
     }
     return this._howler === null ? 0 : this._howler.seek();
+  }
+  _startSeekTransaction(time, sendMpris) {
+    const howler = this._howler;
+    this._pendingSeekCancel?.();
+    this._pendingSeekCancel = null;
+    const transaction = startHowlerSeek(howler, time, actualPosition => {
+      if (howler !== this._howler) return;
+      // 只有原生 seeked 才代表 WebKit 的解码位置已稳定；此刻再放行歌词。
+      this._progress = actualPosition;
+      this._seeking = false;
+      this._pendingSeekCancel = null;
+      if (isCreateMpris && sendMpris) {
+        void sendDesktop('seeked', actualPosition);
+      }
+      if (this._playing) {
+        this._playDiscordPresence(this._currentTrack, actualPosition);
+      }
+    });
+    if (transaction === null) return 0;
+    this._progress = transaction.position;
+    this._seeking = transaction.pending;
+    this._pendingSeekCancel = transaction.pending ? transaction.cancel : null;
+    return transaction.position;
+  }
+  _canUpgradeSeekPrecision(time) {
+    // AVPlayer 对 FLAC 的 seek 落点偏早数秒且 currentTime 谎报请求值；
+    // 拖拽时把整曲缓存离线解码重打包成 WAV（时间↔字节纯算术，seek 精确），
+    // 播放仍走系统媒体栈。升级后 format 变 'wav'，不会重复触发。
+    return (
+      this._howler !== null &&
+      Number(time) > 0 &&
+      this._currentSourceMeta?.format === 'flac'
+    );
+  }
+  async _seekWithPreciseUpgrade(time, sendMpris) {
+    const howlerBefore = this._howler;
+    const trackId = this.currentTrackID;
+    this._pendingPreciseSeekTime = Math.max(0, Number(time) || 0);
+    // 连续拖拽只做一次解码，后到的目标位置覆盖先到的
+    if (this._preciseUpgradeInFlight) return;
+    this._preciseUpgradeInFlight = true;
+    // 读缓存与解码期间冻结歌词时钟，进度条先显示用户请求的位置
+    this._seeking = true;
+    this._progress = this._pendingPreciseSeekTime;
+    let wavBlob = null;
+    try {
+      const cached = await getTrackSource(String(trackId));
+      if (
+        cached?.source &&
+        this._howler === howlerBefore &&
+        this.currentTrackID === trackId
+      ) {
+        wavBlob = await decodeFlacToWavBlob(cached.source);
+      }
+    } catch (error) {
+      console.warn('[Player] FLAC 转 WAV 失败，退回流式 seek', error);
+      wavBlob = null;
+    } finally {
+      this._preciseUpgradeInFlight = false;
+    }
+    const target = this._pendingPreciseSeekTime ?? 0;
+    this._pendingPreciseSeekTime = null;
+    if (this._howler !== howlerBefore || this.currentTrackID !== trackId) {
+      return; // 期间切了歌或换了源，本次升级作废；新实例自会管理 _seeking
+    }
+    if (!wavBlob) {
+      // 缓存没写完或解码失败：按原路径 seek，等缓存好后下次拖拽再升级
+      this._seeking = false;
+      this._startSeekTransaction(target, sendMpris);
+      return;
+    }
+    const url = URL.createObjectURL(wavBlob);
+    revokeBlobURLs(this.createdBlobRecords, u => URL.revokeObjectURL(u));
+    this.createdBlobRecords = [url];
+    this._playAudioSource(
+      { url, origin: 'cache', format: 'wav', mimeType: 'audio/wav' },
+      false
+    );
+    this._startSeekTransaction(target, sendMpris);
+    if (this._playing) this.play();
   }
   mute() {
     if (this.volume === 0) {
