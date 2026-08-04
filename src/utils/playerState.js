@@ -8,8 +8,9 @@ const TRANSIENT_PLAYER_FIELDS = new Set([
   '_pendingSeekCancel',
   '_initialized',
   '_currentSourceMeta',
-  '_pendingPreciseSeekTime',
-  '_preciseUpgradeInFlight',
+  '_seekToken',
+  '_pausePending',
+  '_preciseSeekUpgrader',
 ]);
 
 /**

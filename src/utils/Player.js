@@ -52,6 +52,7 @@ import {
   parseFlacStreamInfo,
   requestPreciseWavURL,
 } from '@/utils/pcmSeekSource';
+import { createPreciseSeekUpgrader } from '@/utils/preciseSeekUpgrade';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -168,15 +169,23 @@ export default class {
       writable: true,
     });
 
-    Object.defineProperty(this, '_pendingPreciseSeekTime', {
+    // 所有显式 seek 的代际；升级任务凭它淘汰过期目标（防"跳回旧位置"）
+    Object.defineProperty(this, '_seekToken', {
       enumerable: false,
-      value: null,
+      value: 0,
       writable: true,
     });
 
-    Object.defineProperty(this, '_preciseUpgradeInFlight', {
+    // 暂停手势发出但 fade 未完成的窗口标记；防精确源切换后误恢复播放
+    Object.defineProperty(this, '_pausePending', {
       enumerable: false,
       value: false,
+      writable: true,
+    });
+
+    Object.defineProperty(this, '_preciseSeekUpgrader', {
+      enumerable: false,
+      value: null,
       writable: true,
     });
 
@@ -426,6 +435,8 @@ export default class {
     this._pendingSeekCancel?.();
     this._pendingSeekCancel = null;
     this._seeking = false;
+    // 旧实例的 fade 回调随替换失效，暂停意图标记一并复位
+    this._pausePending = false;
     // 离开精确 WAV 源（切歌/换源）时立即释放 sidecar 的临时磁盘
     if (
       this._currentSourceMeta?.origin === 'precise-wav' &&
@@ -1033,10 +1044,14 @@ export default class {
   pause() {
     const howler = this._howler;
     if (!howler) return;
+    // fade 完成前 _playing 仍是 true；记录暂停意图，防止此窗口内
+    // 精确源切换完成后按旧状态误恢复播放。
+    this._pausePending = true;
     howler.fade(this.volume, 0, PLAY_PAUSE_FADE_DURATION);
 
     howler.once('fade', () => {
       if (this._howler !== howler) return;
+      this._pausePending = false;
       howler.pause();
       this._setPlaying(false);
       setTitle(null);
@@ -1044,6 +1059,8 @@ export default class {
     });
   }
   play() {
+    // 明确的播放意图覆盖尚未完成的暂停手势
+    this._pausePending = false;
     const howler = this._howler;
     if (!howler || howler.playing()) return;
 
@@ -1081,8 +1098,10 @@ export default class {
   }
   seek(time = null, sendMpris = true) {
     if (time !== null) {
+      // 每次显式 seek 都推进代际；升级任务据此淘汰被更新请求超越的目标
+      this._seekToken += 1;
       if (this._canUpgradeSeekPrecision(time)) {
-        void this._seekWithPreciseUpgrade(time, sendMpris);
+        this._getPreciseSeekUpgrader().request(time, sendMpris);
         return Math.max(0, Number(time) || 0);
       }
       return this._startSeekTransaction(time, sendMpris);
@@ -1122,73 +1141,63 @@ export default class {
       this._currentSourceMeta?.format === 'flac'
     );
   }
-  async _seekWithPreciseUpgrade(time, sendMpris) {
-    const howlerBefore = this._howler;
-    const trackId = this.currentTrackID;
-    this._pendingPreciseSeekTime = Math.max(0, Number(time) || 0);
-    // 连续拖拽只做一次解码，后到的目标位置覆盖先到的
-    if (this._preciseUpgradeInFlight) return;
-    this._preciseUpgradeInFlight = true;
-    // 读缓存与解码期间冻结歌词时钟，进度条先显示用户请求的位置
-    this._seeking = true;
-    this._progress = this._pendingPreciseSeekTime;
-    let preciseUrl = null;
-    let wavBlob = null;
-    try {
-      const cached = await getTrackSource(String(trackId));
-      if (
-        cached?.source &&
-        this._howler === howlerBefore &&
-        this.currentTrackID === trackId
-      ) {
-        // 优先 sidecar 的原生 afconvert：流式落盘 + Range 服务，峰值内存
-        // ~10MB；渲染进程内存转换（瞬时 ~300MB）只在 sidecar 不可达
-        // （Electron、dev server）或转换失败时兜底。
-        const info = parseFlacStreamInfo(cached.source);
-        preciseUrl = await requestPreciseWavURL(
-          trackId,
-          cached.source,
-          info?.bitsPerSample
+  _getPreciseSeekUpgrader() {
+    if (this._preciseSeekUpgrader) return this._preciseSeekUpgrader;
+    // 必须在方法里懒构造：方法经 Vue 响应式 proxy 调用，闭包捕获的
+    // player 才是 proxy；在构造函数里建会捕获裸对象，状态写入丢响应。
+    const player = this;
+    this._preciseSeekUpgrader = createPreciseSeekUpgrader({
+      getSnapshot: () => ({
+        howler: player._howler,
+        trackId: player.currentTrackID,
+        playing: player._playing,
+        pausePending: player._pausePending,
+        seekToken: player._seekToken,
+      }),
+      readCachedFlac: async trackId => {
+        const cached = await getTrackSource(String(trackId));
+        if (!cached?.source) return null;
+        return {
+          bytes: cached.source,
+          bitsPerSample: parseFlacStreamInfo(cached.source)?.bitsPerSample,
+        };
+      },
+      // 优先 sidecar 的原生 afconvert：流式落盘 + Range 服务，峰值内存
+      // ~10MB；渲染进程内存转换（瞬时 ~300MB）只在 sidecar 不可达
+      // （Electron、dev server）或转换失败时兜底。
+      convertViaSidecar: (trackId, bytes, bits) =>
+        requestPreciseWavURL(trackId, bytes, bits),
+      convertInRenderer: async bytes => {
+        const wavBlob = await decodeFlacToWavBlob(bytes);
+        if (!wavBlob) return null;
+        const url = URL.createObjectURL(wavBlob);
+        revokeBlobURLs(player.createdBlobRecords, u => URL.revokeObjectURL(u));
+        player.createdBlobRecords = [url];
+        return url;
+      },
+      // 转换期间冻结歌词时钟，进度条先显示用户请求的位置
+      freezeAt: time => {
+        player._seeking = true;
+        player._progress = time;
+      },
+      seekStream: (time, sendMpris) => {
+        player._seeking = false;
+        player._startSeekTransaction(time, sendMpris);
+      },
+      applyPreciseSource: (url, time, sendMpris, resume) => {
+        // origin 必须区别于 'cache'：精确 WAV 加载失败时走重试链，
+        // 不能触发"缓存损坏"的删除逻辑误删有效的 FLAC 缓存。
+        player._playAudioSource(
+          { url, origin: 'precise-wav', format: 'wav', mimeType: 'audio/wav' },
+          false
         );
-        if (
-          !preciseUrl &&
-          this._howler === howlerBefore &&
-          this.currentTrackID === trackId
-        ) {
-          wavBlob = await decodeFlacToWavBlob(cached.source);
-        }
-      }
-    } catch (error) {
-      console.warn('[Player] FLAC 转 WAV 失败，退回流式 seek', error);
-      wavBlob = null;
-    } finally {
-      this._preciseUpgradeInFlight = false;
-    }
-    const target = this._pendingPreciseSeekTime ?? 0;
-    this._pendingPreciseSeekTime = null;
-    if (this._howler !== howlerBefore || this.currentTrackID !== trackId) {
-      return; // 期间切了歌或换了源，本次升级作废；新实例自会管理 _seeking
-    }
-    if (!preciseUrl && !wavBlob) {
-      // 缓存没写完或解码失败：按原路径 seek，等缓存好后下次拖拽再升级
-      this._seeking = false;
-      this._startSeekTransaction(target, sendMpris);
-      return;
-    }
-    let url = preciseUrl;
-    if (!url) {
-      url = URL.createObjectURL(wavBlob);
-      revokeBlobURLs(this.createdBlobRecords, u => URL.revokeObjectURL(u));
-      this.createdBlobRecords = [url];
-    }
-    // origin 必须区别于 'cache'：精确 WAV 加载失败时走重试链，
-    // 不能触发"缓存损坏"的删除逻辑误删有效的 FLAC 缓存。
-    this._playAudioSource(
-      { url, origin: 'precise-wav', format: 'wav', mimeType: 'audio/wav' },
-      false
-    );
-    this._startSeekTransaction(target, sendMpris);
-    if (this._playing) this.play();
+        player._startSeekTransaction(time, sendMpris);
+        if (resume) player.play();
+      },
+      onError: error =>
+        console.warn('[Player] FLAC 转 WAV 失败，退回流式 seek', error),
+    });
+    return this._preciseSeekUpgrader;
   }
   mute() {
     if (this.volume === 0) {

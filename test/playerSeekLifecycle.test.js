@@ -55,33 +55,31 @@ describe('seek 事务与 Howler 实例生命周期', () => {
     expect(playAudioSource).toContain('this._seeking = false;');
   });
 
-  test('FLAC 源的拖拽升级为 WAV 精确源，且带淘汰保护与降级路径', () => {
-    // AVPlayer 对 FLAC 的 seek 落点偏早且 currentTime 谎报请求值；
-    // 升级把缓存离线转成 WAV 后播放仍走系统媒体栈，seek 即算术。
+  test('FLAC 源的拖拽经编排器升级为 WAV 精确源，接线含代际与降级', () => {
+    // 竞态规则的行为测试在 test/preciseSeekUpgrade.test.js；这里只钉接线。
     expect(playerSource).toContain('_canUpgradeSeekPrecision(time)');
     expect(playerSource).toContain("this._currentSourceMeta?.format === 'flac'");
+    // 每次显式 seek 推进代际，升级任务凭它淘汰过期目标（防跳回旧位置）
+    expect(playerSource).toContain('this._seekToken += 1;');
 
-    const upgrade = playerSource.slice(
-      playerSource.indexOf('async _seekWithPreciseUpgrade('),
+    const wiring = playerSource.slice(
+      playerSource.indexOf('_getPreciseSeekUpgrader()'),
       playerSource.indexOf('  mute()')
     );
-    // 淘汰保护：等待缓存/解码期间切歌或换源，本次升级必须作废
-    expect(upgrade).toContain(
-      'this._howler !== howlerBefore || this.currentTrackID !== trackId'
-    );
-    // 缓存未写完或解码失败时回退统一 seek 事务
-    expect(upgrade).toContain('this._startSeekTransaction(target, sendMpris)');
+    expect(wiring).toContain('createPreciseSeekUpgrader({');
     // 低内存优先：先请求 sidecar 原生 afconvert，失败才在渲染进程内存转换
-    expect(upgrade.indexOf('requestPreciseWavURL')).toBeGreaterThan(-1);
-    expect(upgrade.indexOf('requestPreciseWavURL')).toBeLessThan(
-      upgrade.indexOf('decodeFlacToWavBlob')
+    expect(wiring.indexOf('requestPreciseWavURL')).toBeGreaterThan(-1);
+    expect(wiring.indexOf('requestPreciseWavURL')).toBeLessThan(
+      wiring.indexOf('decodeFlacToWavBlob')
     );
-    // 升级换源后要恢复播放
-    expect(upgrade).toContain('if (this._playing) this.play();');
     // WAV 源标记 format:'wav'，避免升级自身再次触发升级
-    expect(upgrade).toContain("format: 'wav'");
+    expect(wiring).toContain("format: 'wav'");
     // 精确源必须用独立 origin：加载失败不能触发"缓存损坏"的删除逻辑
-    expect(upgrade).toContain("origin: 'precise-wav'");
+    expect(wiring).toContain("origin: 'precise-wav'");
+    // 恢复播放要经过编排器的 resume 决策（含暂停意图），不得直接恢复
+    expect(wiring).toContain('if (resume) player.play();');
+    // 暂停手势的意图标记：fade 未完成期间禁止误恢复
+    expect(playerSource).toContain('this._pausePending = true;');
   });
 
   test('精确 WAV 失效的重试从头解析音源且不删有效缓存，并恢复播放状态', () => {
@@ -112,8 +110,9 @@ describe('seek 事务与 Howler 实例生命周期', () => {
 
     mountPlayerState({ state }, rawPlayer, {});
     state.player._currentSourceMeta = { origin: 'cache', format: 'flac' };
-    state.player._pendingPreciseSeekTime = 95;
-    state.player._preciseUpgradeInFlight = true;
+    state.player._seekToken = 7;
+    state.player._pausePending = true;
+    state.player._preciseSeekUpgrader = { request() {} };
 
     expect(persisted).toBe(0);
   });
