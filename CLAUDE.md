@@ -28,6 +28,19 @@
 CI（`.github/workflows/build.yaml`）只验证每次 push 的**最后一个 commit**，一次推 21 个
 中间那 20 个不会被碰，所以这道关必须在本地。
 
+## 发版
+
+版本号要同时改三处：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`
+（Cargo.lock 跟着更新）。`bun run verify:tauri:version` 会校验三者与 tag 一致，CI 里也会跑。
+
+推 `v*` tag 触发 `.github/workflows/build.yaml`：公证构建 → 建**草稿** release。
+草稿要手动发布：`gh release edit vX.Y.Z --draft=false --latest`。
+
+**发布前必须手写 release 正文**，不能只留自动生成的 Full Changelog 链接。
+仓库没有 CHANGELOG 文件，变更记录只存在于 release 正文里。格式照 v0.6.2 / v0.6.3：
+一段 `## 修复`，用户视角的中文条目（说"能拖动窗口了"，不说"补了 drag-region 属性"），
+末尾保留自动追加的 Full Changelog 那一行、不要自己再写一遍（v0.6.2 就重了）。
+
 ## 技术栈
 
 Vue 3.5 + Vuex 4 + Vue Router 4 + Vite 7 + electron-vite 5 + Electron 43，包管理用 bun。
