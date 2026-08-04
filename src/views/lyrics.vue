@@ -437,11 +437,6 @@ import {
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
 import { ARTWORK_SIZE, buildArtworkURL } from '@/utils/artwork';
-import {
-  reportCoverProbe,
-  watchCoverLoad,
-  watchSwitchBurst,
-} from '@/utils/coverProbeClient';
 
 export default {
   name: 'Lyrics',
@@ -647,13 +642,7 @@ export default {
     },
   },
   watch: {
-    currentTrack(track) {
-      // 临时探针：排查"封面又慢又串"，查清即删（utils/coverProbeClient.js）
-      watchSwitchBurst(track);
-      this.$nextTick(() => {
-        reportCoverProbe('切歌-DOM更新后', track, this.miniImageUrl);
-        watchCoverLoad(track, this.miniImageUrl);
-      });
+    currentTrack() {
       // 新歌歌词尚未返回时不能继续拿上一首的时间轴更新菜单栏。
       this.highlightLyricIndex = -1;
       this.lyric = [];
