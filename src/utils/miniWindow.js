@@ -27,8 +27,11 @@ export function shouldStartMiniWindowDrag(event) {
 // 按在空白处 = 接下来要挪窗口。必须在 mousedown 当场取消默认行为：
 // 否则 WebKit 已经把选中的起点埋在这里，鼠标一划过歌名歌词就把它们拉黑，
 // 表现为"想挪窗口却选了一串字"。压在文字上时不拦，选中复制照常。
-export function beginMiniWindowDragGesture(event) {
+// 传入 window.getSelection()：preventDefault 顺手也拦掉了"按空白处清除选中"
+// 这个默认行为，不自己补一下，之前选中的歌词会一直亮着取消不掉。
+export function beginMiniWindowDragGesture(event, selection = null) {
   if (!shouldStartMiniWindowDrag(event)) return false;
+  selection?.removeAllRanges?.();
   event.preventDefault?.();
   return true;
 }

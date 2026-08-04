@@ -735,7 +735,12 @@ export default {
     handleMiniMouseDown(event) {
       // 按在空白处就当场掐掉选中起点（见 beginMiniWindowDragGesture）；
       // Electron 靠原生 app-region 拖窗，这里到此为止。
-      if (!beginMiniWindowDragGesture(event) || !isTauriRuntime) return;
+      if (
+        !beginMiniWindowDragGesture(event, window.getSelection()) ||
+        !isTauriRuntime
+      ) {
+        return;
+      }
       // 等鼠标真的移动后再交给原生窗口，否则第一次按下会吞掉双击事件。
       this.cancelMiniWindowDrag();
       this.miniWindowDragStart = {
@@ -775,6 +780,8 @@ export default {
       );
     },
     startMiniSeek(event) {
+      // 同 handleMiniMouseDown：preventDefault 会连"按下清除选中"一起拦掉
+      window.getSelection()?.removeAllRanges();
       event.preventDefault();
       event.stopPropagation();
       this.miniSeekDragging = true;

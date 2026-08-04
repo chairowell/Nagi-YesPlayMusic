@@ -80,6 +80,40 @@ describe('迷你窗口拖拽边界', () => {
     expect(prevented).toBe(1);
   });
 
+  test('按空白处会清掉已有的选中，按在文字上不清', () => {
+    // preventDefault 顺手拦掉了"按下清除选中"的默认行为，得自己补上，
+    // 否则选中的歌词一直亮着，点哪儿都取消不掉。
+    let cleared = 0;
+    const selection = { removeAllRanges: () => (cleared += 1) };
+
+    beginMiniWindowDragGesture(
+      { button: 0, detail: 1, target: targetMatching(), preventDefault() {} },
+      selection
+    );
+    expect(cleared).toBe(1);
+
+    beginMiniWindowDragGesture(
+      {
+        button: 0,
+        detail: 1,
+        target: targetMatching('.mini-copyable'),
+        preventDefault() {},
+      },
+      selection
+    );
+    expect(cleared).toBe(1);
+  });
+
+  test('进度条也要补清除，它同样 preventDefault 了', () => {
+    const startMiniSeek = lyricsView.slice(
+      lyricsView.indexOf('startMiniSeek(event) {'),
+      lyricsView.indexOf('moveMiniSeek(event) {')
+    );
+    expect(startMiniSeek).toContain(
+      'window.getSelection()?.removeAllRanges();'
+    );
+  });
+
   test('右键和双击不会误启动单击拖动', () => {
     expect(
       shouldStartMiniWindowDrag({
