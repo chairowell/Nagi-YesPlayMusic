@@ -12,10 +12,11 @@ import {
 } from '../src/services/preciseWav';
 
 describe('afconvert 参数与文件名约束', () => {
-  test('位深映射保持无损：16→LEI16、24→LEI24、32→LEF32、异常回退 LEI16', () => {
+  test('位深映射保持无损：16→LEI16、24→LEI24、32→LEI32、异常回退 LEI16', () => {
     expect(afconvertDataFormat(16)).toBe('LEI16');
     expect(afconvertDataFormat(24)).toBe('LEI24');
-    expect(afconvertDataFormat(32)).toBe('LEF32');
+    // Float32 只有 24-bit 整数精度，25~32-bit 必须走 LEI32 才无损
+    expect(afconvertDataFormat(32)).toBe('LEI32');
     expect(afconvertDataFormat(undefined)).toBe('LEI16');
     expect(afconvertDataFormat('嗯')).toBe('LEI16');
   });
@@ -41,7 +42,11 @@ describe('precise-wav 路由', () => {
       tempDir,
       convert: async (flacPath, wavPath, dataFormat) => {
         convertCalls.push({ flacPath, wavPath, dataFormat });
-        if (dataFormat === 'LEF32') throw new Error('模拟转换失败');
+        if (dataFormat === 'LEI32') {
+          // 模拟 afconvert 中途失败：半成品 WAV 已经写了一半
+          await fsp.writeFile(wavPath, '半成品');
+          throw new Error('模拟转换失败');
+        }
         const flacBytes = await fsp.readFile(flacPath);
         // 假转换器：证明收到的就是 POST 的字节
         await fsp.writeFile(wavPath, Buffer.concat([Buffer.from('RIFF'), flacBytes]));
@@ -95,7 +100,7 @@ describe('precise-wav 路由', () => {
     expect((await fetch(`${base}/precise-wav/42.wav`)).status).toBe(404);
   });
 
-  test('非法 ID 与转换失败分别返回 400/500，失败不留垃圾文件', async () => {
+  test('非法 ID 与转换失败分别返回 400/500，失败不留 .flac 也不留半成品 WAV', async () => {
     expect(
       (await fetch(`${base}/precise-wav/..%2Fevil`, { method: 'POST' })).status
     ).toBe(400);
@@ -104,7 +109,40 @@ describe('precise-wav 路由', () => {
       body: new Uint8Array([1]),
     });
     expect(failed.status).toBe(500);
-    expect((await fsp.readdir(tempDir)).includes('44.flac')).toBe(false);
+    const remaining = await fsp.readdir(tempDir);
+    expect(remaining.includes('44.flac')).toBe(false);
+    expect(remaining.includes('44.wav')).toBe(false);
+  });
+
+  test('超过大小上限的上传直接 413 拒绝', async () => {
+    const tiny = mkdtempSync(path.join(os.tmpdir(), 'precise-wav-tiny-'));
+    const app = express();
+    installPreciseWavRoutes(app, {
+      tempDir: tiny,
+      convert: async () => {},
+      maxUploadBytes: 4,
+    });
+    const s = await new Promise(resolve => {
+      const inner = app.listen(0, '127.0.0.1', () => resolve(inner));
+    });
+    const oversize = await fetch(
+      `http://127.0.0.1:${s.address().port}/precise-wav/45`,
+      { method: 'POST', body: new Uint8Array(8) }
+    );
+    expect(oversize.status).toBe(413);
+    await new Promise(resolve => s.close(resolve));
+    await fsp.rm(tiny, { recursive: true, force: true });
+  });
+
+  test('DELETE 立即清空临时目录（切歌清扫）', async () => {
+    await fetch(`${base}/precise-wav/46?bits=16`, {
+      method: 'POST',
+      body: new Uint8Array([1]),
+    });
+    expect((await fsp.readdir(tempDir)).length).toBeGreaterThan(0);
+    const wipe = await fetch(`${base}/precise-wav`, { method: 'DELETE' });
+    expect(wipe.status).toBe(204);
+    expect(await fsp.readdir(tempDir)).toEqual([]);
   });
 
   test('启动清扫会清空历史残留', async () => {
