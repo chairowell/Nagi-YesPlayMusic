@@ -395,6 +395,12 @@ export default class {
     autoplay = true,
     ifUnplayableThen = UNPLAYABLE_CONDITION.PLAY_NEXT_TRACK
   ) {
+    // 换源重试会绕过 _replaceCurrentTrack.onBegin 直接替换实例；挂起的 seek
+    // 事务若不在此取消，永不 settle 的事务会让 _seeking 卡死，歌词时钟
+    // 和进度心跳一起冻结。任何替换 Howler 实例的路径都必须先走这三行。
+    this._pendingSeekCancel?.();
+    this._pendingSeekCancel = null;
+    this._seeking = false;
     Howler.unload();
     let handlingLoadError = false;
     const howlerOptions = toHowlSourceOptions(source);
