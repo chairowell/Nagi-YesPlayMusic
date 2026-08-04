@@ -27,6 +27,12 @@ export const PREFETCHED_ARTWORK_SIZES = Object.freeze([
   ARTWORK_SIZE.playerBar,
   ARTWORK_SIZE.lyricsBackground,
 ]);
+
+/**
+ * 提前预热几首的封面。只备下一首不够用：连着往前切时，下一首的预热往往还没
+ * 跑完就切走了。一张 128px 封面约 9KB，备三首也才二十几 KB。
+ */
+export const UPCOMING_ARTWORK_COUNT = 3;
 export function buildArtworkURL(rawURL, size = 512) {
   if (typeof rawURL !== 'string' || rawURL.trim() === '') return '';
 

@@ -9,6 +9,7 @@ import { isAccountLoggedIn } from '@/utils/auth';
 import {
   cacheTrackSource,
   deleteTrackSource,
+  getTrackDetailFromCache,
   getTrackSource,
   hasTrackSource,
 } from '@/utils/db';
@@ -22,6 +23,7 @@ import {
   consumeQueuedTrack,
   getAdjacentTrack,
   getActiveTrackIndex,
+  getUpcomingTrackIDs,
   pickRandomTrackID,
 } from '@/utils/playerQueue';
 import { sendDesktop } from '@/services/desktopTransport';
@@ -43,7 +45,7 @@ import {
   createNextTrackPrefetcher,
   warmTrackArtwork,
 } from '@/utils/trackPrefetch';
-import { buildArtworkURL } from '@/utils/artwork';
+import { UPCOMING_ARTWORK_COUNT, buildArtworkURL } from '@/utils/artwork';
 import { resolvePlaybackDuration } from '@/utils/playbackDuration';
 import { startHowlerSeek } from '@/utils/playbackSeek';
 import { getHowlerMediaNode } from '@/utils/howlerMedia';
@@ -752,6 +754,8 @@ export default class {
       commitTrack: track => {
         this._currentTrack = track;
         this._updateMediaSessionMetaData(track);
+        // 这里比 commitSource 早约两秒（音源还没解析完），封面预热要趁这个时候
+        this._warmUpcomingArtwork();
       },
       loadSource: track => this._getAudioSource(track),
       commitSource: source => {
@@ -785,6 +789,35 @@ export default class {
     const source = await this._getAudioSourceFromNetease(track);
     if (!isCurrent()) return;
     await source?.cacheAfterLoad?.();
+  }
+  /**
+   * 提前把后面几首的封面塞进图片缓存。
+   *
+   * 和 _prefetchNextTrack 分开、并且只读本地缓存的详情：整套预取排在音源解析
+   * 后面（song/url 实测要 1.9 秒），等它跑完人早切走了；封面只需要 picUrl，
+   * 队列里的歌进播放列表时已经 cacheTrackDetail 过，本地直接就有。
+   * 没有本地详情的就跳过——为一张封面再发一轮 song/detail 反而是在抢带宽。
+   */
+  _warmUpcomingArtwork() {
+    const ids = this._isPersonalFM
+      ? [this._personalFMNextTrack?.id].filter(Boolean)
+      : getUpcomingTrackIDs(
+          this.list,
+          this.current,
+          this._reversed ? -1 : 1,
+          this.repeatMode === 'on',
+          UPCOMING_ARTWORK_COUNT
+        );
+    if (!ids.length) return;
+
+    for (const id of ids) {
+      void getTrackDetailFromCache([String(id)])
+        .then(result => {
+          const track = result?.songs?.[0];
+          if (track) warmTrackArtwork(track);
+        })
+        .catch(() => {});
+    }
   }
   _prefetchNextTrack() {
     const nextTrackID = this._isPersonalFM

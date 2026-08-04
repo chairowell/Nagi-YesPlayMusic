@@ -7,7 +7,9 @@ import {
 import {
   ARTWORK_SIZE,
   PREFETCHED_ARTWORK_SIZES,
+  UPCOMING_ARTWORK_COUNT,
 } from '../src/utils/artwork';
+import { getUpcomingTrackIDs } from '../src/utils/playerQueue';
 
 describe('下一首轻量预取', () => {
   test('同一目标去重，队列变化后淘汰旧响应', async () => {
@@ -71,6 +73,10 @@ describe('下一首轻量预取', () => {
       'https://p1.music.126.net/cover.jpg?param=512y512',
     ]);
     expect(images.map(image => image.src)).toEqual(urls);
+    // 慢的根因是无损音频占满带宽，预热要是抢优先级只会更糟
+    expect(images.map(image => image.fetchPriority)).toEqual(
+      urls.map(() => 'low')
+    );
   });
 
   test('预取的尺寸必须覆盖迷你播放条实际要的那一档', () => {
@@ -86,6 +92,41 @@ describe('下一首轻量预取', () => {
     expect(lyricsSource).toContain('ARTWORK_SIZE.miniPlayer');
     expect(lyricsSource).toContain('ARTWORK_SIZE.lyricsBackground');
     expect(lyricsSource).not.toMatch(/buildArtworkURL\([^)]*,\s*\d+\s*\)/);
+  });
+
+  test('封面预热提前备好后面几首，而不是只备下一首', () => {
+    // 只备一首时，下一首的预热常常还没跑完人就切走了（实测封面仍要 0.75~1.6s）
+    expect(UPCOMING_ARTWORK_COUNT).toBeGreaterThan(1);
+    expect(getUpcomingTrackIDs([1, 2, 3, 4, 5], 0, 1, false, 3)).toEqual([
+      2, 3, 4,
+    ]);
+    // 队列到头就停，不靠 undefined 撑满数量
+    expect(getUpcomingTrackIDs([1, 2, 3], 1, 1, false, 3)).toEqual([3]);
+    // 允许绕回时不重复预热，绕到正在播的这首就停
+    expect(getUpcomingTrackIDs([1, 2], 1, 1, true, 3)).toEqual([1]);
+    expect(getUpcomingTrackIDs([7], 0, 1, true, 3)).toEqual([]);
+    // 倒序播放时往反方向备
+    expect(getUpcomingTrackIDs([1, 2, 3, 4], 3, -1, false, 2)).toEqual([3, 2]);
+  });
+
+  test('封面预热挂在 commitTrack 上，不排在音源解析后面', () => {
+    const playerSource = readFileSync(
+      new URL('../src/utils/Player.js', import.meta.url),
+      'utf8'
+    );
+    const commitTrack = playerSource.slice(
+      playerSource.indexOf('commitTrack: track => {'),
+      playerSource.indexOf('loadSource: track =>')
+    );
+    // commitSource 要等 song/url（实测 1.9 秒），封面预热等不起
+    expect(commitTrack).toContain('this._warmUpcomingArtwork();');
+    // 只读本地详情：为一张封面再发一轮 song/detail 反而是在抢带宽
+    const warm = playerSource.slice(
+      playerSource.indexOf('_warmUpcomingArtwork() {'),
+      playerSource.indexOf('_prefetchNextTrack() {')
+    );
+    expect(warm).toContain('getTrackDetailFromCache');
+    expect(warm).not.toContain('getTrackDetail(');
   });
 
   test('Player 通过统一的下一首选择器决定预取目标', () => {
