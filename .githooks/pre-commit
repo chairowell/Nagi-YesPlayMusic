@@ -1,0 +1,14 @@
+#!/bin/sh
+# 每个 commit 的最低验证。CI 只跑每次 push 的最后一个 commit——一次推 21 个，
+# 中间 20 个从没被验证过，所以这道关必须在本地。
+#
+# 两步都很便宜（实测 0.5s + 1.5s），别为了省这两秒把它跳过。
+set -e
+
+echo "[pre-commit] bun test"
+bun test
+
+# 测试不 import .vue，所以"import 了一个不存在的模块"这类错误测不出来；
+# 渲染构建会当场失败。2026-08-04 就是这么把探针的残留 import 提交进去的。
+echo "[pre-commit] build:tauri:renderer"
+bun run build:tauri:renderer >/dev/null

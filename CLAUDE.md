@@ -16,6 +16,18 @@
 `bun run dev` 背后是 `electron-vite dev --watch`。**`--watch` 不能省** —— 没有它，
 改主进程代码不会重建，窗口也不会重启，很容易误判成"代码没生效"。
 
+## 提交前的验证
+
+`.githooks/pre-commit` 会跑 `bun test`（0.5 秒）和 `bun run build:tauri:renderer`（1.5 秒）。
+`bun install` 时的 `prepare` 会把 `core.hooksPath` 指过去，新 clone 也自动生效。
+
+两步缺一不可：测试不 import `.vue`，所以"import 了一个不存在的模块"只有渲染构建能发现——
+2026-08-04 就是这么把临时探针的残留 import 提交进去的，HEAD 里 import 了一个仓库里
+根本不存在的文件。
+
+CI（`.github/workflows/build.yaml`）只验证每次 push 的**最后一个 commit**，一次推 21 个
+中间那 20 个不会被碰，所以这道关必须在本地。
+
 ## 技术栈
 
 Vue 3.5 + Vuex 4 + Vue Router 4 + Vite 7 + electron-vite 5 + Electron 43，包管理用 bun。
