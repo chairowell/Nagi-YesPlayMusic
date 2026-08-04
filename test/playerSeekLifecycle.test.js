@@ -71,6 +71,11 @@ describe('seek 事务与 Howler 实例生命周期', () => {
     );
     // 缓存未写完或解码失败时回退统一 seek 事务
     expect(upgrade).toContain('this._startSeekTransaction(target, sendMpris)');
+    // 低内存优先：先请求 sidecar 原生 afconvert，失败才在渲染进程内存转换
+    expect(upgrade.indexOf('requestPreciseWavURL')).toBeGreaterThan(-1);
+    expect(upgrade.indexOf('requestPreciseWavURL')).toBeLessThan(
+      upgrade.indexOf('decodeFlacToWavBlob')
+    );
     // 升级换源后要恢复播放
     expect(upgrade).toContain('if (this._playing) this.play();');
     // WAV 源标记 format:'wav'，避免升级自身再次触发升级

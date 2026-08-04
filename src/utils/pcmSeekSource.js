@@ -19,13 +19,47 @@ export function parseFlacStreamInfo(arrayBuffer) {
   ) {
     return null;
   }
-  // 规范保证 STREAMINFO 是第一个元数据块；采样率在其第 10 字节起占 20 bits
+  // 规范保证 STREAMINFO 是第一个元数据块；采样率在其第 10 字节起占 20 bits，
+  // 后接 3 bits 声道数-1 与 5 bits 位深-1
   const offset = 8 + 10;
   const sampleRate =
     (bytes[offset] << 12) | (bytes[offset + 1] << 4) | (bytes[offset + 2] >> 4);
   const channels = ((bytes[offset + 2] >> 1) & 0x07) + 1;
+  const bitsPerSample =
+    (((bytes[offset + 2] & 0x01) << 4) | (bytes[offset + 3] >> 4)) + 1;
   if (sampleRate <= 0 || sampleRate > 384000) return null;
-  return { sampleRate, channels };
+  if (bitsPerSample < 4 || bitsPerSample > 32) return null;
+  return { sampleRate, channels, bitsPerSample };
+}
+
+/**
+ * 请求 sidecar 用原生 afconvert 把整曲缓存转成临时 WAV 并返回 Range URL。
+ * sidecar 不可达（Electron、dev server）或转换失败时返回 null，调用方
+ * 退回渲染进程内的 decodeFlacToWavBlob。任何异常都不外抛。
+ */
+export async function requestPreciseWavURL(
+  trackId,
+  arrayBuffer,
+  bitsPerSample,
+  fetchImpl = typeof fetch === 'function' ? fetch : null
+) {
+  if (!fetchImpl) return null;
+  try {
+    const bits = Number(bitsPerSample) || 16;
+    const response = await fetchImpl(
+      `/precise-wav/${trackId}?bits=${bits}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: arrayBuffer,
+      }
+    );
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return typeof payload?.url === 'string' ? payload.url : null;
+  } catch {
+    return null;
+  }
 }
 
 export function buildFloat32WavBlob(audioBuffer) {

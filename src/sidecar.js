@@ -10,6 +10,7 @@ import {
   installLocalRequestBoundary,
 } from './services/localRequestBoundary';
 import { applyRendererSecurityHeaders } from './services/contentSecurityPolicy';
+import { installPreciseWavRoutes } from './services/preciseWav';
 import {
   desktopSessionExpiryCookies,
   installSidecarHealthRoute,
@@ -90,6 +91,9 @@ function startRendererServer(
       },
     })
   );
+  // FLAC 拖拽精确 seek：afconvert 流式转 WAV 后以 Range 服务，绕开
+  // AVPlayer 对 FLAC 的字节估算 seek，也不占用渲染进程内存。
+  installPreciseWavRoutes(app);
   app.use(express.static(path.resolve(rendererDir)));
 
   return new Promise((resolve, reject) => {

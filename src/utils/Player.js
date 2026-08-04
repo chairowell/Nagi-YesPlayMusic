@@ -46,7 +46,11 @@ import { buildArtworkURL } from '@/utils/artwork';
 import { resolvePlaybackDuration } from '@/utils/playbackDuration';
 import { startHowlerSeek } from '@/utils/playbackSeek';
 import { getHowlerMediaNode } from '@/utils/howlerMedia';
-import { decodeFlacToWavBlob } from '@/utils/pcmSeekSource';
+import {
+  decodeFlacToWavBlob,
+  parseFlacStreamInfo,
+  requestPreciseWavURL,
+} from '@/utils/pcmSeekSource';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -1115,6 +1119,7 @@ export default class {
     // 读缓存与解码期间冻结歌词时钟，进度条先显示用户请求的位置
     this._seeking = true;
     this._progress = this._pendingPreciseSeekTime;
+    let preciseUrl = null;
     let wavBlob = null;
     try {
       const cached = await getTrackSource(String(trackId));
@@ -1123,7 +1128,22 @@ export default class {
         this._howler === howlerBefore &&
         this.currentTrackID === trackId
       ) {
-        wavBlob = await decodeFlacToWavBlob(cached.source);
+        // 优先 sidecar 的原生 afconvert：流式落盘 + Range 服务，峰值内存
+        // ~10MB；渲染进程内存转换（瞬时 ~300MB）只在 sidecar 不可达
+        // （Electron、dev server）或转换失败时兜底。
+        const info = parseFlacStreamInfo(cached.source);
+        preciseUrl = await requestPreciseWavURL(
+          trackId,
+          cached.source,
+          info?.bitsPerSample
+        );
+        if (
+          !preciseUrl &&
+          this._howler === howlerBefore &&
+          this.currentTrackID === trackId
+        ) {
+          wavBlob = await decodeFlacToWavBlob(cached.source);
+        }
       }
     } catch (error) {
       console.warn('[Player] FLAC 转 WAV 失败，退回流式 seek', error);
@@ -1136,15 +1156,18 @@ export default class {
     if (this._howler !== howlerBefore || this.currentTrackID !== trackId) {
       return; // 期间切了歌或换了源，本次升级作废；新实例自会管理 _seeking
     }
-    if (!wavBlob) {
+    if (!preciseUrl && !wavBlob) {
       // 缓存没写完或解码失败：按原路径 seek，等缓存好后下次拖拽再升级
       this._seeking = false;
       this._startSeekTransaction(target, sendMpris);
       return;
     }
-    const url = URL.createObjectURL(wavBlob);
-    revokeBlobURLs(this.createdBlobRecords, u => URL.revokeObjectURL(u));
-    this.createdBlobRecords = [url];
+    let url = preciseUrl;
+    if (!url) {
+      url = URL.createObjectURL(wavBlob);
+      revokeBlobURLs(this.createdBlobRecords, u => URL.revokeObjectURL(u));
+      this.createdBlobRecords = [url];
+    }
     this._playAudioSource(
       { url, origin: 'cache', format: 'wav', mimeType: 'audio/wav' },
       false

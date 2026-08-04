@@ -2,31 +2,41 @@ import { describe, expect, test } from 'bun:test';
 import {
   parseFlacStreamInfo,
   buildFloat32WavBlob,
+  requestPreciseWavURL,
 } from '../src/utils/pcmSeekSource';
 
-function makeFlacHeader({ sampleRate, channels }) {
+function makeFlacHeader({ sampleRate, channels, bitsPerSample = 16 }) {
   // 'fLaC' + STREAMINFO 块头(4B) + STREAMINFO 34B
   const bytes = new Uint8Array(4 + 4 + 34);
   bytes.set([0x66, 0x4c, 0x61, 0x43], 0);
   bytes[4] = 0x80; // last-metadata-block + type 0 (STREAMINFO)
   bytes[7] = 34;
-  // 采样率 20 bits 从 STREAMINFO 第 10 字节起；声道数-1 占其后 3 bits
+  // 采样率 20 bits 从 STREAMINFO 第 10 字节起；后接 3 bits 声道-1、5 bits 位深-1
   const offset = 8 + 10;
+  const bits = bitsPerSample - 1;
   bytes[offset] = (sampleRate >> 12) & 0xff;
   bytes[offset + 1] = (sampleRate >> 4) & 0xff;
-  bytes[offset + 2] = ((sampleRate & 0x0f) << 4) | (((channels - 1) & 0x07) << 1);
+  bytes[offset + 2] =
+    ((sampleRate & 0x0f) << 4) |
+    (((channels - 1) & 0x07) << 1) |
+    ((bits >> 4) & 0x01);
+  bytes[offset + 3] = (bits & 0x0f) << 4;
   return bytes.buffer;
 }
 
 describe('FLAC STREAMINFO 解析', () => {
-  test('读出网易云无损常见的 44.1kHz 双声道', () => {
-    expect(parseFlacStreamInfo(makeFlacHeader({ sampleRate: 44100, channels: 2 })))
-      .toEqual({ sampleRate: 44100, channels: 2 });
+  test('读出网易云无损常见的 44.1kHz 双声道 24-bit', () => {
+    expect(
+      parseFlacStreamInfo(
+        makeFlacHeader({ sampleRate: 44100, channels: 2, bitsPerSample: 24 })
+      )
+    ).toEqual({ sampleRate: 44100, channels: 2, bitsPerSample: 24 });
   });
 
-  test('读出 48kHz 单声道', () => {
-    expect(parseFlacStreamInfo(makeFlacHeader({ sampleRate: 48000, channels: 1 })))
-      .toEqual({ sampleRate: 48000, channels: 1 });
+  test('读出 48kHz 单声道 16-bit', () => {
+    expect(
+      parseFlacStreamInfo(makeFlacHeader({ sampleRate: 48000, channels: 1 }))
+    ).toEqual({ sampleRate: 48000, channels: 1, bitsPerSample: 16 });
   });
 
   test('非 FLAC 或损坏数据返回 null 走降级路径', () => {
@@ -35,6 +45,33 @@ describe('FLAC STREAMINFO 解析', () => {
     expect(
       parseFlacStreamInfo(makeFlacHeader({ sampleRate: 0, channels: 1 }))
     ).toBeNull();
+  });
+});
+
+describe('sidecar 精确 WAV 请求', () => {
+  test('成功时返回 Range URL，并带上正确的位深参数', async () => {
+    const calls = [];
+    const url = await requestPreciseWavURL(42, new ArrayBuffer(8), 24, async (u, init) => {
+      calls.push({ u, method: init.method });
+      return { ok: true, json: async () => ({ url: '/precise-wav/42.wav' }) };
+    });
+    expect(url).toBe('/precise-wav/42.wav');
+    expect(calls[0]).toEqual({ u: '/precise-wav/42?bits=24', method: 'POST' });
+  });
+
+  test('sidecar 不可达或响应异常一律返回 null，不外抛', async () => {
+    expect(
+      await requestPreciseWavURL(42, new ArrayBuffer(8), 16, async () => ({
+        ok: false,
+        json: async () => ({}),
+      }))
+    ).toBeNull();
+    expect(
+      await requestPreciseWavURL(42, new ArrayBuffer(8), 16, async () => {
+        throw new Error('ECONNREFUSED');
+      })
+    ).toBeNull();
+    expect(await requestPreciseWavURL(42, new ArrayBuffer(8), 16, null)).toBeNull();
   });
 });
 
