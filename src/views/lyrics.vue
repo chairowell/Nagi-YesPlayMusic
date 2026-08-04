@@ -1071,6 +1071,14 @@ export default {
   user-select: none;
   overflow: hidden;
 
+  // 角色 GIF 就是进度条的抓手，用户是冲着它去点的。轨道的命中高度必须
+  // 完整盖住角色，否则点在角色身上会漏到下面的窗口拖拽（表现为"想点进度
+  // 结果窗口跑了"）。macOS 还会吃掉贴边几像素做缩放热区，底部 10px 的旧
+  // 命中区在左下角几乎点不中，所以这里按角色尺寸取值而不是按视觉条粗细。
+  --mini-rider-size: 22px;
+  --mini-rider-bottom: 1px;
+  --mini-progress-hit-height: 24px;
+
   // 跟着窗口高度缩，压到最扁也不会溢出
   .mini-cover {
     height: min(58px, calc(100% - 8px));
@@ -1087,6 +1095,9 @@ export default {
     -webkit-app-region: no-drag;
     user-select: text;
     cursor: text;
+    // 命中区变高后会盖住窄窗口里歌名/歌词的下半截，抬一层保住选中和复制
+    position: relative;
+    z-index: 2;
   }
 
   // 固定宽度，不然长歌名会一路挤占歌词的空间
@@ -1147,6 +1158,10 @@ export default {
     gap: 2px;
     flex-shrink: 0;
     -webkit-app-region: no-drag;
+    // 进度命中区是绝对定位又排在后面，48px 高的窗口里会压住按钮下沿；
+    // 抬一层保证上一首/播放/下一首在任何窗口高度下都点得着
+    position: relative;
+    z-index: 2;
 
     .svg-icon {
       width: 16px;
@@ -1196,7 +1211,7 @@ export default {
     left: 0;
     right: 0;
     bottom: 0;
-    height: 10px;
+    height: var(--mini-progress-hit-height);
     cursor: pointer;
     touch-action: none;
     -webkit-app-region: no-drag;
@@ -1228,10 +1243,11 @@ export default {
     // 角色在轨道内部完成整段行程；它的右边缘只在 100% 时碰到终点。
     .mini-progress-rider {
       position: absolute;
-      bottom: 1px;
-      width: 22px;
-      height: 22px;
-      background: url('/img/logos/anon.gif') center / 22px no-repeat;
+      bottom: var(--mini-rider-bottom);
+      width: var(--mini-rider-size);
+      height: var(--mini-rider-size);
+      background: url('/img/logos/anon.gif') center / var(--mini-rider-size)
+        no-repeat;
       image-rendering: pixelated;
       pointer-events: none;
       transition: left 0.4s linear, transform 0.4s linear;
