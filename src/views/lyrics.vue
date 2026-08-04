@@ -436,7 +436,12 @@ import {
   hasCrossedMiniWindowDragThreshold,
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
-import { buildArtworkURL } from '@/utils/artwork';
+import { ARTWORK_SIZE, buildArtworkURL } from '@/utils/artwork';
+import {
+  reportCoverProbe,
+  watchCoverLoad,
+  watchSwitchBurst,
+} from '@/utils/coverProbeClient';
 
 export default {
   name: 'Lyrics',
@@ -531,16 +536,25 @@ export default {
       },
     },
     imageUrl() {
-      return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 1024);
+      return buildArtworkURL(
+        this.player.currentTrack?.al?.picUrl,
+        ARTWORK_SIZE.lyricsCover
+      );
     },
     // 迷你条那张封面只有 58px（视网膜下 116px），却一直在下大歌词页用的
     // 1024×1024，比菜单栏那张 64px 大两个数量级。切歌时菜单栏秒换、播放条
     // 慢半拍就是这么来的——同一份数据，只是它要等一张大图下完。
     miniImageUrl() {
-      return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 128);
+      return buildArtworkURL(
+        this.player.currentTrack?.al?.picUrl,
+        ARTWORK_SIZE.miniPlayer
+      );
     },
     bgImageUrl() {
-      return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 512);
+      return buildArtworkURL(
+        this.player.currentTrack?.al?.picUrl,
+        ARTWORK_SIZE.lyricsBackground
+      );
     },
     isShowLyricTypeSwitch() {
       return this.romalyric.length > 0 && this.tlyric.length > 0;
@@ -633,7 +647,13 @@ export default {
     },
   },
   watch: {
-    currentTrack() {
+    currentTrack(track) {
+      // 临时探针：排查"封面又慢又串"，查清即删（utils/coverProbeClient.js）
+      watchSwitchBurst(track);
+      this.$nextTick(() => {
+        reportCoverProbe('切歌-DOM更新后', track, this.miniImageUrl);
+        watchCoverLoad(track, this.miniImageUrl);
+      });
       // 新歌歌词尚未返回时不能继续拿上一首的时间轴更新菜单栏。
       this.highlightLyricIndex = -1;
       this.lyric = [];
@@ -721,7 +741,7 @@ export default {
         title: this.displayLyric || this.currentTrack.name,
         isMini: this.isMini,
         // 菜单栏只有 18px，拉小图省流量
-        coverUrl: buildArtworkURL(this.currentTrack?.al?.picUrl, 64),
+        coverUrl: buildArtworkURL(this.currentTrack?.al?.picUrl, ARTWORK_SIZE.tray),
       });
     },
     setWindowButtons(visible) {
@@ -1051,7 +1071,7 @@ export default {
     },
     getCoverColor() {
       if (this.settings.lyricsBackground !== true) return;
-      const cover = buildArtworkURL(this.currentTrack.al?.picUrl, 256);
+      const cover = buildArtworkURL(this.currentTrack.al?.picUrl, ARTWORK_SIZE.coverColor);
       Vibrant.from(cover, { colorCount: 1 })
         .getPalette()
         .then(palette => {

@@ -1,10 +1,10 @@
-import { buildArtworkURL } from '@/utils/artwork';
+import { PREFETCHED_ARTWORK_SIZES, buildArtworkURL } from '@/utils/artwork';
 
 function artworkURLs(track) {
   const rawURL = track?.al?.picUrl ?? track?.album?.picUrl;
-  return [224, 512]
-    .map(size => buildArtworkURL(rawURL, size))
-    .filter(Boolean);
+  return PREFETCHED_ARTWORK_SIZES.map(size =>
+    buildArtworkURL(rawURL, size)
+  ).filter(Boolean);
 }
 
 /**

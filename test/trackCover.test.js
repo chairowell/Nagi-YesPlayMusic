@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { buildArtworkURL } from '../src/utils/artwork';
+import { ARTWORK_SIZE, buildArtworkURL } from '../src/utils/artwork';
 
 const trackListItemSource = readFileSync(
   new URL('../src/components/TrackListItem.vue', import.meta.url),
@@ -36,9 +36,8 @@ describe('歌单歌曲封面', () => {
   test('迷你播放条的封面按自己的尺寸取图，不跟大歌词页共用 1024', () => {
     // 58px 的小封面下 1024×1024，比菜单栏那张 64px 大两个数量级；
     // 切歌时菜单栏秒换、播放条慢半拍就是在等这张大图。
-    expect(lyricsSource).toContain(
-      'return buildArtworkURL(this.player.currentTrack?.al?.picUrl, 128);'
-    );
+    expect(ARTWORK_SIZE.miniPlayer).toBeLessThan(ARTWORK_SIZE.lyricsCover);
+    expect(lyricsSource).toContain('ARTWORK_SIZE.miniPlayer');
     expect(lyricsSource).toContain(
       '<img class="mini-cover" :src="miniImageUrl" />'
     );
