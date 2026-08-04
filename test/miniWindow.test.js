@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import {
   MINI_WINDOW_INTERACTIVE_SELECTOR,
+  beginMiniWindowDragGesture,
   hasCrossedMiniWindowDragThreshold,
   isMiniWindowSize,
   shouldStartMiniWindowDrag,
@@ -33,8 +34,12 @@ describe('迷你窗口拖拽边界', () => {
     ).toBe(true);
   });
 
-  test('播放控件和进度条保留自己的交互', () => {
-    for (const selector of ['.mini-controls', '.mini-progress-track']) {
+  test('文字、播放控件和进度条保留自己的交互', () => {
+    for (const selector of [
+      '.mini-copyable',
+      '.mini-controls',
+      '.mini-progress-track',
+    ]) {
       expect(
         shouldStartMiniWindowDrag({
           button: 0,
@@ -45,18 +50,34 @@ describe('迷你窗口拖拽边界', () => {
     }
   });
 
-  test('播放条里没有可选文本，拖窗和选中不共存', () => {
-    // 同一块地方既能拖窗又能拉高亮时，手一抖就是"想挪窗口结果选了一串字"。
-    // 歌名、歌手、歌词全部退出文本选中，整条只剩"按住挪窗口"一种手感。
-    expect(lyricsView).not.toContain('mini-copyable');
-    expect(MINI_WINDOW_INTERACTIVE_SELECTOR).not.toContain('copyable');
-    expect(
-      shouldStartMiniWindowDrag({
-        button: 0,
-        detail: 1,
-        target: targetMatching(),
-      })
-    ).toBe(true);
+  test('只有文字本身可选择，容器空白仍用于拖窗和双击', () => {
+    expect(lyricsView).toContain(
+      '<span class="mini-copyable">{{ currentTrack.name }}</span>'
+    );
+    expect(lyricsView).toContain(
+      '<span class="mini-copyable">{{ displayLyric }}</span>'
+    );
+    expect(lyricsView).not.toContain('mini-info mini-copyable');
+    expect(lyricsView).not.toContain('mini-lyric mini-copyable');
+  });
+
+  test('从空白处起手的拖窗当场掐掉选中起点，压在文字上则不拦', () => {
+    // 不掐的话 WebKit 已经把选中锚点埋在按下的位置，鼠标一划过歌名歌词
+    // 就把它们拉黑——"想挪窗口却选了一串字"。
+    const blank = { button: 0, detail: 1, target: targetMatching() };
+    let prevented = 0;
+    blank.preventDefault = () => (prevented += 1);
+    expect(beginMiniWindowDragGesture(blank)).toBe(true);
+    expect(prevented).toBe(1);
+
+    const onText = {
+      button: 0,
+      detail: 1,
+      target: targetMatching('.mini-copyable'),
+    };
+    onText.preventDefault = () => (prevented += 1);
+    expect(beginMiniWindowDragGesture(onText)).toBe(false);
+    expect(prevented).toBe(1);
   });
 
   test('右键和双击不会误启动单击拖动', () => {
@@ -86,14 +107,14 @@ describe('迷你窗口拖拽边界', () => {
     ).toBe(true);
   });
 
-  test('双击空白进入中窗，控件上不触发', () => {
+  test('双击非文本区域进入中窗，文本和控件不触发', () => {
     expect(
       shouldToggleMiniWindow({ button: 0, target: targetMatching() })
     ).toBe(true);
     expect(
       shouldToggleMiniWindow({
         button: 0,
-        target: targetMatching('.mini-controls'),
+        target: targetMatching('.mini-copyable'),
       })
     ).toBe(false);
   });

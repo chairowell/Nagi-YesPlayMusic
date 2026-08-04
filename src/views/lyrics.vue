@@ -46,22 +46,23 @@
       >
         <img class="mini-cover" :src="imageUrl" loading="lazy" />
         <!--
-          整条播放条只有一种手感：按住就是挪窗口。歌名、歌手、歌词都不做
-          可选文本——文字能选中就意味着同一块地方既能拖窗又能拉高亮，
-          手一抖必然出错。要复制的话用大窗口的歌词页。
+          只有真正压在字上才可选中复制，所以 .mini-copyable 只包住文字本身，
+          不包外面的容器：容器的空白仍然是"按住挪窗口"。
         -->
         <div class="mini-info">
           <div class="mini-title" :title="currentTrack.name">
-            {{ currentTrack.name }}
+            <span class="mini-copyable">{{ currentTrack.name }}</span>
           </div>
-          <div class="mini-artist" :title="artist.name">{{ artist.name }}</div>
+          <div class="mini-artist" :title="artist.name">
+            <span class="mini-copyable">{{ artist.name }}</span>
+          </div>
         </div>
         <div class="mini-lyric" :title="displayLyric">
           <div class="mini-lyric-origin" :style="lyricFontSize">
-            {{ displayLyric }}
+            <span class="mini-copyable">{{ displayLyric }}</span>
           </div>
           <div v-if="showMiniTranslation" class="mini-lyric-translation">
-            {{ currentLyricTranslation }}
+            <span class="mini-copyable">{{ currentLyricTranslation }}</span>
           </div>
         </div>
         <div class="mini-controls">
@@ -431,8 +432,8 @@ import {
   getMiniProgressRiderStyle,
 } from '@/utils/miniPlayer';
 import {
+  beginMiniWindowDragGesture,
   hasCrossedMiniWindowDragThreshold,
-  shouldStartMiniWindowDrag,
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
 import { buildArtworkURL } from '@/utils/artwork';
@@ -732,7 +733,9 @@ export default {
       this.setWindowButtons(false);
     },
     handleMiniMouseDown(event) {
-      if (!isTauriRuntime || !shouldStartMiniWindowDrag(event)) return;
+      // 按在空白处就当场掐掉选中起点（见 beginMiniWindowDragGesture）；
+      // Electron 靠原生 app-region 拖窗，这里到此为止。
+      if (!beginMiniWindowDragGesture(event) || !isTauriRuntime) return;
       // 等鼠标真的移动后再交给原生窗口，否则第一次按下会吞掉双击事件。
       this.cancelMiniWindowDrag();
       this.miniWindowDragStart = {
@@ -1081,8 +1084,16 @@ export default {
   --mini-rider-size: 22px;
   --mini-rider-bottom: 1px;
   --mini-progress-hit-height: 24px;
-  // 底色轨和已播放的填充共用一个粗细，两者错开一像素就会看出台阶
-  --mini-bar-height: 3px;
+
+  // 只有文字本身可选中复制。容器空白不带这个类，那里按住就是挪窗口。
+  .mini-copyable {
+    -webkit-app-region: no-drag;
+    user-select: text;
+    cursor: text;
+    // 命中区变高后会盖住窄窗口里歌名/歌词的下半截，抬一层保住选中和复制
+    position: relative;
+    z-index: 2;
+  }
 
   // 跟着窗口高度缩，压到最扁也不会溢出
   .mini-cover {
@@ -1217,29 +1228,18 @@ export default {
       outline-offset: -2px;
     }
 
-    // 未播放部分的底色轨。没有它，进度为 0 时播放条下沿整条是空的，
-    // 角色像悬空站着，也看不出这里可以拖。用 --color-text 是因为迷你播放器
-    // 的背景取自封面、深浅不定，只有跟着文字色走才在任何封面上都看得见。
-    &::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: var(--mini-bar-height);
-      background: var(--color-text);
-      opacity: 0.16;
-    }
-
+    // 只画已播放的那一段。试过给未播放部分补一条贯穿全宽的底色轨，
+    // 顶满窗口下沿反而像给窗口描了道边，用户否掉了。
     .mini-progress {
       position: absolute;
       left: 0;
       bottom: 0;
-      height: var(--mini-bar-height);
+      height: 2px;
       background-color: var(--color-primary);
       transition: width 0.4s linear;
 
       &.anon {
+        height: 3px;
         background: linear-gradient(
           90deg,
           #ffc2d4 0%,
