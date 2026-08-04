@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { reactive } from 'vue';
+import { markRaw, reactive } from 'vue';
 import { startHowlerSeek } from '../src/utils/playbackSeek';
 import { mountPlayerState } from '../src/utils/playerState';
 
@@ -115,5 +115,34 @@ describe('seek 事务与 Howler 实例生命周期', () => {
     state.player._preciseSeekUpgrader = { request() {} };
 
     expect(persisted).toBe(0);
+  });
+
+  test('defineProperty 的不可写对象属性必须 markRaw，否则响应式读取抛 Proxy 不变量错', () => {
+    // 生产 WKWebView 实测：_nextTrackPrefetcher 没 markRaw 时，每次切歌
+    // 读它都抛 "Proxy handler's 'get' result ..."，预取失效、切歌
+    // Promise 链被掐断（启动恢复进度因此丢失）。
+    const makePlayer = wrapValue => {
+      const raw = {
+        initialize() {},
+        saveSelfToLocalStorage() {},
+        sendSelfToIpcMain() {},
+      };
+      Object.defineProperty(raw, '_gadget', {
+        enumerable: false,
+        value: wrapValue({ prefetch() {} }),
+      });
+      const state = reactive({ player: null });
+      mountPlayerState({ state }, raw, {});
+      return state.player;
+    };
+
+    expect(() => makePlayer(v => v)._gadget).toThrow(); // 未 markRaw：抛错特征
+    expect(() => makePlayer(markRaw)._gadget.prefetch).not.toThrow();
+
+    // 钉住 Player.js 的两个易感点都已 markRaw
+    expect(playerSource).toContain('value: markRaw(createNextTrackPrefetcher({');
+    expect(playerSource).toContain(
+      'this._preciseSeekUpgrader = markRaw(createPreciseSeekUpgrader({'
+    );
   });
 });

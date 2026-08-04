@@ -15,6 +15,7 @@ import {
 import { revokeBlobURLs } from '@/utils/cacheStats';
 import { isCreateMpris, isCreateTray } from '@/utils/platform';
 import { Howl, Howler } from 'howler';
+import { markRaw } from 'vue';
 import shuffle from 'lodash/shuffle';
 import { decode as base642Buffer } from '@/utils/base64';
 import {
@@ -189,9 +190,12 @@ export default class {
       writable: true,
     });
 
+    // defineProperty 的不可写属性若不 markRaw，Vue 响应式代理的 get 会因
+    // Proxy 不变量在每次读取时抛错：预取彻底失效、切歌 Promise 链被掐断
+    //（启动恢复进度就是这样丢的）。_trackSwitchGuard 靠 Object.freeze 幸免。
     Object.defineProperty(this, '_nextTrackPrefetcher', {
       enumerable: false,
-      value: createNextTrackPrefetcher({
+      value: markRaw(createNextTrackPrefetcher({
         loadTrack: id =>
           getTrackDetail(id).then(data =>
             data?.songs?.find(track => Number(track.id) === Number(id))
@@ -200,7 +204,7 @@ export default class {
         warmArtwork: track => warmTrackArtwork(track),
         cacheAudio: (track, isCurrent) =>
           this._cachePrefetchedAudio(track, isCurrent),
-      }),
+      })),
     });
   }
 
@@ -1146,7 +1150,7 @@ export default class {
     // 必须在方法里懒构造：方法经 Vue 响应式 proxy 调用，闭包捕获的
     // player 才是 proxy；在构造函数里建会捕获裸对象，状态写入丢响应。
     const player = this;
-    this._preciseSeekUpgrader = createPreciseSeekUpgrader({
+    this._preciseSeekUpgrader = markRaw(createPreciseSeekUpgrader({
       getSnapshot: () => ({
         howler: player._howler,
         trackId: player.currentTrackID,
@@ -1196,7 +1200,7 @@ export default class {
       },
       onError: error =>
         console.warn('[Player] FLAC 转 WAV 失败，退回流式 seek', error),
-    });
+    }));
     return this._preciseSeekUpgrader;
   }
   mute() {
