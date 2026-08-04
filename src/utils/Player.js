@@ -417,8 +417,9 @@ export default class {
       });
     };
     howler = new Howl({
-      ...howlerOptions,
       html5: true,
+      // 缓存源用 Web Audio（html5:false）拿到采样级精确 seek，见 toHowlSourceOptions
+      ...howlerOptions,
       preload: true,
       onload: () => {
         if (this._howler === howler) {
@@ -1076,7 +1077,8 @@ export default class {
   }
   setOutputDevice() {
     const mediaNode = getHowlerMediaNode(this._howler);
-    if (!mediaNode) return;
+    // Web Audio 模式没有媒体节点；WKWebView 的媒体节点也可能没有 setSinkId
+    if (typeof mediaNode?.setSinkId !== 'function') return;
     mediaNode.setSinkId(store.state.settings.outputDevice);
   }
 
