@@ -9,6 +9,7 @@ describe('播放器进度响应式绑定', () => {
     const state = reactive({ player: null });
     const observedProgress = [];
     let tick;
+    let beginSeek;
     let initializedWithReactiveThis = false;
     let persisted = 0;
 
@@ -18,6 +19,10 @@ describe('播放器进度响应式绑定', () => {
         initializedWithReactiveThis = isReactive(this);
         tick = value => {
           this._progress = value;
+        };
+        beginSeek = () => {
+          this._seeking = true;
+          this._pendingSeekCancel = () => {};
         };
       },
       saveSelfToLocalStorage() {
@@ -29,6 +34,7 @@ describe('播放器进度响应式绑定', () => {
     mountPlayerState({ state }, rawPlayer, {});
     effect(() => observedProgress.push(state.player._progress));
     tick(17);
+    beginSeek();
 
     expect(initializedWithReactiveThis).toBe(true);
     expect(observedProgress).toEqual([0, 17]);
@@ -60,5 +66,14 @@ describe('播放器进度响应式绑定', () => {
 
     expect(playerSource).toContain('this.seek(savedTrackTime, false);');
     expect(playerSource).not.toContain('this._howler?.seek(savedTrackTime);');
+  });
+
+  test('歌词时钟会等待 WebKit 原生 seeked，避免声音尚未落地时先跳词', () => {
+    const lyricsSource = readFileSync(
+      fileURLToPath(new URL('../src/views/lyrics.vue', import.meta.url)),
+      'utf8'
+    );
+
+    expect(lyricsSource).toContain('if (this.player.seeking) return;');
   });
 });

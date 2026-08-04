@@ -10,10 +10,10 @@
       @click.stop
     >
       <player-progress-slider
+        :key="player.currentTrackID"
         v-model="player.progress"
         :min="0"
         :max="player.currentTrackDuration"
-        :interval="1"
         :drag-on-click="true"
         :duration="0"
         :dot-size="12"

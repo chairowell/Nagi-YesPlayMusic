@@ -28,8 +28,27 @@ describe('桌面播放器进度拖拽', () => {
     expect(progressSlider).toContain('slider.dragEnd(event)');
   });
 
-  test('底部播放器和歌词页共用可靠的进度滑块', () => {
+  test('拖拽结束后把第三方滑块重新对齐播放器确认的落点', () => {
+    expect(progressSlider).toContain('@drag-end="finishDrag"');
+    expect(progressSlider).toContain('slider.setValue(this.modelValue)');
+    expect(progressSlider).not.toContain('slider.control.setValue');
+  });
+
+  test('小数音频时长只由包装组件换算为合法刻度', () => {
+    expect(progressSlider).toContain(':max="sliderMax"');
+    expect(progressSlider).toContain(':interval="progressSliderInterval"');
+    expect(progressSlider).toContain('inheritAttrs: false');
+    expect(progressSlider.indexOf('v-bind="$attrs"')).toBeLessThan(
+      progressSlider.indexOf(':interval="progressSliderInterval"')
+    );
+    expect(playerView).not.toContain(':interval="1"');
+    expect(lyricsView).not.toContain(':interval="1"');
+  });
+
+  test('切歌会重建底部和歌词页滑块，旧拖拽不能把满进度带进下一首', () => {
     expect(playerView).toContain('<player-progress-slider');
     expect(lyricsView).toContain('<player-progress-slider');
+    expect(playerView).toContain(':key="player.currentTrackID"');
+    expect(lyricsView).toContain(':key="player.currentTrackID"');
   });
 });

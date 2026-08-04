@@ -44,7 +44,8 @@ import {
 } from '@/utils/trackPrefetch';
 import { buildArtworkURL } from '@/utils/artwork';
 import { resolvePlaybackDuration } from '@/utils/playbackDuration';
-import { commitHowlerSeek } from '@/utils/playbackSeek';
+import { startHowlerSeek } from '@/utils/playbackSeek';
+import { getHowlerMediaNode } from '@/utils/howlerMedia';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
@@ -72,6 +73,7 @@ const delay = ms =>
 const excludeSaveKeys = [
   '_playing',
   '_audioDuration',
+  '_seeking',
   '_personalFMLoading',
   '_personalFMNextLoading',
 ];
@@ -98,6 +100,7 @@ export default class {
     this._playing = false; // 是否正在播放中
     this._progress = 0; // 当前播放歌曲的进度
     this._audioDuration = 0; // 浏览器实际解码出的音频长度
+    this._seeking = false; // WebKit 是否仍在寻找拖拽后的可解码帧
     this._enabled = false; // 是否启用Player
     this._repeatMode = 'off'; // off | on | one
     this._shuffle = false; // true | false
@@ -144,6 +147,12 @@ export default class {
     Object.defineProperty(this, '_trackSwitchGuard', {
       enumerable: false,
       value: createTrackSwitchGuard(),
+    });
+
+    Object.defineProperty(this, '_pendingSeekCancel', {
+      enumerable: false,
+      value: null,
+      writable: true,
     });
 
     Object.defineProperty(this, '_nextTrackPrefetcher', {
@@ -232,6 +241,9 @@ export default class {
   get playing() {
     return this._playing;
   }
+  get seeking() {
+    return this._seeking;
+  }
   get currentTrack() {
     return this._currentTrack;
   }
@@ -315,7 +327,7 @@ export default class {
     // TODO: 如果 _progress 在别的地方被改变了，
     // 这个定时器会覆盖之前改变的值，是bug
     setInterval(() => {
-      if (this._howler === null) return;
+      if (this._howler === null || this._seeking) return;
       this._progress = this._howler.seek();
       localStorage.setItem('playerCurrentTrackTime', this._progress);
       if (isCreateMpris) {
@@ -663,6 +675,9 @@ export default class {
       onBegin: () => {
         // 网络请求开始前就切断旧音频，否则新封面加载后仍会短暂播放上一首。
         const previousHowler = this._howler;
+        this._pendingSeekCancel?.();
+        this._pendingSeekCancel = null;
+        this._seeking = false;
         this._howler = null;
         previousHowler?.stop();
         Howler.unload();
@@ -1019,17 +1034,29 @@ export default class {
   }
   seek(time = null, sendMpris = true) {
     if (time !== null) {
-      const actualPosition = commitHowlerSeek(this._howler, time);
-      if (actualPosition === null) return 0;
-      // 所有 seek 入口都同步同一个真实落点；不能让拖拽预览、桌面控制
-      // 和 Howler 各自保留一份时间。
-      this._progress = actualPosition;
-      if (isCreateMpris && sendMpris) {
-        void sendDesktop('seeked', actualPosition);
-      }
-      if (this._playing)
-        this._playDiscordPresence(this._currentTrack, actualPosition);
-      return actualPosition;
+      const howler = this._howler;
+      this._pendingSeekCancel?.();
+      this._pendingSeekCancel = null;
+      const transaction = startHowlerSeek(howler, time, actualPosition => {
+        if (howler !== this._howler) return;
+        // 只有原生 seeked 才代表 WebKit 的解码位置已稳定；此刻再放行歌词。
+        this._progress = actualPosition;
+        this._seeking = false;
+        this._pendingSeekCancel = null;
+        if (isCreateMpris && sendMpris) {
+          void sendDesktop('seeked', actualPosition);
+        }
+        if (this._playing) {
+          this._playDiscordPresence(this._currentTrack, actualPosition);
+        }
+      });
+      if (transaction === null) return 0;
+      this._progress = transaction.position;
+      this._seeking = transaction.pending;
+      this._pendingSeekCancel = transaction.pending
+        ? transaction.cancel
+        : null;
+      return transaction.position;
     }
     return this._howler === null ? 0 : this._howler.seek();
   }
@@ -1042,10 +1069,9 @@ export default class {
     }
   }
   setOutputDevice() {
-    if (this._howler?._sounds.length <= 0 || !this._howler?._sounds[0]._node) {
-      return;
-    }
-    this._howler?._sounds[0]._node.setSinkId(store.state.settings.outputDevice);
+    const mediaNode = getHowlerMediaNode(this._howler);
+    if (!mediaNode) return;
+    mediaNode.setSinkId(store.state.settings.outputDevice);
   }
 
   replacePlaylist(

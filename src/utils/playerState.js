@@ -4,6 +4,8 @@ const TRANSIENT_PLAYER_FIELDS = new Set([
   '_howler',
   '_progress',
   '_audioDuration',
+  '_seeking',
+  '_pendingSeekCancel',
   '_initialized',
 ]);
 

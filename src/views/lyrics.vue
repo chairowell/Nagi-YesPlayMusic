@@ -213,10 +213,10 @@
               <span>{{ formatTrackTime(player.progress) || '0:00' }}</span>
               <div class="slider">
                 <player-progress-slider
+                  :key="player.currentTrackID"
                   v-model="player.progress"
                   :min="0"
                   :max="player.currentTrackDuration"
-                  :interval="1"
                   :drag-on-click="true"
                   :duration="0"
                   :dot-size="12"
@@ -990,6 +990,7 @@ export default {
       this.lyricsIntervalCleanup = startVisibilityAwareInterval(
         document,
         () => {
+          if (this.player.seeking) return;
           const progress = this.player.seek(null, false) ?? 0;
           let oldHighlightLyricIndex = this.highlightLyricIndex;
           this.highlightLyricIndex = findActiveLyricIndex(
