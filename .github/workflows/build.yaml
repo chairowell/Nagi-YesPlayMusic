@@ -116,7 +116,7 @@ jobs:
           name: YesPlayMusic-macos-aarch64
           path: dist_tauri/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
       - name: Remove temporary signing keychain
         if: always() && github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
@@ -212,7 +212,7 @@ jobs:
           name: YesPlayMusic-windows-x64-${{ github.sha }}
           path: dist_tauri_windows/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
   build-tauri-linux-x64:
     name: Tauri Ubuntu x64
@@ -293,7 +293,7 @@ jobs:
           name: YesPlayMusic-linux-x64-${{ github.sha }}
           path: dist_tauri_linux/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
   draft-release:
     name: Draft GitHub release

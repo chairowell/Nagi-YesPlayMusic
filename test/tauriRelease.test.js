@@ -87,7 +87,7 @@ test('Windows CI 只上传仓库自己 ref 的未签名 x64 测试包', () => {
   expect(windowsJob).toContain('[System.IO.File]::WriteAllText');
   expect(windowsJob).toContain('dist_tauri_windows/TESTING-NOTICE.txt');
   expect(windowsJob).toContain('Do not disable antivirus');
-  expect(windowsJob).toContain('retention-days: 14');
+  expect(windowsJob).toContain('retention-days: 7');
   expect(releaseJob).not.toContain('YesPlayMusic-windows-x64');
 });
 
@@ -116,6 +116,11 @@ test('Ubuntu CI 构建 AppImage、deb 并验证目标平台 Sidecar', () => {
   expect(linuxJob).toContain('bundle/deb/*.deb');
   expect(linuxJob).toContain('sha256sum -c SHA256SUMS.txt');
   expect(releaseJob).not.toContain('YesPlayMusic-linux-x64');
+});
+
+test('三平台测试包只保留七天，避免连续 push 堆积 Artifact', () => {
+  expect(workflow.match(/retention-days: 7/g)).toHaveLength(3);
+  expect(workflow).not.toContain('retention-days: 14');
 });
 
 test('版本 tag 默认走无 Developer ID 签名路径', () => {
