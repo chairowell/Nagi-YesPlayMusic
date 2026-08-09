@@ -12,6 +12,10 @@ const workflow = readFileSync(
   'utf8'
 );
 const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+const linuxdeployLdd = readFileSync(
+  new URL('../scripts/ci/ldd', import.meta.url),
+  'utf8'
+);
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 );
@@ -59,6 +63,8 @@ test('Windows CI 只上传仓库自己 ref 的未签名 x64 测试包', () => {
   expect(windowsJob).toContain("if: github.event_name != 'pull_request'");
   expect(windowsJob).toContain('Get-FileHash $_.FullName -Algorithm SHA256');
   expect(windowsJob).toContain('dist_tauri_windows/SHA256SUMS.txt');
+  expect(windowsJob).toContain("$hashes -join \"`n\"");
+  expect(windowsJob).toContain('[System.IO.File]::WriteAllText');
   expect(windowsJob).toContain('dist_tauri_windows/TESTING-NOTICE.txt');
   expect(windowsJob).toContain('Do not disable antivirus');
   expect(windowsJob).toContain('retention-days: 14');
@@ -74,9 +80,11 @@ test('Ubuntu CI 构建 AppImage、deb 并验证目标平台 Sidecar', () => {
 
   expect(linuxJob).toContain('runs-on: ubuntu-22.04');
   expect(linuxJob).toContain('libwebkit2gtk-4.1-dev');
-  expect(linuxJob).toContain('run: bun run build:tauri:linux');
-  expect(linuxJob).toContain("NO_STRIP: 'true'");
+  expect(linuxJob).toContain('bun run build:tauri:linux');
   expect(linuxJob).toContain('cache-on-failure: true');
+  expect(linuxJob).toContain('PATH="$GITHUB_WORKSPACE/scripts/ci:$PATH"');
+  expect(linuxdeployLdd).toContain("$(basename \"$target\") == 'yesplaymusic-sidecar'");
+  expect(linuxdeployLdd).toContain('/usr/bin/ldd "$@"');
   expect(packageJson.scripts['build:tauri:linux']).toContain('--verbose');
   expect(packageJson.scripts['build:tauri:linux']).toContain(
     '--bundles deb,appimage'

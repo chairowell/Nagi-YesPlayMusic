@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -u
+
+output=''
+status=0
+output="$(/usr/bin/ldd "$@" 2>&1)" || status=$?
+printf '%s\n' "$output"
+
+target="${!#}"
+if [[ $status -ne 0 && -f "$target" && $(basename "$target") == 'yesplaymusic-sidecar' ]]; then
+  # Bun 的 Linux 单文件程序可以直接运行，但 ldd 返回 1；linuxdeploy 会因此误判打包失败。
+  printf '%s\n' '[ci-ldd] 放行 Bun 自包含 Sidecar；随后会执行真实启动 smoke test。' >&2
+  exit 0
+fi
+
+exit "$status"

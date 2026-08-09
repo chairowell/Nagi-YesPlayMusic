@@ -192,7 +192,11 @@ jobs:
           if (-not $hashes) {
             throw 'Tauri Windows build did not produce an NSIS installer'
           }
-          $hashes | Set-Content -Encoding utf8NoBOM dist_tauri_windows/SHA256SUMS.txt
+          [System.IO.File]::WriteAllText(
+            (Join-Path $PWD 'dist_tauri_windows/SHA256SUMS.txt'),
+            (($hashes -join "`n") + "`n"),
+            [System.Text.UTF8Encoding]::new($false)
+          )
           @"
           YesPlayMusic Tauri Windows x64 experimental test build
           Commit: $env:GITHUB_SHA
@@ -260,10 +264,9 @@ jobs:
         run: bun run verify:tauri:version -- "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
 
       - name: Build unsigned Tauri Linux packages
-        env:
-          # Ubuntu 22.04 的 strip 无法处理 linuxdeploy 收集到的部分动态段。
-          NO_STRIP: 'true'
-        run: bun run build:tauri:linux
+        run: |
+          chmod +x scripts/ci/ldd
+          PATH="$GITHUB_WORKSPACE/scripts/ci:$PATH" bun run build:tauri:linux
 
       - name: Verify compiled Sidecar and UNM native addon
         run: src-tauri/binaries/yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test
