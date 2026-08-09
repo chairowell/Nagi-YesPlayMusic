@@ -108,4 +108,17 @@ describe('迷你播放器进度拖拽', () => {
     const css = compileLyricsScopedStyle();
     expect(css).not.toMatch(/\.mini-progress-track\[data-v-test\]::before/);
   });
+
+  test('迷你播放器同时适配彩虹猫轨道、移动角色和暂停帧', () => {
+    const lyricsSource = readFileSync(lyricsFilename, 'utf8');
+    const css = compileLyricsScopedStyle();
+
+    expect(lyricsSource).toContain('nyancat: settings.nyancatStyle');
+    expect(lyricsSource).toContain("'nyancat-stop': !player.playing");
+    expect(css).toContain('/img/logos/nyancat.gif');
+    expect(css).toContain('/img/logos/nyancat-stop.png');
+    expect(css).toMatch(
+      /\.mini-progress\.nyancat\[data-v-test\][^}]*linear-gradient/
+    );
+  });
 });

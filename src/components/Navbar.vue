@@ -106,6 +106,9 @@ import LinuxTitlebar from '@/components/LinuxTitlebar.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
 import ButtonIcon from '@/components/ButtonIcon.vue';
 import { isLinux, isWindows } from '@/utils/platform';
+import { openExternalUrlSafely } from '@/services/externalLinks';
+
+const PROJECT_REPOSITORY = 'https://github.com/nagi-studio/YesPlayMusic';
 
 export default {
   name: 'Navbar',
@@ -186,7 +189,7 @@ export default {
       this.$router.push({ name: 'settings' });
     },
     toGitHub() {
-      window.open('https://github.com/qier222/YesPlayMusic');
+      void openExternalUrlSafely(PROJECT_REPOSITORY);
     },
     toLogin() {
       if (isDesktopRuntime) {

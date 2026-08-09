@@ -43,6 +43,7 @@
   "dependencies": {
     "@neteaseapireborn/api": "^4.29.7",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "@unblockneteasemusic/rust-napi": "^0.4.0",
     "axios": "^0.26.1",
     "change-case": "^4.1.2",

@@ -121,3 +121,30 @@ test('重启时恢复最后使用的逻辑尺寸，不采用 Tauri 插件保存�
   expect(app).toContain('compactWindowMemoryReady');
   expect(tauriMain).toContain('.skip_initial_state("main")');
 });
+
+test('Windows 和 Linux 从 mini bar 展开时先退出最大化且不记忆全屏尺寸', () => {
+  const restoreCommand = tauriMain.slice(
+    tauriMain.indexOf('fn restore_compact_window('),
+    tauriMain.indexOf('fn create_tray(')
+  );
+  expect(restoreCommand.indexOf('window.unmaximize()')).toBeGreaterThan(-1);
+  expect(restoreCommand.indexOf('window.unmaximize()')).toBeLessThan(
+    restoreCommand.indexOf('.set_size(')
+  );
+  expect(compactWindow).toContain('window.isMaximized()');
+  expect(compactWindow).toContain('window.isFullscreen()');
+  expect(compactWindow).toContain('if (!frame || !snapshot.normal) return null');
+  expect(electronIpc).toContain('maximized: win.isMaximized()');
+  expect(electronIpc).toContain('fullscreen: win.isFullScreen()');
+  expect(electronIpc).toContain("win.once('leave-full-screen', finish)");
+  expect(compactWindow).toContain('await window.setFullscreen(false)');
+  expect(electronIpc).toContain(
+    '!win.isMaximized() &&\n      !win.isFullScreen()'
+  );
+
+  const doubleClick = lyrics.slice(
+    lyrics.indexOf('handleMiniDoubleClick(event)'),
+    lyrics.indexOf('updateMiniSeekPreview(event)')
+  );
+  expect(doubleClick).toContain('event.stopPropagation()');
+});

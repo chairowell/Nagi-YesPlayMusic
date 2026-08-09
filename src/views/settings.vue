@@ -1708,6 +1708,14 @@ select {
   }
 }
 
+// Electron 的 Chromium 和 macOS WebKit 即使隐藏箭头，点开后仍有自然的
+// 系统选择菜单；Windows WebView2 / Linux WebKit 则会只剩一块无提示的灰条。
+// 这两个平台保留原生箭头与点击反馈，避免为下拉菜单重造一套键盘和无障碍交互。
+:global(body[data-electron-os='win32'] .settings-page select),
+:global(body[data-electron-os='linux'] .settings-page select) {
+  appearance: auto;
+}
+
 button {
   color: var(--color-text);
   background: var(--color-secondary-bg);

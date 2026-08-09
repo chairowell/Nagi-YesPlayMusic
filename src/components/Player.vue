@@ -339,14 +339,23 @@ export default {
   flex-direction: column;
   justify-content: space-around;
   height: 64px;
-  backdrop-filter: saturate(180%) blur(30px);
-  // background-color: rgba(255, 255, 255, 0.86);
-  background-color: var(--color-navbar-bg);
+  isolation: isolate;
   z-index: 100;
+
+  // backdrop-filter 放在播放器本体上会裁掉越过顶边的进度条角色。背景单独
+  // 放进伪元素，既保留磨砂效果，又允许角色站在播放器上沿之外。
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    backdrop-filter: saturate(180%) blur(30px);
+    background-color: var(--color-navbar-bg);
+  }
 }
 
 @supports (-moz-appearance: none) {
-  .player {
+  .player::before {
     background-color: var(--color-body-bg);
   }
 }

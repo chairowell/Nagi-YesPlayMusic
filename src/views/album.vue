@@ -162,6 +162,7 @@ import TrackList from '@/components/TrackList.vue';
 import CoverRow from '@/components/CoverRow.vue';
 import Cover from '@/components/Cover.vue';
 import Modal from '@/components/Modal.vue';
+import { openExternalUrlSafely } from '@/services/externalLinks';
 
 export default {
   name: 'Album',
@@ -323,7 +324,7 @@ export default {
     },
     openInBrowser(id) {
       const url = `https://music.163.com/#/album?id=${id}`;
-      window.open(url);
+      void openExternalUrlSafely(url);
     },
   },
 };

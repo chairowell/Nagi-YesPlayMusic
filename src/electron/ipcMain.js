@@ -1,4 +1,4 @@
-import { app, dialog, globalShortcut, ipcMain, screen } from 'electron';
+import { app, dialog, globalShortcut, ipcMain, screen, shell } from 'electron';
 import { registerGlobalShortcut } from '@/electron/globalShortcut';
 import { createUnblockMusicService } from '@/services/unblockMusic';
 import cloneDeep from 'lodash/cloneDeep';
@@ -91,6 +91,21 @@ export function initIpcMain(win, store, trayEventEmitter) {
       unblockMusic(sourceListString, ncmTrack, context)
   );
 
+  ipcMain.handle('openExternalUrl', (_, value) => {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error('外链地址无效');
+    }
+    // 渲染进程会处理用户输入，主进程仍要再做一层协议校验，
+    // 避免被注入的 IPC 调用借 shell.openExternal 打开本地文件或其他协议。
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      throw new Error('只允许打开 HTTP(S) 外链');
+    }
+    return shell.openExternal(url.href);
+  });
+
   ipcMain.on('close', e => {
     if (isMac) {
       win.hide();
@@ -131,13 +146,34 @@ export function initIpcMain(win, store, trayEventEmitter) {
 
   ipcMain.handle('isAlwaysOnTop', () => win.isAlwaysOnTop());
 
-  const getCompactWindowFrame = () => {
+  const getCompactWindowSnapshot = () => {
     const [width, height] = win.getContentSize();
     const { x, y } = win.getBounds();
-    return { x, y, width, height };
+    return {
+      frame: { x, y, width, height },
+      maximized: win.isMaximized(),
+      fullscreen: win.isFullScreen(),
+    };
   };
 
-  const applyCompactWindowFrame = frame => {
+  const waitForFullScreenExit = () =>
+    new Promise(resolve => {
+      if (!win.isFullScreen()) {
+        resolve();
+        return;
+      }
+      let timer;
+      const finish = () => {
+        clearTimeout(timer);
+        win.removeListener('leave-full-screen', finish);
+        resolve();
+      };
+      win.once('leave-full-screen', finish);
+      timer = setTimeout(finish, 1500);
+      win.setFullScreen(false);
+    });
+
+  const applyCompactWindowFrame = async frame => {
     const width = Math.round(Number(frame?.width));
     const height = Math.round(Number(frame?.height));
     if (
@@ -150,6 +186,8 @@ export function initIpcMain(win, store, trayEventEmitter) {
     ) {
       return false;
     }
+    await waitForFullScreenExit();
+    if (win.isMaximized()) win.unmaximize();
     win.setContentSize(width, height, true);
     const bounds = win.getBounds();
     const x = frame?.x == null ? null : Number(frame.x);
@@ -167,7 +205,7 @@ export function initIpcMain(win, store, trayEventEmitter) {
     return true;
   };
 
-  ipcMain.handle('getCompactWindowFrame', getCompactWindowFrame);
+  ipcMain.handle('getCompactWindowSnapshot', getCompactWindowSnapshot);
 
   ipcMain.handle('restoreRememberedCompactWindowFrame', (_, target) =>
     applyCompactWindowFrame(target)
@@ -175,13 +213,26 @@ export function initIpcMain(win, store, trayEventEmitter) {
 
   ipcMain.handle('expandCompactWindow', (_, target) => {
     const [currentWidth, currentHeight] = win.getContentSize();
-    if (currentWidth >= 620 && currentHeight >= 340) return false;
+    if (
+      !win.isMaximized() &&
+      !win.isFullScreen() &&
+      currentWidth >= 620 &&
+      currentHeight >= 340
+    ) {
+      return false;
+    }
     return applyCompactWindowFrame(target);
   });
 
   ipcMain.handle('restoreCompactWindow', (_, target) => {
     const [currentWidth, currentHeight] = win.getContentSize();
-    if (currentWidth < 620 || currentHeight < 340) return false;
+    if (
+      !win.isMaximized() &&
+      !win.isFullScreen() &&
+      (currentWidth < 620 || currentHeight < 340)
+    ) {
+      return false;
+    }
     // 目标来自持久化的 Bar 记忆，不能依赖“本次会话里曾展开过”；否则重启后无法收回。
     return applyCompactWindowFrame(target);
   });

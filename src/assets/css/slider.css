@@ -125,9 +125,9 @@
   background-size: 24px;
   width: 24px;
   height: 24px;
-  /* .player 有 backdrop-filter，超出它上边界的部分会被裁掉，
-     所以整体往下压，让 Anon 坐在进度条上而不是骑在上面 */
-  margin-top: 6px;
+  /* vue-slider 的 12px 外框以轨道为中心；上移 18px 后，24px 角色的
+     脚底正好贴住进度线。播放器磨砂背景已隔离，不再裁掉越过顶边的部分。 */
+  margin-top: -18px;
   box-shadow: none;
   border-radius: 0;
   box-sizing: border-box;

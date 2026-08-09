@@ -197,6 +197,7 @@ import CoverRow from '@/components/CoverRow.vue';
 import Cover from '@/components/Cover.vue';
 import MvRow from '@/components/MvRow.vue';
 import Modal from '@/components/Modal.vue';
+import { openExternalUrlSafely } from '@/services/externalLinks';
 
 export default {
   name: 'Artist',
@@ -364,7 +365,7 @@ export default {
     },
     openInBrowser(id) {
       const url = `https://music.163.com/#/artist?id=${id}`;
-      window.open(url);
+      void openExternalUrlSafely(url);
     },
   },
 };

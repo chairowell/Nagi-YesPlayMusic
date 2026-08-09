@@ -107,12 +107,20 @@
         >
           <div
             class="mini-progress"
-            :class="{ anon: settings.anonStyle }"
+            :class="{
+              anon: settings.anonStyle,
+              nyancat: settings.nyancatStyle,
+            }"
             :style="{ width: miniProgressPercent + '%' }"
           ></div>
           <span
-            v-if="settings.anonStyle"
+            v-if="settings.anonStyle || settings.nyancatStyle"
             class="mini-progress-rider"
+            :class="{
+              anon: settings.anonStyle,
+              nyancat: settings.nyancatStyle,
+              'nyancat-stop': !player.playing,
+            }"
             :style="miniProgressRiderStyle"
           ></span>
         </div>
@@ -783,6 +791,7 @@ export default {
     handleMiniDoubleClick(event) {
       if (!shouldToggleMiniWindow(event)) return;
       event.preventDefault();
+      event.stopPropagation();
       this.$emit('expand-compact-window');
     },
     updateMiniSeekPreview(event) {
@@ -1269,6 +1278,20 @@ export default {
           #f76d99 100%
         );
       }
+
+      &.nyancat {
+        height: 5px;
+        background: linear-gradient(
+          to bottom,
+          #f00 0%,
+          #f90 17%,
+          #ff0 33%,
+          #3f0 50%,
+          #09f 67%,
+          #63f 83%,
+          #f0f 100%
+        );
+      }
     }
 
     // 角色在轨道内部完成整段行程；它的右边缘只在 100% 时碰到终点。
@@ -1277,11 +1300,24 @@ export default {
       bottom: var(--mini-rider-bottom);
       width: var(--mini-rider-size);
       height: var(--mini-rider-size);
-      background: url('/img/logos/anon.gif') center / var(--mini-rider-size)
-        no-repeat;
       image-rendering: pixelated;
       pointer-events: none;
       transition: left 0.4s linear, transform 0.4s linear;
+
+      &.anon {
+        background: url('/img/logos/anon.gif') center / var(--mini-rider-size)
+          no-repeat;
+      }
+
+      &.nyancat {
+        width: 32px;
+        background: url('/img/logos/nyancat.gif') center / 32px
+          var(--mini-rider-size) no-repeat;
+      }
+
+      &.nyancat.nyancat-stop {
+        background-image: url('/img/logos/nyancat-stop.png');
+      }
     }
 
     &.dragging .mini-progress,

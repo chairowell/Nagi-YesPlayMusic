@@ -8,6 +8,7 @@ import {
   electronRenderer,
   sendDesktop,
 } from '@/services/desktopTransport';
+import { createExternalLinkClickHandler } from '@/services/externalLinks';
 
 export { sendDesktop, invokeDesktop } from '@/services/desktopTransport';
 
@@ -16,6 +17,7 @@ export async function connectDesktopEvents(self) {
 
   document.body.setAttribute('data-electron', 'yes');
   document.body.setAttribute('data-electron-os', platform);
+  const externalLinkClick = createExternalLinkClickHandler();
   const handlers = createDesktopEventHandlers(self, store, store.state.player);
   // Tauri 没有 Electron 主进程的持久化 store，启动时必须主动同步一次，
   // 否则全局快捷键要等用户改过任意设置后才会真正注册。
@@ -27,7 +29,9 @@ export async function connectDesktopEvents(self) {
       electronRenderer.on(channel, listener);
       return [channel, listener];
     });
+    document.addEventListener('click', externalLinkClick);
     return () => {
+      document.removeEventListener('click', externalLinkClick);
       for (const [channel, listener] of listeners) {
         electronRenderer.removeListener(channel, listener);
       }
@@ -35,10 +39,22 @@ export async function connectDesktopEvents(self) {
   }
 
   const { listen } = await import('@tauri-apps/api/event');
-  const unlisten = await Promise.all(
+  const subscriptions = await Promise.allSettled(
     Object.entries(handlers).map(([channel, handler]) =>
       listen(`desktop://${channel}`, event => handler(event.payload))
     )
   );
-  return () => unlisten.forEach(stop => stop());
+  const unlisten = subscriptions
+    .filter(result => result.status === 'fulfilled')
+    .map(result => result.value);
+  const failed = subscriptions.find(result => result.status === 'rejected');
+  if (failed) {
+    unlisten.forEach(stop => stop());
+    throw failed.reason;
+  }
+  document.addEventListener('click', externalLinkClick);
+  return () => {
+    document.removeEventListener('click', externalLinkClick);
+    unlisten.forEach(stop => stop());
+  };
 }

@@ -98,31 +98,50 @@ export function isCompactWindowPhysicalSize(size, scaleFactor = 1) {
   });
 }
 
-async function captureCurrentCompactWindowFrame() {
+async function captureCurrentCompactWindowSnapshot() {
   if (electronRenderer) {
-    return normalizeCompactWindowFrame(
-      await electronRenderer.invoke('getCompactWindowFrame')
-    );
+    const snapshot = await electronRenderer.invoke('getCompactWindowSnapshot');
+    return {
+      frame: normalizeCompactWindowFrame(snapshot?.frame),
+      normal: !snapshot?.maximized && !snapshot?.fullscreen,
+    };
   }
   if (!isTauriRuntime) return null;
 
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   const window = getCurrentWindow();
-  const [size, position, scaleFactor] = await Promise.all([
+  const [size, position, scaleFactor, maximized, fullscreen] = await Promise.all([
     window.innerSize(),
     window.outerPosition(),
     window.scaleFactor(),
+    window.isMaximized(),
+    window.isFullscreen(),
   ]);
-  return normalizeCompactWindowFrame({
-    x: position.x,
-    y: position.y,
-    // 尺寸用逻辑像素记忆，跨 Retina/普通屏幕后视觉大小才不会翻倍或减半。
-    width: size.width / scaleFactor,
-    height: size.height / scaleFactor,
-  });
+  return {
+    frame: normalizeCompactWindowFrame({
+      x: position.x,
+      y: position.y,
+      // 尺寸用逻辑像素记忆，跨 Retina/普通屏幕后视觉大小才不会翻倍或减半。
+      width: size.width / scaleFactor,
+      height: size.height / scaleFactor,
+    }),
+    normal: !maximized && !fullscreen,
+  };
 }
 
 async function applyTauriCompactWindowFrame(frame) {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  const window = getCurrentWindow();
+  if (await window.isFullscreen()) {
+    await window.setFullscreen(false);
+    // macOS 退出原生全屏有动画，动画未结束时紧接着 set_size 会被系统忽略。
+    // 轮询状态后再留一帧稳定时间，普通窗口不走这条路径。
+    const deadline = Date.now() + 1500;
+    while ((await window.isFullscreen()) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    await new Promise(resolve => setTimeout(resolve, 350));
+  }
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('restore_compact_window', frame);
   return true;
@@ -150,8 +169,10 @@ export async function restoreRememberedCompactWindowFrame() {
 }
 
 export async function rememberCurrentCompactWindowFrame() {
-  const frame = await captureCurrentCompactWindowFrame();
-  if (!frame) return null;
+  const snapshot = await captureCurrentCompactWindowSnapshot();
+  const frame = snapshot?.frame;
+  // 最大化/全屏尺寸不是用户的普通窗口尺寸，不能覆盖 browse 记忆。
+  if (!frame || !snapshot.normal) return null;
   rememberCompactWindowFrame(frame);
   return {
     mode: isMiniWindowSize(frame) ? 'bar' : 'browse',
@@ -161,10 +182,15 @@ export async function rememberCurrentCompactWindowFrame() {
 
 export async function expandCompactWindow() {
   if (compactWindowTransitioning) return false;
-  const current = await captureCurrentCompactWindowFrame();
-  if (!current || !isMiniWindowSize(current)) return false;
+  const snapshot = await captureCurrentCompactWindowSnapshot();
+  const current = snapshot?.frame;
+  // 某些 Windows/Linux 窗口管理器会先处理双击最大化。此时仍要让原生层
+  // 退出最大化并恢复 browse，只是不记录这个临时的屏幕尺寸。
+  if (!current || (snapshot.normal && !isMiniWindowSize(current))) return false;
 
-  const memory = rememberCompactWindowFrame(current);
+  const memory = snapshot.normal
+    ? rememberCompactWindowFrame(current)
+    : loadCompactWindowMemory();
   const rememberedTarget =
     memory.browse ||
     normalizeCompactWindowFrame({ ...COMPACT_EXPANDED_SIZE, x: null, y: null });
@@ -186,10 +212,13 @@ export async function expandCompactWindow() {
 
 export async function restoreCompactWindow() {
   if (compactWindowTransitioning) return false;
-  const current = await captureCurrentCompactWindowFrame();
-  if (!current || isMiniWindowSize(current)) return false;
+  const snapshot = await captureCurrentCompactWindowSnapshot();
+  const current = snapshot?.frame;
+  if (!current || (snapshot.normal && isMiniWindowSize(current))) return false;
 
-  const memory = rememberCompactWindowFrame(current);
+  const memory = snapshot.normal
+    ? rememberCompactWindowFrame(current)
+    : loadCompactWindowMemory();
   if (!memory.bar) return false;
   // ESC 收回时留在用户正在操作的屏幕，不套用播放条上一次所在屏幕的绝对坐标。
   const target = buildCompactWindowTransitionFrame(current, memory.bar);

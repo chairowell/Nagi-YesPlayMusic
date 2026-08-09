@@ -352,27 +352,34 @@ class Background {
       this.window.webContents.send('isMaximized', false);
     });
 
-    this.window.webContents.on('new-window', function (e, url) {
-      e.preventDefault();
+    this.window.webContents.setWindowOpenHandler(({ url }) => {
       log('open url');
-      const excludeHosts = ['www.last.fm'];
-      const exclude = excludeHosts.find(host => url.includes(host));
-      if (exclude) {
+      let externalUrl;
+      try {
+        externalUrl = new URL(url);
+      } catch {
+        return { action: 'deny' };
+      }
+      if (!['http:', 'https:'].includes(externalUrl.protocol)) {
+        return { action: 'deny' };
+      }
+      if (externalUrl.hostname === 'www.last.fm') {
         const newWindow = new BrowserWindow({
           width: 800,
           height: 600,
           titleBarStyle: 'default',
           title: 'YesPlayMusic',
           webPreferences: {
-            webSecurity: false,
-            nodeIntegration: true,
-            contextIsolation: false,
+            webSecurity: true,
+            nodeIntegration: false,
+            contextIsolation: true,
           },
         });
-        newWindow.loadURL(url);
-        return;
+        void newWindow.loadURL(externalUrl.href);
+        return { action: 'deny' };
       }
-      shell.openExternal(url);
+      void shell.openExternal(externalUrl.href);
+      return { action: 'deny' };
     });
   }
 

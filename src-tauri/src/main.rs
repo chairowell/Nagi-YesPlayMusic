@@ -574,6 +574,14 @@ fn restore_compact_window(
     {
         return Err("窗口尺寸超出安全范围".to_string());
     }
+    if window.is_fullscreen().map_err(|error| error.to_string())? {
+        window
+            .set_fullscreen(false)
+            .map_err(|error| error.to_string())?;
+    }
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        window.unmaximize().map_err(|error| error.to_string())?;
+    }
     window
         .set_size(LogicalSize::new(width, height))
         .map_err(|error| error.to_string())?;
@@ -878,6 +886,7 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         // 插件按物理像素保存尺寸，混合 Retina/普通屏时会把 1060×720 当成 2120×1440 恢复。
         // 双档逻辑尺寸由渲染进程接管；这里只保留插件的退出写盘，跳过有歧义的启动恢复。
         .plugin(

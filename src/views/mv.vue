@@ -55,6 +55,7 @@ import ButtonIcon from '@/components/ButtonIcon.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
 import MvRow from '@/components/MvRow.vue';
 import { mapActions } from 'vuex';
+import { openExternalUrlSafely } from '@/services/externalLinks';
 
 export default {
   name: 'mv',
@@ -162,7 +163,7 @@ export default {
     },
     openInBrowser(id) {
       const url = `https://music.163.com/#/mv?id=${id}`;
-      window.open(url);
+      void openExternalUrlSafely(url);
     },
   },
 };
