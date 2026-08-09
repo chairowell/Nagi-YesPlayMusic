@@ -150,6 +150,9 @@ export function installPreciseWavRoutes(
         timeoutMs: uploadTimeoutMs,
       });
       await convert(flacPath, wavPath, afconvertDataFormat(request.query.bits));
+      // Windows 上客户端可能在 response.send 后立刻继续；成功响应前先完成清理，
+      // 避免观察到“转换完成但 .flac 还没删”的短暂不一致状态。
+      await fsp.rm(flacPath, { force: true });
       response.send({ url: `/precise-wav/${wavName}` });
     } catch (error) {
       console.warn(`[sidecar][precise-wav] 转换失败：${error.message}`);

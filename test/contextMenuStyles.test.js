@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { compileStyle, parse } from '@vue/compiler-sfc';
 
-const filename = new URL('../src/components/ContextMenu.vue', import.meta.url)
-  .pathname;
+const filename = fileURLToPath(
+  new URL('../src/components/ContextMenu.vue', import.meta.url)
+);
 
 function compileScopedStyle() {
   const source = readFileSync(filename, 'utf8');

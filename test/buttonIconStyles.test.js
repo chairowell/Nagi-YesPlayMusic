@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { compileStyle, parse } from '@vue/compiler-sfc';
 
-const filename = new URL('../src/components/ButtonIcon.vue', import.meta.url)
-  .pathname;
+const filename = fileURLToPath(
+  new URL('../src/components/ButtonIcon.vue', import.meta.url)
+);
 
 test('图标按钮会给调用方传入的 SVG 应用基础尺寸', () => {
   const source = readFileSync(filename, 'utf8');

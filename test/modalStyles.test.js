@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { compileStyle, parse } from '@vue/compiler-sfc';
 
-const filename = new URL('../src/components/Modal.vue', import.meta.url).pathname;
+const filename = fileURLToPath(
+  new URL('../src/components/Modal.vue', import.meta.url)
+);
 
 test('弹窗 footer 会给调用方传入的按钮应用样式', () => {
   const source = readFileSync(filename, 'utf8');
