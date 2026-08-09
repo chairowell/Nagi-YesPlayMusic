@@ -156,8 +156,12 @@ export function installPreciseWavRoutes(
       response.send({ url: `/precise-wav/${wavName}` });
     } catch (error) {
       console.warn(`[sidecar][precise-wav] 转换失败：${error.message}`);
-      // 半成品 WAV 一并清掉，避免后续 GET 播到坏文件
-      await fsp.rm(wavPath, { force: true }).catch(() => {});
+      // 失败响应前先清掉输入和半成品；Windows 客户端收到
+      // 500 后会立即回退，不能把可观测的清理留到 finally。
+      await Promise.all([
+        fsp.rm(flacPath, { force: true }).catch(() => {}),
+        fsp.rm(wavPath, { force: true }).catch(() => {}),
+      ]);
       if (!response.headersSent) {
         response.status(500).send({ message: '转换失败' });
       }
