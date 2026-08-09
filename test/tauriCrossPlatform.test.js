@@ -80,6 +80,12 @@ describe('Tauri 本机安装包', () => {
     expect(rustMain).not.toContain('File::open("/dev/urandom")');
   });
 
+  test('macOS 独有的 Reopen 事件不进入 Windows/Linux 编译', () => {
+    expect(rustMain).toContain(
+      '#[cfg(target_os = "macos")]\n        RunEvent::Reopen'
+    );
+  });
+
   test('依赖安装脚本不使用 Windows 无法解析的 POSIX 环境变量前缀', () => {
     expect(packageJson.scripts.postinstall).toBe(
       'node scripts/install-electron-app-deps.mjs'

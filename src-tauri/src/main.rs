@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env, fs,
+    env,
     io::{Cursor, ErrorKind, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     sync::Mutex,
@@ -10,7 +10,7 @@ use std::{
 
 use tauri::{
     image::Image as TauriImage,
-    menu::{AboutMetadata, AboutMetadataBuilder, Menu, MenuItem, MenuItemKind, PredefinedMenuItem},
+    menu::{AboutMetadata, AboutMetadataBuilder, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewUrl,
@@ -24,6 +24,10 @@ use tauri_plugin_shell::{
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSWindow, NSWindowButton};
+#[cfg(target_os = "macos")]
+use std::fs;
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuItemKind, PredefinedMenuItem};
 
 const API_PORT: u16 = 12_754;
 const DEV_WEB_PORT: u16 = 1_420;
@@ -944,6 +948,7 @@ fn main() {
                 }
             }
         }
+        #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
