@@ -20,6 +20,26 @@ const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 );
 
+test('CI 官方 Actions 使用 Node.js 24 运行时版本', () => {
+  for (const action of [
+    'actions/checkout@v7',
+    'actions/cache@v6',
+    'actions/upload-artifact@v7',
+    'actions/download-artifact@v8',
+  ]) {
+    expect(workflow).toContain(action);
+  }
+
+  for (const action of [
+    'actions/checkout@v4',
+    'actions/cache@v4',
+    'actions/upload-artifact@v4',
+    'actions/download-artifact@v4',
+  ]) {
+    expect(workflow).not.toContain(action);
+  }
+});
+
 test('macOS CI 保留无签名和签名两条发布路径', () => {
   const tauriJob = workflow.slice(
     workflow.indexOf('  build-tauri-arm64:'),
