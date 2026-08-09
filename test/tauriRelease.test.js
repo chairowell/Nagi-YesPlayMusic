@@ -42,6 +42,9 @@ test('Windows CI 只上传仓库自己 ref 的未签名 x64 测试包', () => {
 
   expect(windowsJob).toContain('runs-on: windows-latest');
   expect(windowsJob).toContain('permissions:\n      contents: read');
+  expect(windowsJob).toContain(
+    'BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache'
+  );
   expect(windowsJob).toContain('run: bun run build:tauri:windows');
   expect(windowsJob).toContain(
     'yesplaymusic-sidecar-x86_64-pc-windows-msvc.exe'

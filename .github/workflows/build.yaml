@@ -127,6 +127,9 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
+    env:
+      # Bun 1.3.12 从 D: 工作区向 C: 全局缓存搬运交叉编译运行时会失败。
+      BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
 
     steps:
       - uses: actions/checkout@v4
