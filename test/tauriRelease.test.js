@@ -43,7 +43,7 @@ test('Windows CI 只上传仓库自己 ref 的未签名 x64 测试包', () => {
   expect(windowsJob).toContain('runs-on: windows-latest');
   expect(windowsJob).toContain('permissions:\n      contents: read');
   expect(windowsJob).toContain(
-    'BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache'
+    '"BUN_INSTALL_CACHE_DIR=$env:RUNNER_TEMP/bun-install-cache" >> $env:GITHUB_ENV'
   );
   expect(windowsJob).toContain('run: bun run build:tauri:windows');
   expect(windowsJob).toContain(
