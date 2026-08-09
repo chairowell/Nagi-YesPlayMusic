@@ -1,3 +1,9 @@
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+
+// Windows release 必须使用 GUI subsystem，否则正常启动也会附带一个命令行窗口。
 use std::{
     collections::HashMap,
     env,

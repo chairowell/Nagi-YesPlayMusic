@@ -86,6 +86,14 @@ describe('Tauri 本机安装包', () => {
     );
   });
 
+  test('Windows release 主程序和 Sidecar 都不弹命令行窗口', () => {
+    expect(rustMain).toContain('windows_subsystem = "windows"');
+    const windows = sidecarBuildPlan({
+      targetTriple: 'x86_64-pc-windows-msvc',
+    });
+    expect(windows.args).toContain('--windows-hide-console');
+  });
+
   test('依赖安装脚本不使用 Windows 无法解析的 POSIX 环境变量前缀', () => {
     expect(packageJson.scripts.postinstall).toBe(
       'node scripts/install-electron-app-deps.mjs'
