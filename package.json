@@ -15,7 +15,7 @@
     "build:tauri": "bun scripts/build-tauri-host.mjs",
     "build:tauri:macos": "tauri build --target aarch64-apple-darwin && bun run sign:tauri:local",
     "build:tauri:windows": "tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci",
-    "build:tauri:linux": "tauri build --target x86_64-unknown-linux-gnu --bundles appimage,deb --ci",
+    "build:tauri:linux": "tauri build --verbose --target x86_64-unknown-linux-gnu --bundles deb,appimage --ci",
     "build:tauri:release": "tauri build --target aarch64-apple-darwin --bundles dmg --ci",
     "sign:tauri:local": "bun scripts/sign-tauri-local.mjs",
     "package:tauri:dmg": "bun scripts/package-tauri-dmg.mjs",

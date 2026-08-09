@@ -32,12 +32,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Prepare environment
         run: cp .env.example .env
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        # Tauri 构建不需要根项目里为 Electron 准备的 postinstall。
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Test
         run: bun test
@@ -142,16 +144,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Prepare environment
         shell: pwsh
-        run: |
-          Copy-Item .env.example .env
-          # Bun 1.3.12 从 D: 工作区向 C: 全局缓存搬运交叉编译运行时会失败。
-          "BUN_INSTALL_CACHE_DIR=$env:RUNNER_TEMP/bun-install-cache" >> $env:GITHUB_ENV
+        run: Copy-Item .env.example .env
+
+      - name: Cache Bun Windows target runtime
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/bun-target-cache
+          key: bun-target-${{ runner.os }}-1.3.12-windows-x64-baseline
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Test
         run: bun test
@@ -160,6 +166,9 @@ jobs:
         run: bun run verify:tauri:version -- "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
 
       - name: Build unsigned Tauri NSIS installer
+        env:
+          # 工作区在 D:，把交叉编译运行时也放到 D:，规避 Bun 1.3.12 跨盘 rename 故障。
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-target-cache
         run: bun run build:tauri:windows
 
       - name: Verify compiled Sidecar and UNM native addon
@@ -236,12 +245,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Prepare environment
         run: cp .env.example .env
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Test
         run: bun test
@@ -250,6 +260,9 @@ jobs:
         run: bun run verify:tauri:version -- "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
 
       - name: Build unsigned Tauri Linux packages
+        env:
+          # Ubuntu 22.04 的 strip 无法处理 linuxdeploy 收集到的部分动态段。
+          NO_STRIP: 'true'
         run: bun run build:tauri:linux
 
       - name: Verify compiled Sidecar and UNM native addon

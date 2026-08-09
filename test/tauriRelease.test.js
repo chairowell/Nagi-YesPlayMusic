@@ -43,8 +43,15 @@ test('Windows CI 只上传仓库自己 ref 的未签名 x64 测试包', () => {
   expect(windowsJob).toContain('runs-on: windows-latest');
   expect(windowsJob).toContain('permissions:\n      contents: read');
   expect(windowsJob).toContain(
-    '"BUN_INSTALL_CACHE_DIR=$env:RUNNER_TEMP/bun-install-cache" >> $env:GITHUB_ENV'
+    'key: bun-target-${{ runner.os }}-1.3.12-windows-x64-baseline'
   );
+  expect(windowsJob).toContain(
+    'BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-target-cache'
+  );
+  expect(windowsJob).toContain(
+    'bun install --frozen-lockfile --ignore-scripts'
+  );
+  expect(windowsJob).toContain('cache-on-failure: true');
   expect(windowsJob).toContain('run: bun run build:tauri:windows');
   expect(windowsJob).toContain(
     'yesplaymusic-sidecar-x86_64-pc-windows-msvc.exe'
@@ -68,6 +75,12 @@ test('Ubuntu CI 构建 AppImage、deb 并验证目标平台 Sidecar', () => {
   expect(linuxJob).toContain('runs-on: ubuntu-22.04');
   expect(linuxJob).toContain('libwebkit2gtk-4.1-dev');
   expect(linuxJob).toContain('run: bun run build:tauri:linux');
+  expect(linuxJob).toContain("NO_STRIP: 'true'");
+  expect(linuxJob).toContain('cache-on-failure: true');
+  expect(packageJson.scripts['build:tauri:linux']).toContain('--verbose');
+  expect(packageJson.scripts['build:tauri:linux']).toContain(
+    '--bundles deb,appimage'
+  );
   expect(linuxJob).toContain(
     'yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test'
   );
