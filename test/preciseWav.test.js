@@ -40,6 +40,7 @@ describe('precise-wav 路由', () => {
     const app = express();
     installPreciseWavRoutes(app, {
       tempDir,
+      platform: 'darwin',
       convert: async (flacPath, wavPath, dataFormat) => {
         convertCalls.push({ flacPath, wavPath, dataFormat });
         if (dataFormat === 'LEI32') {
@@ -49,7 +50,10 @@ describe('precise-wav 路由', () => {
         }
         const flacBytes = await fsp.readFile(flacPath);
         // 假转换器：证明收到的就是 POST 的字节
-        await fsp.writeFile(wavPath, Buffer.concat([Buffer.from('RIFF'), flacBytes]));
+        await fsp.writeFile(
+          wavPath,
+          Buffer.concat([Buffer.from('RIFF'), flacBytes])
+        );
       },
     });
     server = await new Promise(resolve => {
@@ -119,6 +123,7 @@ describe('precise-wav 路由', () => {
     const app = express();
     installPreciseWavRoutes(app, {
       tempDir: tiny,
+      platform: 'darwin',
       convert: async () => {},
       maxUploadBytes: 4,
     });
@@ -149,5 +154,19 @@ describe('precise-wav 路由', () => {
     writeFileSync(path.join(tempDir, 'stale.wav'), 'x');
     await sweepPreciseWavDir(tempDir);
     expect(await fsp.readdir(tempDir)).toEqual([]);
+  });
+
+  test('Windows/Linux 明确返回 501，让播放器使用已有回退路径', async () => {
+    const app = express();
+    installPreciseWavRoutes(app, { platform: 'win32' });
+    const s = await new Promise(resolve => {
+      const inner = app.listen(0, '127.0.0.1', () => resolve(inner));
+    });
+    const response = await fetch(
+      `http://127.0.0.1:${s.address().port}/precise-wav/47`,
+      { method: 'POST', body: new Uint8Array([1]) }
+    );
+    expect(response.status).toBe(501);
+    await new Promise(resolve => s.close(resolve));
   });
 });

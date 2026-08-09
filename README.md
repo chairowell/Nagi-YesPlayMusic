@@ -7,7 +7,7 @@
 <h2 align="center" style="font-weight: 600">YesPlayMusic</h2>
 
 <p align="center">高颜值的第三方网易云播放器</p>
-<p align="center"><sub>macOS Tauri 重构版 · 迷你播放器与菜单栏歌词 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
+<p align="center"><sub>Tauri 2 重构版 · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
 
 ---
 
@@ -20,7 +20,8 @@ macOS Tauri 重构版，不再跟随上游发版。原项目的界面和主要�
 如果你是来找原版的，请直接去[上游仓库](https://github.com/qier222/YesPlayMusic)，
 那边有完整的跨平台安装包和文档。
 
-**欢迎提 Issue 和 PR。** 这个 fork 目前只维护 Apple Silicon Mac。
+**欢迎提 Issue 和 PR。** Apple Silicon Mac 是正式支持平台；Windows x64 和 Ubuntu x64
+由 CI 提供实验构建，等待更多真实设备反馈。
 
 ## Tauri 重构版改了什么
 
@@ -82,7 +83,7 @@ Tauri v0.6.0 约为 80.8 MiB，减少约 79%。内存仍按完整进程树继续
 cp .env.example .env   # 必须，缺了它前端拿不到 API 地址，界面会全空
 bun install
 bun run dev:tauri      # 开发模式
-bun run build:tauri    # 构建 Apple Silicon 应用
+bun run build:tauri    # 按当前系统构建 Tauri 应用
 bun run package:tauri:dmg  # 生成可分发的 DMG 和 SHA-256 校验文件
 ```
 
@@ -100,9 +101,25 @@ DMG 和校验文件在 `dist_tauri/`。
 
 ## 关于 Windows 和 Linux
 
-这个 fork 只面向 Apple Silicon Mac 开发、测试和发版，目前不提供 Intel Mac、Windows
-或 Linux 安装包。需要完整的跨平台支持，请使用
-[上游 YesPlayMusic](https://github.com/qier222/YesPlayMusic)。
+Windows x64 和 Ubuntu x64 使用与 macOS 相同的 Tauri 外壳，不再发布旧 Electron 外壳。
+每次向仓库自己的分支 push 后，可以在 Actions 的 `Desktop builds` 运行记录底部下载：
+
+- Windows：未签名的 NSIS `.exe` 安装包
+- Ubuntu：AppImage 和 `.deb`
+
+这些实验包暂时不自动加入 GitHub Release。Windows 未签名安装包可能触发 SmartScreen；
+不要为此全局关闭杀毒软件或 SmartScreen。AppImage 可以直接运行，`.deb` 适合 Ubuntu / Debian。
+
+在对应系统本机从源码构建：
+
+```bash
+bun run build:tauri:windows  # Windows x64，输出 NSIS setup.exe
+bun run build:tauri:linux    # Ubuntu x64，输出 AppImage 和 deb
+```
+
+Tauri 会同时编译目标平台的 Bun Sidecar。Sidecar 是随应用安装的本地后端，只监听
+`127.0.0.1`，负责网易云 API、同源登录代理和 UNM；用户电脑不需要另装 Bun。
+Windows / Linux 没有 macOS 的 `afconvert`，精确 FLAC 拖动会自动使用播放器已有的回退路径。
 
 ## 致谢
 

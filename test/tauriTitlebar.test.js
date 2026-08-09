@@ -16,10 +16,26 @@ const lyrics = readFileSync(
 );
 
 test('Tauri 使用隐藏标题的覆盖式标题栏，让歌词背景延伸到窗口顶边', () => {
+  expect(main).toContain('#[cfg(target_os = "macos")]');
   expect(main).toContain('.title_bar_style(tauri::TitleBarStyle::Overlay)');
   expect(main).toContain('.hidden_title(true)');
+  expect(main).toContain('#[cfg(target_os = "windows")]');
+  expect(main).toContain('builder.decorations(false)');
   expect(navbar).toContain('data-tauri-drag-region');
   expect(lyrics).toContain('data-tauri-drag-region');
+});
+
+test('Windows 自定义标题栏通过统一桌面桥控制 Tauri 窗口', () => {
+  const win32Titlebar = readFileSync(
+    new URL('../src/components/Win32Titlebar.vue', import.meta.url),
+    'utf8'
+  );
+  expect(win32Titlebar).toContain('data-tauri-drag-region');
+  expect(win32Titlebar).toContain("sendDesktop('minimize')");
+  expect(win32Titlebar).toContain("sendDesktop('maximizeOrUnmaximize')");
+  expect(win32Titlebar).toContain("sendDesktop('close')");
+  expect(main).toContain('"maximizeOrUnmaximize" =>');
+  expect(main).toContain('desktop://isMaximized');
 });
 
 test('顶栏里铺满整行的容器都要自己带拖拽标记', () => {

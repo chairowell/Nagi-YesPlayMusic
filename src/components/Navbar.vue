@@ -95,7 +95,7 @@
 <script>
 import { mapState } from 'vuex';
 import { isLooseLoggedIn, doLogout } from '@/utils/auth';
-import { isDesktopRuntime } from '@/utils/runtime';
+import { isDesktopRuntime, isTauriRuntime } from '@/utils/runtime';
 
 // import icons for win32 title bar
 // icons by https://github.com/microsoft/vscode-codicons
@@ -148,7 +148,11 @@ export default {
   created() {
     if (isWindows) {
       this.enableWin32Titlebar = true;
-    } else if (isLinux && this.settings.linuxEnableCustomTitlebar) {
+    } else if (
+      isLinux &&
+      !isTauriRuntime &&
+      this.settings.linuxEnableCustomTitlebar
+    ) {
       this.enableLinuxTitlebar = true;
     }
   },

@@ -37,7 +37,7 @@ fn app_about_metadata(version: &str) -> AboutMetadata<'static> {
         .name(Some("YesPlayMusic"))
         // macOS 会从 Info.plist 读取 build number；这里只提供短版本，避免显示成 0.6.0 (0.6.0)。
         .short_version(Some(version.to_string()))
-        .credits(Some("macOS Tauri 2 重构版\n由 Nagi Studio 独立维护"))
+        .credits(Some("Tauri 2 跨平台版\n由 Nagi Studio 独立维护"))
         .copyright(Some("基于 qier222/YesPlayMusic 的开源工作重构"))
         .build()
 }
@@ -95,6 +95,7 @@ fn tray_title_for_visibility(title: &str, window_visible: bool) -> &str {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn render_tray_title(app: &AppHandle) -> Result<(), String> {
     let title = app
         .state::<TrayTitleState>()
@@ -110,6 +111,12 @@ fn render_tray_title(app: &AppHandle) -> Result<(), String> {
         tray.set_title(Some(tray_title_for_visibility(&title, window_visible)))
             .map_err(|error| error.to_string())?;
     }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn render_tray_title(_app: &AppHandle) -> Result<(), String> {
+    // Tray title 只有 macOS 菜单栏有一致语义；其他平台使用 tooltip 和菜单。
     Ok(())
 }
 
@@ -372,21 +379,30 @@ fn parse_legacy_settings(config: &str) -> Result<Option<serde_json::Value>, Stri
 
 #[tauri::command]
 fn read_legacy_settings(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
-    let config_path = app
-        .path()
-        .home_dir()
-        .map_err(|error| error.to_string())?
-        .join("Library/Application Support/yesplaymusic/config.json");
-    let metadata = match fs::metadata(&config_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    if metadata.len() > 1_048_576 {
-        return Err("旧版设置文件异常大，已拒绝读取".to_string());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        return Ok(None);
     }
-    let config = fs::read_to_string(config_path).map_err(|error| error.to_string())?;
-    parse_legacy_settings(&config)
+
+    #[cfg(target_os = "macos")]
+    {
+        let config_path = app
+            .path()
+            .home_dir()
+            .map_err(|error| error.to_string())?
+            .join("Library/Application Support/yesplaymusic/config.json");
+        let metadata = match fs::metadata(&config_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        if metadata.len() > 1_048_576 {
+            return Err("旧版设置文件异常大，已拒绝读取".to_string());
+        }
+        let config = fs::read_to_string(config_path).map_err(|error| error.to_string())?;
+        parse_legacy_settings(&config)
+    }
 }
 
 #[tauri::command]
@@ -426,8 +442,30 @@ fn desktop_event(
                 set_window_button_visibility(window, visible)?;
             }
         }
+        "minimize" => {
+            if let Some(window) = app.get_webview_window("main") {
+                window.minimize().map_err(|error| error.to_string())?;
+            }
+        }
+        "maximizeOrUnmaximize" => {
+            if let Some(window) = app.get_webview_window("main") {
+                let maximized = window.is_maximized().map_err(|error| error.to_string())?;
+                if maximized {
+                    window.unmaximize().map_err(|error| error.to_string())?;
+                } else {
+                    window.maximize().map_err(|error| error.to_string())?;
+                }
+                app.emit("desktop://isMaximized", !maximized)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        "close" => {
+            if let Some(window) = app.get_webview_window("main") {
+                window.close().map_err(|error| error.to_string())?;
+            }
+        }
         // 这些事件在 Electron 里由 MPRIS、Discord、代理或动态图标消费；
-        // Tauri macOS 端明确接收迁移期的 no-op，避免 renderer 出现未处理拒绝。
+        // Tauri 迁移期先明确接收为 no-op，避免 renderer 出现未处理拒绝。
         "updateTrayPlayState"
         | "updateTrayLikeState"
         | "updateTrayIcon"
@@ -673,7 +711,12 @@ fn wait_for_sidecar(port: u16, expected_token: &str, timeout: Duration) -> Resul
 
 fn generate_sidecar_health_token() -> Result<String, Box<dyn std::error::Error>> {
     let mut bytes = [0_u8; 32];
-    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    getrandom::getrandom(&mut bytes).map_err(|error| {
+        std::io::Error::new(
+            ErrorKind::Other,
+            format!("无法生成 Sidecar 健康令牌：{error}"),
+        )
+    })?;
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut token = String::with_capacity(64);
     for byte in bytes {
@@ -748,13 +791,18 @@ fn create_main_window(
         RELEASE_WEB_PORT
     };
     let url = format!("http://127.0.0.1:{port}").parse()?;
-    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+    let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
         .title("YesPlayMusic")
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
         .inner_size(1_440.0, 840.0)
         .min_inner_size(300.0, 48.0)
-        .visible(false)
+        .visible(false);
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    #[cfg(target_os = "windows")]
+    let builder = builder.decorations(false);
+    let window = builder
         .on_page_load(|_, payload| {
             if payload.event() == PageLoadEvent::Finished {
                 println!("[tauri] webview-ready: {}", payload.url());
@@ -852,6 +900,7 @@ fn main() {
             let webview_smoke_test = is_webview_smoke_test(env::args());
             if core_smoke_test || webview_smoke_test {
                 // 隐藏验收不进入 Dock、不抢焦点；正式启动仍保持普通音乐应用行为。
+                #[cfg(target_os = "macos")]
                 let _ = app
                     .handle()
                     .set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -943,7 +992,7 @@ mod tests {
         assert_eq!(metadata.short_version.as_deref(), Some(version));
         assert_eq!(
             metadata.credits.as_deref(),
-            Some("macOS Tauri 2 重构版\n由 Nagi Studio 独立维护")
+            Some("Tauri 2 跨平台版\n由 Nagi Studio 独立维护")
         );
         assert_eq!(
             metadata.copyright.as_deref(),

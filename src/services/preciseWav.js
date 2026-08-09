@@ -37,7 +37,9 @@ export async function sweepPreciseWavDir(dir, keepFileNames = []) {
   await Promise.all(
     entries
       .filter(entry => !keep.has(entry))
-      .map(entry => fsp.rm(path.join(dir, entry), { force: true }).catch(() => {}))
+      .map(entry =>
+        fsp.rm(path.join(dir, entry), { force: true }).catch(() => {})
+      )
   );
 }
 
@@ -105,6 +107,7 @@ export function installPreciseWavRoutes(
   {
     tempDir = PRECISE_WAV_DIR,
     convert = runAfconvert,
+    platform = process.platform,
     maxUploadBytes = MAX_UPLOAD_BYTES,
     uploadTimeoutMs = UPLOAD_TIMEOUT_MS,
   } = {}
@@ -115,6 +118,11 @@ export function installPreciseWavRoutes(
   let converting = false;
 
   app.post('/precise-wav/:trackId', async (request, response) => {
+    if (platform !== 'darwin') {
+      // Windows/Linux 没有 afconvert；501 会让渲染端沿用已有的内存解码回退。
+      response.status(501).send({ message: '当前平台不提供原生 WAV 转换' });
+      return;
+    }
     const wavName = preciseWavFileName(request.params.trackId);
     if (!wavName) {
       response.status(400).send({ message: '无效的歌曲 ID' });

@@ -11,25 +11,67 @@ const workflow = readFileSync(
   new URL('../.github/workflows/build.yaml', import.meta.url),
   'utf8'
 );
-const readme = readFileSync(
-  new URL('../README.md', import.meta.url),
-  'utf8'
-);
+const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 );
 
-test('Tauri CI 只构建 Apple Silicon，并保留无签名和签名两条发布路径', () => {
+test('macOS CI 保留无签名和签名两条发布路径', () => {
+  const tauriJob = workflow.slice(
+    workflow.indexOf('  build-tauri-arm64:'),
+    workflow.indexOf('  build-tauri-windows-x64:')
+  );
   expect(workflow).toContain('targets: aarch64-apple-darwin');
   expect(workflow).toContain('run: bun run build:tauri');
   expect(workflow).toContain('run: bun run package:tauri:dmg');
-  expect(workflow).toContain('run: shasum -a 256 -c *.sha256');
+  expect(workflow).toContain('run: shasum -a 256 -c ./*.sha256');
   expect(workflow).toContain('run: bun run verify:tauri:version');
   expect(workflow).toContain('path: dist_tauri/*');
   expect(workflow).toContain('run: bun run build:tauri:release');
   expect(workflow).toContain('run: bun run collect:tauri:release-dmg');
-  expect(workflow).not.toContain('build:mac');
-  expect(workflow).not.toContain('dist_electron');
+  expect(tauriJob).not.toContain('build:mac');
+  expect(tauriJob).not.toContain('dist_electron');
+});
+
+test('Windows CI 只上传仓库自己 ref 的未签名 x64 测试包', () => {
+  const windowsJob = workflow.slice(
+    workflow.indexOf('  build-tauri-windows-x64:'),
+    workflow.indexOf('  build-tauri-linux-x64:')
+  );
+  const releaseJob = workflow.slice(workflow.indexOf('  draft-release:'));
+
+  expect(windowsJob).toContain('runs-on: windows-latest');
+  expect(windowsJob).toContain('permissions:\n      contents: read');
+  expect(windowsJob).toContain('run: bun run build:tauri:windows');
+  expect(windowsJob).toContain(
+    'yesplaymusic-sidecar-x86_64-pc-windows-msvc.exe'
+  );
+  expect(windowsJob).toContain("if: github.event_name != 'pull_request'");
+  expect(windowsJob).toContain('Get-FileHash $_.FullName -Algorithm SHA256');
+  expect(windowsJob).toContain('dist_tauri_windows/SHA256SUMS.txt');
+  expect(windowsJob).toContain('dist_tauri_windows/TESTING-NOTICE.txt');
+  expect(windowsJob).toContain('Do not disable antivirus');
+  expect(windowsJob).toContain('retention-days: 14');
+  expect(releaseJob).not.toContain('YesPlayMusic-windows-x64');
+});
+
+test('Ubuntu CI 构建 AppImage、deb 并验证目标平台 Sidecar', () => {
+  const linuxJob = workflow.slice(
+    workflow.indexOf('  build-tauri-linux-x64:'),
+    workflow.indexOf('  draft-release:')
+  );
+  const releaseJob = workflow.slice(workflow.indexOf('  draft-release:'));
+
+  expect(linuxJob).toContain('runs-on: ubuntu-22.04');
+  expect(linuxJob).toContain('libwebkit2gtk-4.1-dev');
+  expect(linuxJob).toContain('run: bun run build:tauri:linux');
+  expect(linuxJob).toContain(
+    'yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test'
+  );
+  expect(linuxJob).toContain('bundle/appimage/*.AppImage');
+  expect(linuxJob).toContain('bundle/deb/*.deb');
+  expect(linuxJob).toContain('sha256sum -c SHA256SUMS.txt');
+  expect(releaseJob).not.toContain('YesPlayMusic-linux-x64');
 });
 
 test('版本 tag 默认走无 Developer ID 签名路径', () => {
@@ -60,8 +102,9 @@ test('显式开启 Apple 签名后才要求公证和 stapler 验证', () => {
 });
 
 test('缺少 Apple 发版密钥时在构建前立即失败', () => {
-  expect(() => verifyAppleReleaseEnvironment({ APPLE_ID: 'owner@example.com' }))
-    .toThrow('APPLE_CERTIFICATE');
+  expect(() =>
+    verifyAppleReleaseEnvironment({ APPLE_ID: 'owner@example.com' })
+  ).toThrow('APPLE_CERTIFICATE');
   expect(
     verifyAppleReleaseEnvironment({
       APPLE_CERTIFICATE: 'certificate',
@@ -109,7 +152,7 @@ test('DMG 文件名明确标记版本和 Apple Silicon 架构', () => {
   expect(tauriDmgName('0.6.0')).toBe('YesPlayMusic_0.6.0_aarch64.dmg');
 });
 
-test('README 只说明 Apple Silicon 无签名 Tauri 发布方式', () => {
+test('README 区分 macOS 正式发布与 Windows/Linux 实验构建', () => {
   expect(readme).toContain('macOS Tauri 重构版');
   expect(readme).toContain('381.5 MiB');
   expect(readme).toContain('80.8 MiB');
@@ -117,6 +160,10 @@ test('README 只说明 Apple Silicon 无签名 Tauri 发布方式', () => {
   expect(readme).toContain('docs/performance-baseline.md');
   expect(readme).toContain('bun run build:tauri');
   expect(readme).toContain('bun run package:tauri:dmg');
+  expect(readme).toContain('bun run build:tauri:windows');
+  expect(readme).toContain('bun run build:tauri:linux');
+  expect(readme).toContain('NSIS `.exe`');
+  expect(readme).toContain('AppImage');
   expect(readme).not.toContain('Intel 选 `x64`');
   expect(readme).not.toContain('产物在 `dist_electron/`');
 });

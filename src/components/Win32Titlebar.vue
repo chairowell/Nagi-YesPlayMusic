@@ -1,6 +1,10 @@
 <template>
-  <div class="win32-titlebar">
-    <div class="title">{{ title }}</div>
+  <div
+    class="win32-titlebar"
+    data-tauri-drag-region
+    @dblclick="windowMaxRestore"
+  >
+    <div class="title" data-tauri-drag-region>{{ title }}</div>
     <div class="controls">
       <div
         class="button minimize codicon codicon-chrome-minimize"
@@ -27,38 +31,53 @@
 import 'vscode-codicons/dist/codicon.css';
 
 import { mapState } from 'vuex';
-
-const electron =
-  process.env.IS_ELECTRON === true ? window.require('electron') : null;
-const ipcRenderer =
-  process.env.IS_ELECTRON === true ? electron.ipcRenderer : null;
+import { electronRenderer, sendDesktop } from '@/services/desktopTransport';
 
 export default {
   name: 'Win32Titlebar',
   data() {
     return {
       isMaximized: false,
+      stopMaximizeListener: null,
     };
   },
   computed: {
     ...mapState(['title']),
   },
   created() {
-    if (process.env.IS_ELECTRON === true) {
-      ipcRenderer.on('isMaximized', (_, value) => {
-        this.isMaximized = value;
+    this.maximizeListener = (_, value) => {
+      this.isMaximized = value;
+    };
+    if (electronRenderer) {
+      electronRenderer.on('isMaximized', this.maximizeListener);
+    } else if (process.env.IS_TAURI === true) {
+      import('@tauri-apps/api/event').then(async ({ listen }) => {
+        const stop = await listen('desktop://isMaximized', event => {
+          this.isMaximized = event.payload;
+        });
+        if (this.listenerDisposed) stop();
+        else this.stopMaximizeListener = stop;
       });
+    }
+  },
+  beforeUnmount() {
+    this.listenerDisposed = true;
+    if (electronRenderer) {
+      electronRenderer.removeListener('isMaximized', this.maximizeListener);
+    }
+    if (this.stopMaximizeListener) {
+      this.stopMaximizeListener();
     }
   },
   methods: {
     windowMinimize() {
-      ipcRenderer.send('minimize');
+      void sendDesktop('minimize');
     },
     windowMaxRestore() {
-      ipcRenderer.send('maximizeOrUnmaximize');
+      void sendDesktop('maximizeOrUnmaximize');
     },
     windowClose() {
-      ipcRenderer.send('close');
+      void sendDesktop('close');
     },
   },
 };

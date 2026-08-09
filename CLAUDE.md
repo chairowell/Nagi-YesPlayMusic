@@ -1,17 +1,22 @@
 # YesPlayMusic（个人 fork）
 
 高颜值的第三方网易云播放器，本仓库是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic)
-分出来独立维护的私有版本，只针对 macOS 做打磨。
+分出来独立维护的私有版本。Apple Silicon macOS 是正式支持平台；Windows x64 和
+Ubuntu x64 由 CI 提供 Tauri 实验构建。
 
 ## 命令
 
-| 用途 | 命令 |
-| --- | --- |
-| 开发（主进程 + 渲染进程热重载） | `bun run dev` |
-| 出 macOS 安装包 | `bun run build:app` |
-| 只构建渲染进程（浏览器里调 UI） | `bun run build:renderer` |
+| 用途                               | 命令                          |
+| ---------------------------------- | ----------------------------- |
+| Tauri 开发                         | `bun run dev:tauri`           |
+| 按当前系统出 Tauri 安装包          | `bun run build:tauri`         |
+| Windows x64 NSIS 安装包            | `bun run build:tauri:windows` |
+| Ubuntu x64 AppImage + deb          | `bun run build:tauri:linux`   |
+| 旧 Electron 开发（只用于回归对照） | `bun run dev`                 |
+| 只构建渲染进程（浏览器里调 UI）    | `bun run build:renderer`      |
 
-产物在 `dist_electron/mac-arm64/YesPlayMusic.app`，拷进 `/Applications` 覆盖即可。
+Tauri 产物在 `src-tauri/target/<target-triple>/release/bundle/`。macOS 正式发布仍通过
+`bun run package:tauri:dmg` 收集到 `dist_tauri/`。
 
 `bun run dev` 背后是 `electron-vite dev --watch`。**`--watch` 不能省** —— 没有它，
 改主进程代码不会重建，窗口也不会重启，很容易误判成"代码没生效"。
@@ -43,7 +48,7 @@ CI（`.github/workflows/build.yaml`）只验证每次 push 的**最后一个 com
 
 ## 技术栈
 
-Vue 3.5 + Vuex 4 + Vue Router 4 + Vite 7 + electron-vite 5 + Electron 43，包管理用 bun。
+Vue 3.5 + Vuex 4 + Vue Router 4 + Vite 7 + Tauri 2；旧 Electron 43 只保留回归对照，包管理用 bun。
 业务代码保留选项式 API，没有 TypeScript。
 
 原项目用的是 Vue CLI 4（webpack 4），在 node 26 上跑不起来、`electron:serve` 会卡死。
@@ -52,12 +57,15 @@ Vue 3.5 + Vuex 4 + Vue Router 4 + Vite 7 + electron-vite 5 + Electron 43，包�
 
 ## 架构要点
 
-主进程入口 `src/background.js`。它做三件事：在 10754 端口起网易云 API 服务、
-在 27232 端口起一个 Express 服务托管渲染进程产物并把 `/api` 转发到 10754、创建窗口。
+Tauri 主进程入口是 `src-tauri/src/main.rs`，负责窗口、托盘、快捷键、单实例和 Sidecar
+生命周期。`src/sidecar.js` 会编译成各平台独立可执行文件，负责网易云 API、托管渲染
+产物、同源 `/api` 代理和 UNM。正式版页面来自 `http://127.0.0.1:28232`。
 
-**生产模式不走 `app://` 协议**，而是 `loadURL('http://localhost:27232')`。
-dev 模式则加载 `ELECTRON_RENDERER_URL`。dev 的 Vite server 也配了 `/api` 同源代理
-指向 10754 —— 这个不能省，否则 5173 到 10754 属于跨站，登录 cookie 会被
+`src/background.js` 是旧 Electron 主进程，只用于迁移回归对照，不再作为 Windows/Linux
+测试包发布。
+
+**生产模式不走 `app://` 协议**，而是加载 Sidecar 的 loopback HTTP 页面。
+dev 的 Vite server 也配了 `/api` 同源代理指向 12754 —— 这个不能省，否则跨端口属于跨站，登录 cookie 会被
 Chromium 的 SameSite 策略丢掉，表现为头像不刷新、library 空。
 
 迷你播放器做在 `src/views/lyrics.vue` 里：窗口宽 < 620 或高 < 340 自动切成紧凑播放条，
@@ -79,10 +87,9 @@ Chromium 的 SameSite 策略丢掉，表现为头像不刷新、library 空。
 
 ## 已知的坑
 
-1. `bun install` 默认拦截依赖的 postinstall。`postinstall` 已改成
-   `npm_execpath= electron-builder install-app-deps`：bun 把 `npm_execpath` 指向自己，
-   清空它 electron-builder 才会走 npm。修之前每次装包都报错，而且**失败时 bun 不会把
-   新依赖写进 package.json**，看起来像装了其实没装。
+1. `bun install` 默认拦截依赖的 postinstall。`postinstall` 通过跨平台 Node 脚本清空
+   `npm_execpath` 后再调用 electron-builder；不能改回 POSIX 的 `npm_execpath= ...` 前缀，
+   Windows shell 不保证支持。安装失败时 bun 不会把新依赖写进 package.json，看起来像装了其实没装。
 2. `electron` 和 `electron-builder` 必须待在 `devDependencies`，否则 electron-builder
    直接拒绝打包。
 3. `src/ncmModDef.js` 是 CommonJS 写法，必须静态 `import` 并在

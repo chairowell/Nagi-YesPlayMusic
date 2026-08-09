@@ -5358,6 +5358,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 name = "yesplaymusic-tauri"
 version = "0.6.3"
 dependencies = [
+ "getrandom 0.2.17",
  "image",
  "objc2-app-kit",
  "reqwest 0.11.27",
