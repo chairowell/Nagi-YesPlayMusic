@@ -55,9 +55,34 @@ bun scripts/measure-process-tree.mjs \
 
 工具只读取指定 PID 及其后代，不按应用名扫描，也不会启动、聚焦或关闭播放器。
 
+## 正常播放场景实测（2026-08-10，Apple Silicon / macOS 15）
+
+首次按完整口径（含 WKWebView 各进程）测量正常播放场景，并发现、修复了一个
+CPU 回归：
+
+- **修复前**：Tauri 主进程恒定约 99% CPU（`MainEventsCleared` 每轮迭代刷新托盘
+  标题，查询窗口状态唤醒 run loop 形成自持续空转），与负载无关；
+- **修复后**（托盘标题改事件驱动 + 1s 对账线程，commit 64b680c）：播放态主进程
+  6–8%，空闲更低；60 秒进程树采样 CPU mean 8.5% / P95 16.7%。
+
+内存（`footprint` 的 phys_footprint 口径，非 RSS）：
+
+| 进程 | phys_footprint |
+| --- | ---: |
+| Tauri 主进程 | 58 MB |
+| Bun sidecar | 82 MB |
+| WebKit WebContent | 444 MB（观测峰值 1.76 GB） |
+| 合计 | 约 605 MB |
+
+高强度交互（连续切歌、搜索、调窗口）时 WebContent 峰值约 49% CPU、GPU 进程约
+67%，操作结束后均回落。RSS 含大量共享页，不作为对外数字；对外只引用
+phys_footprint 与场景说明。用户缓存（`~/Library/WebKit/com.electron.yesplaymusic`
+等）随使用增长，与安装体积分开陈述。
+
 ## Tauri 验收线
 
 - 隐藏窗口 CPU mean 不高于 2%，且明显低于修复前约 30% 的探索性结果；
+- 播放态主进程 CPU mean 不高于 10%（2026-08-10 实测 6–8%，回归门禁）；
 - 空闲 RSS mean 相比 Electron 至少下降 40%；
 - 正常播放 10 分钟内 RSS 不持续单调上涨；
 - 随机播放、缓存、登录 cookie、托盘歌词不因降内存而回归。
