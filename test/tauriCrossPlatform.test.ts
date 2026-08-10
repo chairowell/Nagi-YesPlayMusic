@@ -180,4 +180,13 @@ describe('Tauri 本机安装包', () => {
     expect(rustMain).toContain('if let Err(error) = create_tray(app)');
     expect(rustMain).not.toContain('create_tray(app)?;');
   });
+
+  test('托盘标题走事件驱动加慢速对账，不挂在事件循环轮询上', () => {
+    // MainEventsCleared 轮询会自唤醒 run loop，曾造成主进程恒定 99% CPU。
+    expect(rustMain).not.toContain('RunEvent::MainEventsCleared');
+    expect(rustMain).toContain('spawn_tray_title_reconciler');
+    expect(rustMain).toMatch(
+      /spawn_tray_title_reconciler[\s\S]*?thread::sleep\(TRAY_TITLE_RECONCILE_INTERVAL\)[\s\S]*?run_on_main_thread/
+    );
+  });
 });

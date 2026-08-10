@@ -522,6 +522,29 @@ fn render_tray_title(_app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+const TRAY_TITLE_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+
+#[cfg(target_os = "macos")]
+fn spawn_tray_title_reconciler(app: &AppHandle) {
+    // Tauri emits no visibility event for Cmd+H or the miniaturize button, so a
+    // slow reconcile pass catches transitions the explicit render calls miss.
+    // A fixed-interval thread cannot re-enter the busy-loop that per-iteration
+    // MainEventsCleared polling caused: each tick wakes the main thread once.
+    let handle = app.clone();
+    thread::spawn(move || loop {
+        thread::sleep(TRAY_TITLE_RECONCILE_INTERVAL);
+        let render_handle = handle.clone();
+        let dispatched = handle.run_on_main_thread(move || {
+            let _ = render_tray_title(&render_handle);
+        });
+        if dispatched.is_err() {
+            // The event loop is gone; the app is shutting down.
+            break;
+        }
+    });
+}
+
 fn decode_tray_cover(bytes: &[u8]) -> Result<TauriImage<'static>, String> {
     decode_tray_image(bytes, 64)
 }
@@ -2396,6 +2419,8 @@ fn main() {
                 if let Err(error) = create_tray(app) {
                     eprintln!("[tauri] tray integration unavailable; continuing: {error}");
                 }
+                #[cfg(target_os = "macos")]
+                spawn_tray_title_reconciler(app.handle());
                 app.state::<StartupWindowState>()
                     .0
                     .store(true, Ordering::Release);
@@ -2440,12 +2465,6 @@ fn main() {
         RunEvent::Reopen { .. } => {
             if let Err(error) = show_main_window(app) {
                 eprintln!("[tauri] failed to reopen the main window: {error}");
-            }
-        }
-        #[cfg(target_os = "macos")]
-        RunEvent::MainEventsCleared => {
-            if let Err(error) = render_tray_title(app) {
-                eprintln!("[tauri] failed to refresh the tray title: {error}");
             }
         }
         _ => {}
