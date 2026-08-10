@@ -2,6 +2,18 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "bundle": {
     "targets": ["appimage", "deb"],
+    "linux": {
+      "appimage": {
+        "files": {
+          "/usr/lib/yesplaymusic/sidecar.payload": "binaries/yesplaymusic-sidecar-linux.payload"
+        }
+      },
+      "deb": {
+        "files": {
+          "/usr/lib/yesplaymusic/sidecar.payload": "binaries/yesplaymusic-sidecar-linux.payload"
+        }
+      }
+    },
     "icon": [
       "../build/icons/32x32.png",
       "../build/icons/128x128.png",

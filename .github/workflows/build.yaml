@@ -386,10 +386,24 @@ jobs:
           PATH="$GITHUB_WORKSPACE/scripts/ci:$PATH" bun run build:tauri:linux:updater
 
       - name: Verify compiled Sidecar and UNM native addon
-        run: src-tauri/binaries/yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test
+        run: |
+          YPM_SIDECAR_SMOKE_CACHE="$(mktemp -d)"
+          XDG_CACHE_HOME="$YPM_SIDECAR_SMOKE_CACHE" src-tauri/binaries/yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test
 
       - name: Smoke packaged Linux AppImage runtime
-        run: dbus-run-session -- xvfb-run -a bun run smoke:tauri:core
+        run: |
+          YPM_APPIMAGE_SMOKE_CACHE="$(mktemp -d)"
+          XDG_CACHE_HOME="$YPM_APPIMAGE_SMOKE_CACHE" dbus-run-session -- xvfb-run -a bun run smoke:tauri:core
+
+      - name: Smoke packaged Linux deb Sidecar
+        run: |
+          YPM_DEB_SMOKE_ROOT="$(mktemp -d)"
+          YPM_DEB_SMOKE_CACHE="$(mktemp -d)"
+          YPM_DEB_PACKAGES=(src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb)
+          test "${#YPM_DEB_PACKAGES[@]}" -eq 1
+          dpkg-deb -x "${YPM_DEB_PACKAGES[0]}" "$YPM_DEB_SMOKE_ROOT"
+          test "$(stat -c '%a' "$YPM_DEB_SMOKE_ROOT/usr/lib/yesplaymusic/sidecar.payload")" = 644
+          XDG_CACHE_HOME="$YPM_DEB_SMOKE_CACHE" "$YPM_DEB_SMOKE_ROOT/usr/bin/yesplaymusic-sidecar" --unm-addon-smoke-test
 
       - name: Collect packages and create SHA-256 checksums
         if: github.event_name != 'pull_request'

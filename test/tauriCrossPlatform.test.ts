@@ -1,8 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   hostTargetTriple,
   sidecarBuildPlan,
+  writeLinuxSidecarBundle,
 } from '../scripts/build-sidecar.mjs';
 import { tauriHostBuildPlan } from '../scripts/build-tauri-host.mjs';
 
@@ -39,6 +43,36 @@ describe('Tauri 跨平台 Sidecar', () => {
     expect(windows.args).toContain('--target=bun-windows-x64-baseline');
     expect(windows.args).toContain('--windows-hide-console');
     expect(linux.args).toContain('--target=bun-linux-x64-baseline');
+    expect(linux.usesPayloadWrapper).toBe(true);
+    expect(linux.compileOutputPath).toEndWith('.raw');
+    expect(linux.payloadPath).toEndWith('yesplaymusic-sidecar-linux.payload');
+  });
+
+  test('Linux Sidecar 以不被 linuxdeploy 改写的 payload 原样封装', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ypm-linux-sidecar-'));
+    const compileOutputPath = path.join(root, 'sidecar.raw');
+    const outputPath = path.join(root, 'yesplaymusic-sidecar');
+    const payloadPath = path.join(root, 'yesplaymusic-sidecar-linux.payload');
+    const original = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0, 1, 2, 3]);
+    try {
+      await writeFile(compileOutputPath, original);
+      const { digest } = writeLinuxSidecarBundle({
+        compileOutputPath,
+        outputPath,
+        payloadPath,
+      });
+      const payload = await readFile(payloadPath);
+      const wrapper = await readFile(outputPath, 'utf8');
+
+      expect(payload.subarray(0, 4).toString()).toBe('YPM1');
+      expect(Array.from(payload.subarray(4))).toEqual(Array.from(original));
+      expect(wrapper).toContain(`sidecar-${digest}`);
+      expect(wrapper).toContain('exec "$cached" "$@"');
+      expect((await stat(outputPath)).mode & 0o111).not.toBe(0);
+      expect((await stat(payloadPath)).mode & 0o444).toBe(0o444);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('本机平台映射到对应 Rust target，不再写死 macOS', () => {
@@ -71,6 +105,13 @@ describe('Tauri 本机安装包', () => {
     expect(windowsConfig.bundle.targets).toEqual(['nsis']);
     expect(windowsConfig.bundle.windows.nsis.installMode).toBe('currentUser');
     expect(linuxConfig.bundle.targets).toEqual(['appimage', 'deb']);
+    expect(linuxConfig.bundle.linux.appimage.files).toEqual({
+      '/usr/lib/yesplaymusic/sidecar.payload':
+        'binaries/yesplaymusic-sidecar-linux.payload',
+    });
+    expect(linuxConfig.bundle.linux.deb.files).toEqual(
+      linuxConfig.bundle.linux.appimage.files
+    );
     expect(packageJson.scripts['build:tauri:windows']).toContain(
       'x86_64-pc-windows-msvc'
     );

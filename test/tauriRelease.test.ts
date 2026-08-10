@@ -115,6 +115,19 @@ test('Ubuntu CI 构建 AppImage、deb 并把 tag updater 交给 release job', ()
   expect(linuxJob).toContain(
     'yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test'
   );
+  expect(linuxJob).toContain('YPM_SIDECAR_SMOKE_CACHE="$(mktemp -d)"');
+  expect(linuxJob).toContain('YPM_APPIMAGE_SMOKE_CACHE="$(mktemp -d)"');
+  expect(linuxJob).toContain(
+    'XDG_CACHE_HOME="$YPM_APPIMAGE_SMOKE_CACHE" dbus-run-session'
+  );
+  expect(linuxJob).toContain('dpkg-deb -x');
+  expect(linuxJob).toContain('YPM_DEB_SMOKE_CACHE="$(mktemp -d)"');
+  expect(linuxJob).toContain(
+    'stat -c \'%a\' "$YPM_DEB_SMOKE_ROOT/usr/lib/yesplaymusic/sidecar.payload"'
+  );
+  expect(linuxJob).toContain(
+    '"$YPM_DEB_SMOKE_ROOT/usr/bin/yesplaymusic-sidecar" --unm-addon-smoke-test'
+  );
   expect(linuxJob).toContain('bundle/appimage/*.AppImage');
   expect(linuxJob).toContain('bundle/deb/*.deb');
   expect(linuxJob).toContain('sha256sum -c SHA256SUMS-linux-x64.txt');

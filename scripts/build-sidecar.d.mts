@@ -21,7 +21,16 @@ export interface SidecarBuildPlan {
   targetTriple: SidecarTargetTriple;
   outputName: string;
   outputPath: string;
+  compileOutputPath: string;
+  payloadPath: string | null;
+  usesPayloadWrapper: boolean;
   args: string[];
+}
+
+export interface LinuxSidecarBundleOptions {
+  compileOutputPath: string;
+  outputPath: string;
+  payloadPath: string;
 }
 
 export const SIDECAR_TARGETS: Readonly<
@@ -35,5 +44,9 @@ export function hostTargetTriple(
 export function sidecarBuildPlan(
   options?: SidecarBuildOptions
 ): SidecarBuildPlan;
+
+export function writeLinuxSidecarBundle(options: LinuxSidecarBundleOptions): {
+  digest: string;
+};
 
 export function buildSidecar(options?: SidecarBuildOptions): SidecarBuildPlan;
