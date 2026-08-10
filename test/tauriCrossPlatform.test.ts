@@ -68,8 +68,10 @@ describe('Tauri 跨平台 Sidecar', () => {
       expect(Array.from(payload.subarray(4))).toEqual(Array.from(original));
       expect(wrapper).toContain(`sidecar-${digest}`);
       expect(wrapper).toContain('exec "$cached" "$@"');
-      expect((await stat(outputPath)).mode & 0o111).not.toBe(0);
-      expect((await stat(payloadPath)).mode & 0o444).toBe(0o444);
+      if (process.platform !== 'win32') {
+        expect((await stat(outputPath)).mode & 0o111).not.toBe(0);
+        expect((await stat(payloadPath)).mode & 0o444).toBe(0o444);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
