@@ -16,6 +16,10 @@ const linuxdeployLdd = readFileSync(
   new URL('../scripts/ci/ldd', import.meta.url),
   'utf8'
 );
+const tauriSmoke = readFileSync(
+  new URL('../scripts/smoke-tauri-local.mjs', import.meta.url),
+  'utf8'
+);
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 );
@@ -95,6 +99,7 @@ test('Ubuntu CI 构建 AppImage、deb 并把 tag updater 交给 release job', ()
   const releaseJob = workflow.slice(workflow.indexOf('  draft-release:'));
 
   expect(linuxJob).toContain('runs-on: ubuntu-22.04');
+  expect(linuxJob).toContain('dbus \\');
   expect(linuxJob).toContain('libwebkit2gtk-4.1-dev');
   expect(linuxJob).toContain('bun run build:tauri:linux');
   expect(linuxJob).toContain('cache-on-failure: true');
@@ -152,6 +157,7 @@ test('三平台 CI 都在打包后启动 Tauri 主程序做 core smoke', () => {
   expect(jobs[2]).toContain(
     'dbus-run-session -- xvfb-run -a bun run smoke:tauri:core'
   );
+  expect(tauriSmoke).toContain('waitForReady(timeoutMs = 30_000)');
 });
 
 test('README 与 Tauri 打包配置一致要求 macOS 14', () => {

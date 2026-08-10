@@ -81,7 +81,7 @@ function forwardOutput(stream, target, onText = () => {}) {
   })();
 }
 
-async function waitForReady(timeoutMs = 15_000) {
+async function waitForReady(timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
