@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseProcessTable } from './lib/processMetrics.mjs';
@@ -7,16 +8,53 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
 );
-const executable = path.join(
-  projectRoot,
-  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app/Contents/MacOS/yesplaymusic-tauri'
-);
 const baseUrl = 'http://127.0.0.1:28232';
 const legacyPlayerUrl = 'http://127.0.0.1:27232/player';
 const sleep = milliseconds =>
   new Promise(resolve => setTimeout(resolve, milliseconds));
 const includeWebview = !process.argv.includes('--core-only');
 let activeTauriProcess = null;
+
+function uniqueArtifact(directory, suffix) {
+  const matches = readdirSync(directory)
+    .filter(name => name.endsWith(suffix))
+    .sort();
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected one ${suffix} artifact in ${directory}, found ${matches.length}`
+    );
+  }
+  return path.join(directory, matches[0]);
+}
+
+export function resolveTauriSmokeExecutable({
+  platform = process.platform,
+  arch = process.arch,
+  root = projectRoot,
+} = {}) {
+  if (platform === 'darwin' && arch === 'arm64') {
+    return path.join(
+      root,
+      'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app/Contents/MacOS/yesplaymusic-tauri'
+    );
+  }
+  if (platform === 'win32' && arch === 'x64') {
+    return path.join(
+      root,
+      'src-tauri/target/x86_64-pc-windows-msvc/release/yesplaymusic-tauri.exe'
+    );
+  }
+  if (platform === 'linux' && arch === 'x64') {
+    return uniqueArtifact(
+      path.join(
+        root,
+        'src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage'
+      ),
+      '.AppImage'
+    );
+  }
+  throw new Error(`Unsupported Tauri smoke host: ${platform}-${arch}`);
+}
 
 function readProcessTable() {
   const result = Bun.spawnSync([
@@ -43,7 +81,7 @@ function forwardOutput(stream, target, onText = () => {}) {
   })();
 }
 
-async function waitForReady(timeoutMs = 8_000) {
+async function waitForReady(timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -54,7 +92,7 @@ async function waitForReady(timeoutMs = 8_000) {
     }
     await sleep(100);
   }
-  throw new Error('Tauri sidecar 未在 8 秒内进入 ready');
+  throw new Error(`Tauri sidecar 未在 ${timeoutMs / 1_000} 秒内进入 ready`);
 }
 
 async function assertUrlStopped(url, label) {
@@ -70,7 +108,13 @@ async function assertUrlStopped(url, label) {
 }
 
 async function main() {
-  const beforePids = new Set(readProcessTable().map(process => process.pid));
+  if (includeWebview && process.platform !== 'darwin') {
+    throw new Error('隐藏 WebView smoke 目前只支持 macOS');
+  }
+  const executable = resolveTauriSmokeExecutable();
+  const beforePids = includeWebview
+    ? new Set(readProcessTable().map(process => process.pid))
+    : new Set();
   let resolveWebviewReady;
   let observedOutput = '';
   const webviewReady = new Promise(resolve => {
@@ -80,6 +124,10 @@ async function main() {
     [executable, includeWebview ? '--webview-smoke-test' : '--smoke-test'],
     {
       cwd: projectRoot,
+      env:
+        process.platform === 'linux'
+          ? { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1' }
+          : process.env,
       stdout: 'pipe',
       stderr: 'pipe',
     }
@@ -141,32 +189,37 @@ async function main() {
     }
   }
 
-  const metricsArgs = [
-    'bun',
-    'scripts/measure-process-tree.mjs',
-    '--pid',
-    String(tauriProcess.pid),
-    '--duration',
-    includeWebview ? '8' : '5',
-    '--interval',
-    '1',
-    '--label',
-    includeWebview ? 'tauri-hidden-webview-smoke' : 'tauri-core-smoke',
-  ];
-  if (webkitPids.length) {
-    metricsArgs.push('--include-pids', webkitPids.join(','));
+  let metricsOutput = '';
+  const supportsProcessMetrics = process.platform !== 'win32';
+  if (supportsProcessMetrics) {
+    const metricsArgs = [
+      'bun',
+      'scripts/measure-process-tree.mjs',
+      '--pid',
+      String(tauriProcess.pid),
+      '--duration',
+      includeWebview ? '8' : '5',
+      '--interval',
+      '1',
+      '--label',
+      includeWebview ? 'tauri-hidden-webview-smoke' : 'tauri-core-smoke',
+    ];
+    if (webkitPids.length) {
+      metricsArgs.push('--include-pids', webkitPids.join(','));
+    }
+    const metricsProcess = Bun.spawn(metricsArgs, {
+      cwd: projectRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [output, metricsError, metricsExitCode] = await Promise.all([
+      new Response(metricsProcess.stdout).text(),
+      new Response(metricsProcess.stderr).text(),
+      metricsProcess.exited,
+    ]);
+    if (metricsExitCode !== 0) throw new Error(metricsError.trim());
+    metricsOutput = output;
   }
-  const metricsProcess = Bun.spawn(metricsArgs, {
-    cwd: projectRoot,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const [metricsOutput, metricsError, metricsExitCode] = await Promise.all([
-    new Response(metricsProcess.stdout).text(),
-    new Response(metricsProcess.stderr).text(),
-    metricsProcess.exited,
-  ]);
-  if (metricsExitCode !== 0) throw new Error(metricsError.trim());
 
   const exitCode = await Promise.race([
     tauriProcess.exited,
@@ -184,18 +237,20 @@ async function main() {
     assertUrlStopped(baseUrl, '28232 UI 端口'),
     assertUrlStopped(legacyPlayerUrl, '27232 兼容 API 端口'),
   ]);
-  console.log(metricsOutput.trim());
+  if (metricsOutput) console.log(metricsOutput.trim());
   console.log(
-    `[tauri-smoke] UI、API、${
-      includeWebview ? '隐藏 WebView、' : ''
-    }内存采样和进程回收全部通过`
+    `[tauri-smoke] UI、API、${includeWebview ? '隐藏 WebView、' : ''}${
+      supportsProcessMetrics ? '内存采样和' : ''
+    }进程回收全部通过`
   );
 }
 
-main().catch(error => {
-  if (activeTauriProcess?.exitCode === null) {
-    activeTauriProcess.kill();
-  }
-  console.error(`[tauri-smoke] ${error.message}`);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch(error => {
+    if (activeTauriProcess?.exitCode === null) {
+      activeTauriProcess.kill();
+    }
+    console.error(`[tauri-smoke] ${error.message}`);
+    process.exit(1);
+  });
+}

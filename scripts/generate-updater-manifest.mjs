@@ -4,7 +4,8 @@ import path from 'node:path';
 export const UPDATER_MANIFEST_SUFFIXES = Object.freeze({
   'darwin-aarch64': '.app.tar.gz',
   'windows-x86_64': '.exe',
-  'linux-x86_64': '.AppImage',
+  'linux-x86_64-appimage': '.AppImage',
+  'linux-x86_64-deb': '.deb',
 });
 
 async function walk(directory) {

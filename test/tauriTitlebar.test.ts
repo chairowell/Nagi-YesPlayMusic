@@ -38,6 +38,16 @@ test('Windows 自定义标题栏通过统一桌面桥控制 Tauri 窗口', () =>
   expect(win32Titlebar).toContain("sendDesktop('close')");
   expect(main).toContain('"maximizeOrUnmaximize" =>');
   expect(main).toContain('desktop://isMaximized');
+  expect(main).toMatch(
+    /WindowEvent::Resized\(_\)[\s\S]*emit_maximized_state\(app, &window_for_events\)/
+  );
+});
+
+test('repeat 和 shuffle 菜单保留旧版原生快捷键', () => {
+  expect(main).toMatch(/"app\.repeat",\s*"Repeat",\s*true,\s*Some\("Alt\+R"\)/);
+  expect(main).toMatch(
+    /"app\.shuffle",\s*"Shuffle",\s*true,\s*Some\("Alt\+S"\)/
+  );
 });
 
 test('顶栏里铺满整行的容器都要自己带拖拽标记', () => {

@@ -258,7 +258,7 @@ async fn run_media_service(
 ) {
     let player = match Player::builder("yesplaymusic")
         .identity("YesPlayMusic")
-        .desktop_entry("yesplaymusic")
+        .desktop_entry("YesPlayMusic")
         .can_quit(true)
         .can_go_next(true)
         .can_go_previous(true)

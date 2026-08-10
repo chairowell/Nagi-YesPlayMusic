@@ -88,7 +88,7 @@ import {
 import { isMiniWindowSize } from '@/utils/miniWindow';
 import {
   isEditableShortcutTarget,
-  resolveLocalShortcutAction,
+  resolveRuntimeShortcutAction,
   runLocalShortcutAction,
 } from '@/services/localShortcuts';
 import { checkForAppUpdateInBackground } from '@/services/appUpdater';
@@ -310,10 +310,11 @@ export default defineComponent({
         return;
       }
       if (isEditableShortcutTarget(e.target)) return;
-      const action = resolveLocalShortcutAction(
+      const action = resolveRuntimeShortcutAction(
         this.settings.shortcuts,
         e,
-        isMac
+        isMac,
+        this.isDesktop
       );
       if (!action) return;
 

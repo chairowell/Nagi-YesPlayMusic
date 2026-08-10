@@ -122,19 +122,19 @@
         </div>
         <div class="right">
           <select v-model="musicQuality">
-            <option value="128000">
+            <option :value="128000">
               {{ $t('settings.musicQuality.low') }} - 128Kbps
             </option>
-            <option value="192000">
+            <option :value="192000">
               {{ $t('settings.musicQuality.medium') }} - 192Kbps
             </option>
-            <option value="320000">
+            <option :value="320000">
               {{ $t('settings.musicQuality.high') }} - 320Kbps
             </option>
             <option value="flac">
               {{ $t('settings.musicQuality.lossless') }} - FLAC
             </option>
-            <option value="999000">Hi-Res</option>
+            <option :value="999000">Hi-Res</option>
           </select>
         </div>
       </div>
@@ -268,16 +268,16 @@
         </div>
         <div class="right">
           <select v-model="lyricFontSize">
-            <option value="16">
+            <option :value="16">
               {{ $t('settings.lyricFontSize.small') }} - 16px
             </option>
-            <option value="22">
+            <option :value="22">
               {{ $t('settings.lyricFontSize.medium') }} - 22px
             </option>
-            <option value="28">
+            <option :value="28">
               {{ $t('settings.lyricFontSize.large') }} - 28px
             </option>
-            <option value="36">
+            <option :value="36">
               {{ $t('settings.lyricFontSize.xlarge') }} - 36px
             </option>
           </select>
@@ -870,7 +870,12 @@ import { relaunchDesktop, sendDesktop } from '@/services/desktopTransport';
 import { isDesktopRuntime } from '@/utils/runtime';
 import { getRecordedShortcutKeyIdentity } from '@/utils/shortcuts';
 import type { RecordedShortcutKey } from '@/utils/shortcuts';
-import { decodeLastfmState, readStoredJson } from '@/utils/persistedState';
+import {
+  decodeLastfmState,
+  normalizeLyricFontSize,
+  normalizeMusicQuality,
+  readStoredJson,
+} from '@/utils/persistedState';
 import type { SettingsState } from '@/types/persistence';
 import {
   checkForAppUpdate,
@@ -1105,9 +1110,13 @@ export default defineComponent({
       get() {
         return this.settings.musicQuality ?? 320000;
       },
-      set(value: SettingsState['musicQuality']) {
-        if (value === this.settings.musicQuality) return;
-        this.changeMusicQuality(value);
+      set(value: unknown) {
+        const normalized = normalizeMusicQuality(
+          value,
+          this.settings.musicQuality
+        );
+        if (normalized === this.settings.musicQuality) return;
+        this.changeMusicQuality(normalized);
         this.clearCache();
       },
     },
@@ -1116,8 +1125,10 @@ export default defineComponent({
         if (this.settings.lyricFontSize === undefined) return 28;
         return this.settings.lyricFontSize;
       },
-      set(value: SettingsState['lyricFontSize']) {
-        this.changeLyricFontSize(value);
+      set(value: unknown) {
+        this.changeLyricFontSize(
+          normalizeLyricFontSize(value, this.settings.lyricFontSize)
+        );
       },
     },
     outputDevice: {

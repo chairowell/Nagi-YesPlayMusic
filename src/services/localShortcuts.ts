@@ -198,6 +198,15 @@ export function resolveLocalShortcutAction(
   return findLocalShortcutAction(shortcuts, event, isMac);
 }
 
+export function resolveRuntimeShortcutAction(
+  shortcuts: readonly Shortcut[],
+  event: KeyboardShortcutEvent,
+  isMac: boolean,
+  isDesktop: boolean
+): LocalShortcutAction | null {
+  return resolveLocalShortcutAction(isDesktop ? shortcuts : [], event, isMac);
+}
+
 export function runLocalShortcutAction(
   action: LocalShortcutAction,
   target: LocalShortcutTarget

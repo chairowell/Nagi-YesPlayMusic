@@ -19,7 +19,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
     },
     thread,
@@ -27,17 +27,18 @@ use std::{
 };
 
 use desktop_preferences::{
-    close_decision, load_webview_proxy, parse_close_choice, parse_desktop_preferences,
-    parse_player_state_from_media_state, remove_webview_proxy, save_webview_proxy, tray_icon_asset,
-    tray_menu_text, CloseAppOption, CloseChoiceAction, CloseDecision, DesktopPreferences,
-    PlayerStatePayload, TrayIconTheme,
+    close_decision, load_webview_proxy, migrate_legacy_webview_proxy, parse_close_choice,
+    parse_desktop_preferences, parse_player_state_from_media_state, remove_webview_proxy,
+    save_webview_proxy, tray_icon_asset, tray_menu_text, CloseAppOption, CloseChoiceAction,
+    CloseDecision, DesktopPreferences, PlayerStatePayload, TrayIconTheme,
 };
 use discord_presence::{DiscordPresenceHandle, DiscordPresencePayload};
 #[cfg(target_os = "linux")]
 use linux_media::{LinuxMedia, MediaControl, MediaMetadata, MediaState, RepeatMode};
 use window_preferences::{
-    load as load_window_preferences, load_legacy_position, read_legacy_electron_config,
+    load as load_window_preferences, load_legacy_preferences, read_legacy_electron_config,
     save as save_window_preferences, with_legacy_fallback, WindowPosition, WindowPreferences,
+    WindowSize,
 };
 
 use tauri::{
@@ -72,15 +73,46 @@ fn updater_public_key() -> Option<&'static str> {
     option_env!("TAURI_UPDATER_PUBKEY").filter(|key| !key.trim().is_empty())
 }
 
+fn updater_target_for(
+    os: &str,
+    arch: &str,
+    bundle_type: Option<tauri::utils::config::BundleType>,
+) -> &'static str {
+    use tauri::utils::config::BundleType;
+
+    match (os, arch, bundle_type) {
+        ("macos", "aarch64", _) => "darwin-aarch64",
+        ("windows", "x86_64", _) => "windows-x86_64",
+        ("linux", "x86_64", Some(BundleType::AppImage)) => "linux-x86_64-appimage",
+        ("linux", "x86_64", Some(BundleType::Deb)) => "linux-x86_64-deb",
+        _ => "unsupported",
+    }
+}
+
 fn updater_target() -> &'static str {
-    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "darwin-aarch64"
-    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "windows-x86_64"
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        "linux-x86_64"
-    } else {
-        "unsupported"
+    updater_target_for(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        tauri::utils::platform::bundle_type(),
+    )
+}
+
+#[cfg(test)]
+mod updater_target_tests {
+    use super::updater_target_for;
+    use tauri::utils::config::BundleType;
+
+    #[test]
+    fn linux_bundle_types_use_distinct_manifest_targets() {
+        assert_eq!(
+            updater_target_for("linux", "x86_64", Some(BundleType::AppImage)),
+            "linux-x86_64-appimage"
+        );
+        assert_eq!(
+            updater_target_for("linux", "x86_64", Some(BundleType::Deb)),
+            "linux-x86_64-deb"
+        );
+        assert_eq!(updater_target_for("linux", "x86_64", None), "unsupported");
     }
 }
 
@@ -148,8 +180,8 @@ fn create_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 None::<&str>,
             )?,
             &MenuItem::with_id(app, "app.like", "Like", true, None::<&str>)?,
-            &MenuItem::with_id(app, "app.repeat", "Repeat", true, None::<&str>)?,
-            &MenuItem::with_id(app, "app.shuffle", "Shuffle", true, None::<&str>)?,
+            &MenuItem::with_id(app, "app.repeat", "Repeat", true, Some("Alt+R"))?,
+            &MenuItem::with_id(app, "app.shuffle", "Shuffle", true, Some("Alt+S"))?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(
                 app,
@@ -286,7 +318,39 @@ fn create_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )
 }
 
-struct SidecarState(Mutex<Option<CommandChild>>);
+struct SidecarState {
+    child: Mutex<Option<CommandChild>>,
+    shutdown_requested: AtomicBool,
+    restart_attempts: AtomicUsize,
+    replacement_ready: AtomicBool,
+    permanently_unavailable: AtomicBool,
+}
+
+#[derive(Clone)]
+struct SidecarLaunchConfig {
+    health_token: String,
+    upstream_proxy: Option<String>,
+    ready_port: u16,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SidecarExitAction {
+    Stop,
+    Restart(Duration),
+    NotifyFailure,
+}
+
+fn sidecar_exit_action(shutdown_requested: bool, completed_restarts: usize) -> SidecarExitAction {
+    if shutdown_requested {
+        return SidecarExitAction::Stop;
+    }
+    match completed_restarts {
+        0 => SidecarExitAction::Restart(Duration::from_millis(500)),
+        1 => SidecarExitAction::Restart(Duration::from_secs(1)),
+        2 => SidecarExitAction::Restart(Duration::from_secs(2)),
+        _ => SidecarExitAction::NotifyFailure,
+    }
+}
 
 struct DesktopPreferencesState(Mutex<DesktopPreferences>);
 
@@ -1252,10 +1316,10 @@ fn load_initial_window_preferences(app: &AppHandle) -> WindowPreferences {
     match load_window_preferences(app) {
         Ok(Some(preferences)) => preferences,
         Ok(None) => {
-            let legacy = match load_legacy_position(app) {
-                Ok(position) => position,
+            let legacy = match load_legacy_preferences(app) {
+                Ok(preferences) => preferences,
                 Err(error) => {
-                    eprintln!("[tauri] ignored an invalid legacy window position: {error}");
+                    eprintln!("[tauri] ignored invalid legacy window preferences: {error}");
                     None
                 }
             };
@@ -1622,6 +1686,34 @@ fn wait_for_sidecar(port: u16, expected_token: &str, timeout: Duration) -> Resul
     ))
 }
 
+fn wait_for_supervised_sidecar(
+    port: u16,
+    initial_token: &str,
+    replacement_ready: &AtomicBool,
+    permanently_unavailable: &AtomicBool,
+    timeout: Duration,
+) -> Result<(), String> {
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let deadline = Instant::now() + timeout;
+
+    while Instant::now() < deadline {
+        if replacement_ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if permanently_unavailable.load(Ordering::Acquire) {
+            return Err("YesPlayMusic sidecar exhausted its restart budget".into());
+        }
+        if sidecar_identity_matches(address, initial_token) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    Err(format!(
+        "等待 YesPlayMusic sidecar 受监督启动超时（端口 {port}）"
+    ))
+}
+
 fn generate_sidecar_health_token() -> Result<String, Box<dyn std::error::Error>> {
     let mut bytes = [0_u8; 32];
     getrandom::getrandom(&mut bytes)
@@ -1636,10 +1728,10 @@ fn generate_sidecar_health_token() -> Result<String, Box<dyn std::error::Error>>
 }
 
 fn start_sidecar(
-    app: &tauri::App,
+    app: &AppHandle,
     health_token: &str,
-    upstream_proxy: Option<&tauri::Url>,
-) -> Result<CommandChild, Box<dyn std::error::Error>> {
+    upstream_proxy: Option<&str>,
+) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
     #[cfg(debug_assertions)]
     let command = {
         let mut args = vec![
@@ -1666,7 +1758,11 @@ fn start_sidecar(
 
     #[cfg(not(debug_assertions))]
     let command = {
-        let renderer_dir = app.path().resource_dir()?.join("renderer");
+        let renderer_dir = app
+            .path()
+            .resource_dir()
+            .map_err(|error| error.to_string())?
+            .join("renderer");
         let mut args = vec![
             "--api-port".to_string(),
             API_PORT.to_string(),
@@ -1685,16 +1781,92 @@ fn start_sidecar(
                 WEBVIEW_PROXY_RELAY_PORT.to_string(),
             ]);
         }
-        app.shell().sidecar("yesplaymusic-sidecar")?.args(args)
+        app.shell()
+            .sidecar("yesplaymusic-sidecar")
+            .map_err(|error| error.to_string())?
+            .args(args)
     };
 
-    let (mut events, mut child) = command.spawn()?;
+    let (events, mut child) = command.spawn().map_err(|error| error.to_string())?;
     // An anonymous stdin pipe keeps the token out of process listings.
     if let Err(error) = child.write(format!("{health_token}\n").as_bytes()) {
         let _ = child.kill();
-        return Err(error.into());
+        return Err(error.to_string());
     }
+
+    Ok((events, child))
+}
+
+fn stop_sidecar(app: &AppHandle) {
+    let Some(state) = app.try_state::<SidecarState>() else {
+        return;
+    };
+    let child = state.child.lock().ok().and_then(|mut child| child.take());
+    if let Some(child) = child {
+        let _ = child.kill();
+    }
+}
+
+fn stop_sidecar_if_pid(app: &AppHandle, expected_pid: u32) {
+    let Some(state) = app.try_state::<SidecarState>() else {
+        return;
+    };
+    let child = state.child.lock().ok().and_then(|mut child| {
+        if child
+            .as_ref()
+            .is_some_and(|current| current.pid() == expected_pid)
+        {
+            child.take()
+        } else {
+            None
+        }
+    });
+    if let Some(child) = child {
+        let _ = child.kill();
+    }
+}
+
+fn install_sidecar_process(
+    app: &AppHandle,
+    child: CommandChild,
+    events: tauri::async_runtime::Receiver<CommandEvent>,
+    config: SidecarLaunchConfig,
+) -> bool {
+    let state = app.state::<SidecarState>();
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        let _ = child.kill();
+        return false;
+    }
+    match state.child.lock() {
+        Ok(mut current) => {
+            if current.is_some() {
+                eprintln!("[sidecar] refused to replace a running process");
+                let _ = child.kill();
+                return false;
+            }
+            *current = Some(child);
+        }
+        Err(error) => {
+            eprintln!("[sidecar] failed to store the process handle: {error}");
+            let _ = child.kill();
+            return false;
+        }
+    }
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        stop_sidecar(app);
+        return false;
+    }
+    monitor_sidecar_events(app.clone(), events, config);
+    true
+}
+
+fn monitor_sidecar_events(
+    app: AppHandle,
+    mut events: tauri::async_runtime::Receiver<CommandEvent>,
+    config: SidecarLaunchConfig,
+) {
     tauri::async_runtime::spawn(async move {
+        let mut received_termination = false;
         while let Some(event) = events.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
@@ -1705,13 +1877,149 @@ fn start_sidecar(
                 }
                 CommandEvent::Terminated(status) => {
                     println!("[sidecar] exited: {:?}", status.code);
+                    received_termination = true;
+                    break;
                 }
                 _ => {}
             }
         }
-    });
 
-    Ok(child)
+        let child = app
+            .state::<SidecarState>()
+            .child
+            .lock()
+            .ok()
+            .and_then(|mut child| child.take());
+        if !received_termination {
+            if let Some(child) = child {
+                let _ = child.kill();
+            }
+            eprintln!("[sidecar] event stream closed before termination");
+        }
+        handle_sidecar_exit(app, config);
+    });
+}
+
+fn handle_sidecar_exit(app: AppHandle, config: SidecarLaunchConfig) {
+    let state = app.state::<SidecarState>();
+    state.replacement_ready.store(false, Ordering::Release);
+    let shutdown_requested = state.shutdown_requested.load(Ordering::Acquire);
+    let completed_restarts = state.restart_attempts.load(Ordering::Acquire);
+    match sidecar_exit_action(shutdown_requested, completed_restarts) {
+        SidecarExitAction::Stop => {}
+        SidecarExitAction::NotifyFailure => {
+            state.permanently_unavailable.store(true, Ordering::Release);
+            let message = "后台服务已停止，自动重启失败。请重启应用。";
+            eprintln!("[sidecar] {message}");
+            if let Err(error) = show_main_window(&app) {
+                eprintln!("[sidecar] failed to show the unavailable service: {error}");
+            }
+            if let Err(error) = app.emit("desktop://sidecarUnavailable", message) {
+                eprintln!("[sidecar] failed to report the unavailable service: {error}");
+            }
+        }
+        SidecarExitAction::Restart(delay) => {
+            state.restart_attempts.fetch_add(1, Ordering::AcqRel);
+            tauri::async_runtime::spawn(async move {
+                let _ = tauri::async_runtime::spawn_blocking(move || thread::sleep(delay)).await;
+                if app
+                    .state::<SidecarState>()
+                    .shutdown_requested
+                    .load(Ordering::Acquire)
+                {
+                    return;
+                }
+
+                let mut restarted_config = config.clone();
+                restarted_config.health_token = match generate_sidecar_health_token() {
+                    Ok(token) => token,
+                    Err(error) => {
+                        eprintln!("[sidecar] restart token generation failed: {error}");
+                        handle_sidecar_exit(app, config);
+                        return;
+                    }
+                };
+                let (events, child) = match start_sidecar(
+                    &app,
+                    &restarted_config.health_token,
+                    restarted_config.upstream_proxy.as_deref(),
+                ) {
+                    Ok(process) => process,
+                    Err(error) => {
+                        eprintln!("[sidecar] restart failed to spawn: {error}");
+                        handle_sidecar_exit(app, config);
+                        return;
+                    }
+                };
+                let child_pid = child.pid();
+                if !install_sidecar_process(&app, child, events, restarted_config.clone()) {
+                    return;
+                }
+
+                let ready_port = restarted_config.ready_port;
+                let health_token = restarted_config.health_token.clone();
+                let health = tauri::async_runtime::spawn_blocking(move || {
+                    wait_for_sidecar(ready_port, &health_token, Duration::from_secs(15))
+                })
+                .await;
+                match health {
+                    Ok(Ok(())) => {
+                        let state = app.state::<SidecarState>();
+                        state.replacement_ready.store(true, Ordering::Release);
+                        println!("[sidecar] restart passed the health check");
+                        schedule_stable_restart_budget_reset(app.clone(), child_pid);
+                    }
+                    Ok(Err(error)) => {
+                        eprintln!("[sidecar] restarted process is unhealthy: {error}");
+                        stop_sidecar_if_pid(&app, child_pid);
+                    }
+                    Err(error) => {
+                        eprintln!("[sidecar] restart health task failed: {error}");
+                        stop_sidecar_if_pid(&app, child_pid);
+                    }
+                }
+            });
+        }
+    }
+}
+
+fn should_reset_restart_budget(ready: bool, current_pid: Option<u32>, expected_pid: u32) -> bool {
+    ready && current_pid == Some(expected_pid)
+}
+
+fn schedule_stable_restart_budget_reset(app: AppHandle, expected_pid: u32) {
+    tauri::async_runtime::spawn(async move {
+        let _ =
+            tauri::async_runtime::spawn_blocking(|| thread::sleep(Duration::from_secs(30))).await;
+        let state = app.state::<SidecarState>();
+        if state.shutdown_requested.load(Ordering::Acquire) {
+            return;
+        }
+        let current_pid = state
+            .child
+            .lock()
+            .ok()
+            .and_then(|child| child.as_ref().map(CommandChild::pid));
+        if should_reset_restart_budget(
+            state.replacement_ready.load(Ordering::Acquire),
+            current_pid,
+            expected_pid,
+        ) {
+            state.restart_attempts.store(0, Ordering::Release);
+        }
+    });
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn emit_maximized_state(app: &AppHandle, window: &WebviewWindow) {
+    match window.is_maximized() {
+        Ok(maximized) => {
+            if let Err(error) = app.emit("desktop://isMaximized", maximized) {
+                eprintln!("[tauri] failed to sync the maximized state: {error}");
+            }
+        }
+        Err(error) => eprintln!("[tauri] failed to read the maximized state: {error}"),
+    }
 }
 
 fn create_main_window(
@@ -1723,10 +2031,20 @@ fn create_main_window(
     } else {
         RELEASE_WEB_PORT
     };
+    let preferences = app
+        .state::<WindowPreferencesState>()
+        .preferences
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    let size = preferences.size.unwrap_or(WindowSize {
+        width: 1_440,
+        height: 840,
+    });
     let url = format!("http://127.0.0.1:{port}").parse()?;
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
         .title("YesPlayMusic")
-        .inner_size(1_440.0, 840.0)
+        .inner_size(f64::from(size.width), f64::from(size.height))
         .min_inner_size(300.0, 48.0)
         .visible(false);
     if proxy_relay_enabled {
@@ -1746,12 +2064,6 @@ fn create_main_window(
             }
         })
         .build()?;
-    let preferences = app
-        .state::<WindowPreferencesState>()
-        .preferences
-        .lock()
-        .map_err(|error| error.to_string())?
-        .clone();
     if let Some(position) = preferences.position {
         window.set_position(PhysicalPosition::new(position.x, position.y))?;
     }
@@ -1763,6 +2075,10 @@ fn create_main_window(
     window.on_window_event(move |event| {
         let app = window_for_events.app_handle();
         match event {
+            WindowEvent::Resized(_) => {
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
+                emit_maximized_state(app, &window_for_events);
+            }
             WindowEvent::Moved(position) => {
                 let normal = !window_for_events.is_minimized().unwrap_or(true)
                     && !window_for_events.is_maximized().unwrap_or(true)
@@ -1910,6 +2226,15 @@ fn main() {
                         .ok();
                 app.manage(LinuxMediaState(media));
             }
+            match read_legacy_electron_config(app.handle()) {
+                Ok(Some(config)) => {
+                    if let Err(error) = migrate_legacy_webview_proxy(app.handle(), &config) {
+                        eprintln!("[tauri] ignored an invalid legacy proxy: {error}");
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("[tauri] could not read the legacy proxy: {error}"),
+            }
             let upstream_proxy = match load_webview_proxy(app.handle()) {
                 Ok(proxy) => proxy,
                 Err(error) => {
@@ -1919,15 +2244,46 @@ fn main() {
             };
             let proxy_relay_enabled = upstream_proxy.is_some();
             let health_token = generate_sidecar_health_token()?;
-            let child = start_sidecar(app, &health_token, upstream_proxy.as_ref())?;
-            app.manage(SidecarState(Mutex::new(Some(child))));
-
             let ready_port = if cfg!(debug_assertions) {
                 API_PORT
             } else {
                 RELEASE_WEB_PORT
             };
-            wait_for_sidecar(ready_port, &health_token, Duration::from_secs(15))?;
+            let sidecar_config = SidecarLaunchConfig {
+                health_token,
+                upstream_proxy: upstream_proxy.map(|proxy| proxy.to_string()),
+                ready_port,
+            };
+            app.manage(SidecarState {
+                child: Mutex::new(None),
+                shutdown_requested: AtomicBool::new(false),
+                restart_attempts: AtomicUsize::new(0),
+                replacement_ready: AtomicBool::new(false),
+                permanently_unavailable: AtomicBool::new(false),
+            });
+            let (events, child) = start_sidecar(
+                app.handle(),
+                &sidecar_config.health_token,
+                sidecar_config.upstream_proxy.as_deref(),
+            )
+            .map_err(std::io::Error::other)?;
+            if !install_sidecar_process(app.handle(), child, events, sidecar_config.clone()) {
+                return Err(std::io::Error::other("无法管理 Sidecar 进程").into());
+            }
+            let sidecar_state = app.state::<SidecarState>();
+            if let Err(error) = wait_for_supervised_sidecar(
+                ready_port,
+                &sidecar_config.health_token,
+                &sidecar_state.replacement_ready,
+                &sidecar_state.permanently_unavailable,
+                Duration::from_secs(20),
+            ) {
+                sidecar_state
+                    .shutdown_requested
+                    .store(true, Ordering::Release);
+                stop_sidecar(app.handle());
+                return Err(std::io::Error::other(error).into());
+            }
             println!(
                 "[tauri] ready: pid={}, port={ready_port}",
                 std::process::id()
@@ -1995,10 +2351,9 @@ fn main() {
                 media.shutdown();
             }
             if let Some(state) = app.try_state::<SidecarState>() {
-                if let Some(child) = state.0.lock().ok().and_then(|mut guard| guard.take()) {
-                    let _ = child.kill();
-                }
+                state.shutdown_requested.store(true, Ordering::Release);
             }
+            stop_sidecar(app);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
@@ -2021,8 +2376,9 @@ mod tests {
     use super::{
         app_about_metadata, app_menu_action, claim_startup_show, decode_tray_cover, is_smoke_test,
         is_webview_smoke_test, normalize_global_shortcut, parse_legacy_settings,
-        response_has_sidecar_identity, tray_cover_url, tray_title_for_visibility,
-        window_frame_has_reachable_area, AppMenuAction,
+        response_has_sidecar_identity, should_reset_restart_budget, sidecar_exit_action,
+        tray_cover_url, tray_title_for_visibility, wait_for_supervised_sidecar,
+        window_frame_has_reachable_area, AppMenuAction, SidecarExitAction,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
     use tauri_plugin_global_shortcut::Shortcut;
@@ -2127,6 +2483,44 @@ mod tests {
             "HTTP/1.1 404 Not Found\r\n\r\n",
             &expected_token
         ));
+    }
+
+    #[test]
+    fn sidecar_exit_sequence_is_bounded_and_shutdown_never_restarts() {
+        assert_eq!(sidecar_exit_action(true, 0), SidecarExitAction::Stop);
+        assert_eq!(
+            (0..=3)
+                .map(|completed| sidecar_exit_action(false, completed))
+                .collect::<Vec<_>>(),
+            vec![
+                SidecarExitAction::Restart(std::time::Duration::from_millis(500)),
+                SidecarExitAction::Restart(std::time::Duration::from_secs(1)),
+                SidecarExitAction::Restart(std::time::Duration::from_secs(2)),
+                SidecarExitAction::NotifyFailure,
+            ]
+        );
+    }
+
+    #[test]
+    fn startup_accepts_a_healthy_replacement_sidecar() {
+        let replacement_ready = AtomicBool::new(true);
+        let permanently_unavailable = AtomicBool::new(false);
+
+        assert!(wait_for_supervised_sidecar(
+            0,
+            "dead-initial-token",
+            &replacement_ready,
+            &permanently_unavailable,
+            std::time::Duration::from_millis(50),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn stable_generation_resets_only_its_own_restart_budget() {
+        assert!(should_reset_restart_budget(true, Some(42), 42));
+        assert!(!should_reset_restart_budget(false, Some(42), 42));
+        assert!(!should_reset_restart_budget(true, Some(43), 42));
     }
 
     #[test]

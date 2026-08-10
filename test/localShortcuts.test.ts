@@ -5,6 +5,7 @@ import {
   matchesLocalShortcut,
   parseLocalShortcut,
   resolveLocalShortcutAction,
+  resolveRuntimeShortcutAction,
   runLocalShortcutAction,
 } from '../src/services/localShortcuts';
 import type { LocalShortcutTarget } from '../src/services/localShortcuts';
@@ -46,6 +47,41 @@ const shortcuts: Shortcut[] = [
 ];
 
 describe('local shortcut parsing', () => {
+  test('Web runtime only keeps bare Space and ignores desktop accelerators', () => {
+    expect(
+      resolveRuntimeShortcutAction(
+        shortcuts,
+        keyboardEvent({ ctrlKey: true }),
+        false,
+        false
+      )
+    ).toBeNull();
+    expect(
+      resolveRuntimeShortcutAction(
+        shortcuts,
+        keyboardEvent({ altKey: true, code: 'ArrowRight', key: 'ArrowRight' }),
+        false,
+        false
+      )
+    ).toBeNull();
+    expect(
+      resolveRuntimeShortcutAction(
+        shortcuts,
+        keyboardEvent({ code: 'Space', key: ' ' }),
+        false,
+        false
+      )
+    ).toBe('play');
+    expect(
+      resolveRuntimeShortcutAction(
+        shortcuts,
+        keyboardEvent({ ctrlKey: true }),
+        false,
+        true
+      )
+    ).toBe('play');
+  });
+
   test('keeps bare Space as the built-in play shortcut', () => {
     expect(
       resolveLocalShortcutAction(

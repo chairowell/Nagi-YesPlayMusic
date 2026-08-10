@@ -76,10 +76,12 @@ test('Windows CI 上传测试包并把 tag updater 交给 release job', () => {
   );
   expect(windowsJob).toContain("if: github.event_name != 'pull_request'");
   expect(windowsJob).toContain('Get-FileHash $_.FullName -Algorithm SHA256');
-  expect(windowsJob).toContain('dist_tauri_windows/SHA256SUMS.txt');
+  expect(windowsJob).toContain('dist_tauri_windows/SHA256SUMS-windows-x64.txt');
   expect(windowsJob).toContain('$hashes -join "`n"');
   expect(windowsJob).toContain('[System.IO.File]::WriteAllText');
-  expect(windowsJob).toContain('dist_tauri_windows/TESTING-NOTICE.txt');
+  expect(windowsJob).toContain(
+    'dist_tauri_windows/TESTING-NOTICE-windows-x64.txt'
+  );
   expect(windowsJob).toContain('Do not disable antivirus');
   expect(windowsJob).toContain('retention-days: 7');
   expect(releaseJob).toContain('YesPlayMusic-windows-x64');
@@ -110,8 +112,48 @@ test('Ubuntu CI 构建 AppImage、deb 并把 tag updater 交给 release job', ()
   );
   expect(linuxJob).toContain('bundle/appimage/*.AppImage');
   expect(linuxJob).toContain('bundle/deb/*.deb');
-  expect(linuxJob).toContain('sha256sum -c SHA256SUMS.txt');
+  expect(linuxJob).toContain('sha256sum -c SHA256SUMS-linux-x64.txt');
   expect(releaseJob).toContain('YesPlayMusic-linux-x64');
+});
+
+test('三平台发布资产 basename 不会在 draft release 中相互覆盖', () => {
+  for (const name of [
+    'SHA256SUMS-windows-x64.txt',
+    'TESTING-NOTICE-windows-x64.txt',
+    'SHA256SUMS-linux-x64.txt',
+    'TESTING-NOTICE-linux-x64.txt',
+  ]) {
+    expect(workflow).toContain(name);
+  }
+  expect(workflow).not.toContain('dist_tauri_windows/SHA256SUMS.txt');
+  expect(workflow).not.toContain('dist_tauri_windows/TESTING-NOTICE.txt');
+  expect(workflow).not.toContain('> SHA256SUMS.txt');
+  expect(workflow).not.toContain('> TESTING-NOTICE.txt');
+});
+
+test('三平台 CI 都在打包后启动 Tauri 主程序做 core smoke', () => {
+  const jobs = [
+    workflow.slice(
+      workflow.indexOf('  build-tauri-arm64:'),
+      workflow.indexOf('  build-tauri-windows-x64:')
+    ),
+    workflow.slice(
+      workflow.indexOf('  build-tauri-windows-x64:'),
+      workflow.indexOf('  build-tauri-linux-x64:')
+    ),
+    workflow.slice(
+      workflow.indexOf('  build-tauri-linux-x64:'),
+      workflow.indexOf('  draft-release:')
+    ),
+  ];
+  for (const job of jobs) {
+    expect(job).toContain('smoke:tauri:core');
+  }
+  expect(jobs[2]).toContain('xvfb-run -a bun run smoke:tauri:core');
+});
+
+test('README 与 Tauri 打包配置一致要求 macOS 14', () => {
+  expect(readme).toContain('macOS 14');
 });
 
 test('三平台测试包只保留七天，避免连续 push 堆积 Artifact', () => {

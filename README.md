@@ -71,7 +71,7 @@ Tauri v0.6.0 约为 80.8 MiB，减少约 79%。内存仍按完整进程树继续
 ## 安装
 
 到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 dmg。
-当前版本只提供 Apple Silicon（`arm64`）安装包。
+当前版本只提供 Apple Silicon（`arm64`）安装包，要求 macOS 14 或更高版本。
 
 安装包没有 Developer ID 签名和 Apple 公证，首次打开时 macOS 会拦一道。放行方法二选一：
 

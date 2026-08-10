@@ -11,6 +11,7 @@ use tauri::{Manager, Theme, Url};
 
 const PROXY_FILE_NAME: &str = "webview-proxy.json";
 const PROXY_FILE_VERSION: u8 = 1;
+const MAX_LEGACY_CONFIG_BYTES: usize = 1_048_576;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
@@ -232,7 +233,7 @@ pub fn parse_remove_proxy_payload(value: &Value) -> Result<(), PreferenceError> 
 #[serde(deny_unknown_fields)]
 struct StoredProxy {
     version: u8,
-    url: String,
+    url: Value,
 }
 
 pub fn save_webview_proxy<R: tauri::Runtime>(
@@ -267,16 +268,72 @@ pub fn load_webview_proxy<R: tauri::Runtime>(
     load_proxy_from_dir(&config_dir)
 }
 
+pub fn migrate_legacy_webview_proxy<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    legacy_config: &[u8],
+) -> Result<bool, PreferenceError> {
+    let config_dir = app.path().app_config_dir().map_err(|error| {
+        PreferenceError::invalid(format!("app config path is unavailable: {error}"))
+    })?;
+    migrate_legacy_proxy_from_bytes(&config_dir, legacy_config)
+}
+
 fn proxy_file(config_dir: &Path) -> PathBuf {
     config_dir.join(PROXY_FILE_NAME)
 }
 
+fn migrate_legacy_proxy_from_bytes(
+    config_dir: &Path,
+    legacy_config: &[u8],
+) -> Result<bool, PreferenceError> {
+    match fs::symlink_metadata(proxy_file(config_dir)) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    if legacy_config.len() > MAX_LEGACY_CONFIG_BYTES {
+        return Err(PreferenceError::invalid("legacy config is too large"));
+    }
+    let root: Value = serde_json::from_slice(legacy_config)?;
+    let root = root
+        .as_object()
+        .ok_or_else(|| PreferenceError::invalid("legacy config root must be an object"))?;
+    let Some(value) = root.get("proxy") else {
+        return Ok(false);
+    };
+    if value.is_null() || value.as_str() == Some("") {
+        return Ok(false);
+    }
+    let raw = value
+        .as_str()
+        .ok_or_else(|| PreferenceError::invalid("legacy proxy must be a string"))?;
+    if raw.trim() != raw {
+        return Err(PreferenceError::invalid(
+            "legacy proxy must not contain surrounding whitespace",
+        ));
+    }
+    let url =
+        Url::parse(raw).map_err(|_| PreferenceError::invalid("legacy proxy URL is invalid"))?;
+    validate_proxy_url(&url)?;
+    if url.port().is_none() {
+        return Err(PreferenceError::invalid(
+            "legacy proxy URL must contain an explicit port",
+        ));
+    }
+    save_proxy_to_dir(config_dir, &url)?;
+    Ok(true)
+}
+
 fn save_proxy_to_dir(config_dir: &Path, url: &Url) -> Result<(), PreferenceError> {
     validate_proxy_url(url)?;
+    save_proxy_state_to_dir(config_dir, Value::String(url.as_str().to_string()))
+}
+
+fn save_proxy_state_to_dir(config_dir: &Path, url: Value) -> Result<(), PreferenceError> {
     fs::create_dir_all(config_dir)?;
     let stored = StoredProxy {
         version: PROXY_FILE_VERSION,
-        url: url.as_str().to_string(),
+        url,
     };
     let bytes = serde_json::to_vec(&stored)?;
     let (temporary_path, mut temporary) = create_temporary_file(config_dir)?;
@@ -333,18 +390,22 @@ fn load_proxy_from_dir(config_dir: &Path) -> Result<Option<Url>, PreferenceError
             "stored proxy version is unsupported",
         ));
     }
-    let url = Url::parse(&stored.url)
-        .map_err(|_| PreferenceError::invalid("stored proxy URL is invalid"))?;
+    let Some(raw_url) = stored.url.as_str() else {
+        if stored.url.is_null() {
+            return Ok(None);
+        }
+        return Err(PreferenceError::invalid(
+            "stored proxy URL must be a string or null",
+        ));
+    };
+    let url =
+        Url::parse(raw_url).map_err(|_| PreferenceError::invalid("stored proxy URL is invalid"))?;
     validate_proxy_url(&url)?;
     Ok(Some(url))
 }
 
 fn remove_proxy_from_dir(config_dir: &Path) -> Result<(), PreferenceError> {
-    match fs::remove_file(proxy_file(config_dir)) {
-        Ok(()) => sync_directory(config_dir),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-    }
+    save_proxy_state_to_dir(config_dir, Value::Null)
 }
 
 fn validate_proxy_url(url: &Url) -> Result<(), PreferenceError> {
@@ -660,6 +721,46 @@ mod tests {
         remove_proxy_from_dir(&directory.0).unwrap();
         remove_proxy_from_dir(&directory.0).unwrap();
         assert_eq!(load_proxy_from_dir(&directory.0).unwrap(), None);
+    }
+
+    #[test]
+    fn legacy_root_proxy_migrates_once_without_overwriting_native_state() {
+        let directory = TestDirectory::new();
+        let legacy = br#"{"proxy":"HTTP://proxy.example.com:8080","settings":{}}"#;
+
+        assert!(migrate_legacy_proxy_from_bytes(&directory.0, legacy).unwrap());
+        assert_eq!(
+            load_proxy_from_dir(&directory.0).unwrap().unwrap().as_str(),
+            "http://proxy.example.com:8080/"
+        );
+        assert!(!migrate_legacy_proxy_from_bytes(
+            &directory.0,
+            br#"{"proxy":"HTTPS://other.example.com:8443"}"#
+        )
+        .unwrap());
+        assert_eq!(
+            load_proxy_from_dir(&directory.0).unwrap().unwrap().as_str(),
+            "http://proxy.example.com:8080/"
+        );
+
+        remove_proxy_from_dir(&directory.0).unwrap();
+        assert!(!migrate_legacy_proxy_from_bytes(&directory.0, legacy).unwrap());
+        assert_eq!(load_proxy_from_dir(&directory.0).unwrap(), None);
+    }
+
+    #[test]
+    fn legacy_root_proxy_rejects_unsafe_urls_without_writing_state() {
+        let directory = TestDirectory::new();
+
+        for legacy in [
+            br#"{"proxy":"socks5://proxy.example.com:1080"}"#.as_slice(),
+            br#"{"proxy":"http://user:pass@proxy.example.com:8080"}"#.as_slice(),
+            br#"{"proxy":"http://proxy.example.com:8080/path"}"#.as_slice(),
+            br#"{"proxy":8080}"#.as_slice(),
+        ] {
+            assert!(migrate_legacy_proxy_from_bytes(&directory.0, legacy).is_err());
+            assert_eq!(load_proxy_from_dir(&directory.0).unwrap(), None);
+        }
     }
 
     #[test]

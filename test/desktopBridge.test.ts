@@ -37,6 +37,7 @@ test('桌面播放控制事件使用同一组动作', () => {
       toggleLyrics: () => calls.push('toggleLyrics'),
       likeATrack: (id: number) => calls.push(['like', id]),
       updateSettings: (payload: unknown) => calls.push(['settings', payload]),
+      showToast: (message: string) => calls.push(['toast', message]),
     }
   );
   const handlers = createDesktopEventHandlers(view, appStore, player);
@@ -65,6 +66,7 @@ test('桌面播放控制事件使用同一组动作', () => {
   emit('increaseVolume');
   emit('like');
   emit('rememberCloseAppOption', 'minimizeToTray');
+  emit('sidecarUnavailable', '后台服务重启失败');
 
   expect(calls).toEqual([
     ['route', '/settings'],
@@ -83,6 +85,7 @@ test('桌面播放控制事件使用同一组动作', () => {
     ['seek', 10],
     ['like', 42],
     ['settings', { key: 'closeAppOption', value: 'minimizeToTray' }],
+    ['toast', '后台服务重启失败'],
   ]);
   expect(player.volume).toBe(1);
   expect(player.repeatMode).toBe('one');

@@ -18,10 +18,15 @@ export const UPDATER_ARTIFACT_SPECS = Object.freeze({
     bundleDir: 'nsis',
     suffix: '.exe',
   },
-  'linux-x86_64': {
+  'linux-x86_64-appimage': {
     targetTriple: 'x86_64-unknown-linux-gnu',
     bundleDir: 'appimage',
     suffix: '.AppImage',
+  },
+  'linux-x86_64-deb': {
+    targetTriple: 'x86_64-unknown-linux-gnu',
+    bundleDir: 'deb',
+    suffix: '.deb',
   },
 });
 

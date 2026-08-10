@@ -26,6 +26,7 @@ interface DesktopEventPlayer {
 
 export interface DesktopEventStore {
   showLyrics: boolean;
+  showToast(message: string): unknown;
   toggleLyrics(): unknown;
   likeATrack(id: number): unknown;
   updateSettings(update: {
@@ -68,6 +69,13 @@ export function createDesktopEventHandlers(
       if (where === 'back' || where === 'forward') self.goHistory(where);
     },
     nextUp: () => self.goToNextTracksPage(),
+    sidecarUnavailable: message => {
+      appStore.showToast(
+        typeof message === 'string' && message.trim().length > 0
+          ? message
+          : '后台服务已停止，请重启应用'
+      );
+    },
     requestCloseChoice: () => self.requestCloseChoice(),
     rememberCloseAppOption: value => {
       if (value === 'ask' || value === 'exit' || value === 'minimizeToTray') {

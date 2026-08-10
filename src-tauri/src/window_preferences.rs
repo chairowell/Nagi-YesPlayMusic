@@ -11,12 +11,22 @@ const FILE_NAME: &str = "window-preferences.json";
 const FILE_VERSION: u8 = 1;
 const MAX_PREFERENCE_BYTES: u64 = 4_096;
 const MAX_LEGACY_CONFIG_BYTES: u64 = 1_048_576;
+const MIN_WINDOW_WIDTH: u32 = 300;
+const MIN_WINDOW_HEIGHT: u32 = 48;
+const MAX_WINDOW_EDGE: u32 = 8_192;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WindowPosition {
     pub x: i32,
     pub y: i32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -26,6 +36,8 @@ pub struct WindowPreferences {
     pub always_on_top: bool,
     #[serde(default)]
     pub position: Option<WindowPosition>,
+    #[serde(default)]
+    pub size: Option<WindowSize>,
 }
 
 impl Default for WindowPreferences {
@@ -34,6 +46,7 @@ impl Default for WindowPreferences {
             version: FILE_VERSION,
             always_on_top: false,
             position: None,
+            size: None,
         }
     }
 }
@@ -49,6 +62,8 @@ struct LegacyWindowFrame {
     #[serde(default)]
     #[serde(rename = "height")]
     _height: Option<u32>,
+    #[serde(default, rename = "alwaysOnTop")]
+    always_on_top: bool,
 }
 
 pub fn load<R: tauri::Runtime>(
@@ -88,24 +103,18 @@ pub fn read_legacy_electron_config<R: tauri::Runtime>(
         .map_err(|error| error.to_string())
 }
 
-pub fn load_legacy_position<R: tauri::Runtime>(
+pub fn load_legacy_preferences<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-) -> Result<Option<WindowPosition>, String> {
-    load_legacy_position_from_path(&legacy_electron_config_path(app)?)
+) -> Result<Option<WindowPreferences>, String> {
+    load_legacy_preferences_from_path(&legacy_electron_config_path(app)?)
         .map_err(|error| error.to_string())
 }
 
 pub fn with_legacy_fallback(
     native: Option<WindowPreferences>,
-    legacy_position: Option<WindowPosition>,
+    legacy: Option<WindowPreferences>,
 ) -> WindowPreferences {
-    match native {
-        Some(preferences) => preferences,
-        None => WindowPreferences {
-            position: legacy_position,
-            ..WindowPreferences::default()
-        },
-    }
+    native.or(legacy).unwrap_or_default()
 }
 
 fn preference_file(config_dir: &Path) -> PathBuf {
@@ -134,6 +143,12 @@ fn load_from_dir(config_dir: &Path) -> Result<Option<WindowPreferences>, io::Err
         return Err(io::Error::new(
             ErrorKind::InvalidData,
             "window preference version is unsupported",
+        ));
+    }
+    if preference.size.is_some_and(|size| !valid_window_size(size)) {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "window preference size is outside supported bounds",
         ));
     }
     Ok(Some(preference))
@@ -241,7 +256,14 @@ fn read_legacy_config_from_path(path: &Path) -> Result<Option<Vec<u8>>, io::Erro
     Ok(Some(bytes))
 }
 
-fn load_legacy_position_from_path(path: &Path) -> Result<Option<WindowPosition>, io::Error> {
+fn valid_window_size(size: WindowSize) -> bool {
+    size.width >= MIN_WINDOW_WIDTH
+        && size.height >= MIN_WINDOW_HEIGHT
+        && size.width <= MAX_WINDOW_EDGE
+        && size.height <= MAX_WINDOW_EDGE
+}
+
+fn load_legacy_preferences_from_path(path: &Path) -> Result<Option<WindowPreferences>, io::Error> {
     let Some(bytes) = read_legacy_config_from_path(path)? else {
         return Ok(None);
     };
@@ -252,9 +274,33 @@ fn load_legacy_position_from_path(path: &Path) -> Result<Option<WindowPosition>,
     };
     let frame: LegacyWindowFrame = serde_json::from_value(window.clone())
         .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
-    Ok(Some(WindowPosition {
-        x: frame.x,
-        y: frame.y,
+    let size = match (frame._width, frame._height) {
+        (Some(width), Some(height)) => {
+            let size = WindowSize { width, height };
+            if !valid_window_size(size) {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "legacy window size is outside supported bounds",
+                ));
+            }
+            Some(size)
+        }
+        (None, None) => None,
+        _ => {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "legacy window size must contain both width and height",
+            ));
+        }
+    };
+    Ok(Some(WindowPreferences {
+        always_on_top: frame.always_on_top,
+        position: Some(WindowPosition {
+            x: frame.x,
+            y: frame.y,
+        }),
+        size,
+        ..WindowPreferences::default()
     }))
 }
 
@@ -337,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_window_import_uses_only_position() {
+    fn legacy_window_import_accepts_position_and_size() {
         let directory = temporary_directory("legacy-window-position");
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("config.json");
@@ -347,8 +393,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            load_legacy_position_from_path(&path).unwrap(),
+            load_legacy_preferences_from_path(&path)
+                .unwrap()
+                .and_then(|preferences| preferences.position),
             Some(WindowPosition { x: 80, y: 120 })
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn legacy_window_imports_size_and_always_on_top() {
+        let directory = temporary_directory("legacy-window-state");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("config.json");
+        fs::write(
+            &path,
+            br#"{"window":{"x":80,"y":120,"width":1024,"height":640,"alwaysOnTop":true}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_legacy_preferences_from_path(&path).unwrap(),
+            Some(WindowPreferences {
+                always_on_top: true,
+                position: Some(WindowPosition { x: 80, y: 120 }),
+                size: Some(WindowSize {
+                    width: 1024,
+                    height: 640,
+                }),
+                ..WindowPreferences::default()
+            })
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -405,7 +479,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            load_legacy_position_from_path(&path).unwrap_err().kind(),
+            load_legacy_preferences_from_path(&path).unwrap_err().kind(),
             ErrorKind::InvalidData
         );
         fs::remove_dir_all(directory).unwrap();
@@ -417,13 +491,19 @@ mod tests {
             position: Some(WindowPosition { x: 640, y: 220 }),
             ..WindowPreferences::default()
         };
+        let legacy = WindowPreferences {
+            always_on_top: true,
+            position: Some(WindowPosition { x: 80, y: 120 }),
+            size: Some(WindowSize {
+                width: 1024,
+                height: 640,
+            }),
+            ..WindowPreferences::default()
+        };
         assert_eq!(
-            with_legacy_fallback(Some(native.clone()), Some(WindowPosition { x: 80, y: 120 })),
+            with_legacy_fallback(Some(native.clone()), Some(legacy.clone())),
             native
         );
-        assert_eq!(
-            with_legacy_fallback(None, Some(WindowPosition { x: 80, y: 120 })).position,
-            Some(WindowPosition { x: 80, y: 120 })
-        );
+        assert_eq!(with_legacy_fallback(None, Some(legacy.clone())), legacy);
     }
 }

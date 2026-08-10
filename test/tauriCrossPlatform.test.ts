@@ -7,6 +7,9 @@ import {
 import { tauriHostBuildPlan } from '../scripts/build-tauri-host.mjs';
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
+const tauriConfig = JSON.parse(
+  readFileSync('src-tauri/tauri.conf.json', 'utf8')
+);
 const windowsConfig = JSON.parse(
   readFileSync('src-tauri/tauri.windows.conf.json', 'utf8')
 );
@@ -100,6 +103,12 @@ describe('Tauri 本机安装包', () => {
     expect(linuxMedia).toContain('MediaUpdate::LyricsDelivered');
     expect(linuxMedia).not.toContain(
       'deliver_osd_lyrics(&lyrics, osd_started).await'
+    );
+  });
+
+  test('MPRIS DesktopEntry 与 Linux 安装包的 desktop 文件同名', () => {
+    expect(linuxMedia).toContain(
+      `.desktop_entry("${tauriConfig.productName}")`
     );
   });
 

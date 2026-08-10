@@ -138,6 +138,9 @@ jobs:
         if: github.ref_type == 'tag' && vars.APPLE_SIGNING_ENABLED == 'true'
         run: bun run collect:tauri:release-dmg
 
+      - name: Smoke packaged macOS runtime
+        run: bun run smoke:tauri:core
+
       - name: Collect updater artifacts
         if: github.ref_type == 'tag'
         run: bun scripts/collect-updater-artifacts.mjs darwin-aarch64 dist_tauri
@@ -248,6 +251,10 @@ jobs:
           & "src-tauri/binaries/yesplaymusic-sidecar-x86_64-pc-windows-msvc.exe" --unm-addon-smoke-test
           if ($LASTEXITCODE -ne 0) { throw "Windows Sidecar smoke test failed" }
 
+      # Installing NSIS would mutate the runner; launch its assembled release layout instead.
+      - name: Smoke packaged Windows runtime
+        run: bun run smoke:tauri:core
+
       # PRs build for validation; distributable artifacts come only from repository refs.
       - name: Collect installer and create SHA-256 checksum
         if: github.event_name != 'pull_request'
@@ -264,7 +271,7 @@ jobs:
             throw 'Tauri Windows build did not produce an NSIS installer'
           }
           [System.IO.File]::WriteAllText(
-            (Join-Path $PWD 'dist_tauri_windows/SHA256SUMS.txt'),
+            (Join-Path $PWD 'dist_tauri_windows/SHA256SUMS-windows-x64.txt'),
             (($hashes -join "`n") + "`n"),
             [System.Text.UTF8Encoding]::new($false)
           )
@@ -274,8 +281,8 @@ jobs:
 
           This package is unsigned. Windows SmartScreen may warn before installation.
           Do not disable antivirus or SmartScreen globally.
-          "@ | Set-Content -Encoding utf8NoBOM dist_tauri_windows/TESTING-NOTICE.txt
-          Get-Content dist_tauri_windows/SHA256SUMS.txt
+          "@ | Set-Content -Encoding utf8NoBOM dist_tauri_windows/TESTING-NOTICE-windows-x64.txt
+          Get-Content dist_tauri_windows/SHA256SUMS-windows-x64.txt
 
       - name: Collect updater artifacts
         if: github.ref_type == 'tag'
@@ -312,7 +319,8 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            xvfb
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -379,6 +387,9 @@ jobs:
       - name: Verify compiled Sidecar and UNM native addon
         run: src-tauri/binaries/yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test
 
+      - name: Smoke packaged Linux AppImage runtime
+        run: xvfb-run -a bun run smoke:tauri:core
+
       - name: Collect packages and create SHA-256 checksums
         if: github.event_name != 'pull_request'
         run: |
@@ -386,18 +397,20 @@ jobs:
           cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage dist_tauri_linux/
           cp src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb dist_tauri_linux/
           cd dist_tauri_linux
-          sha256sum ./*.AppImage ./*.deb > SHA256SUMS.txt
+          sha256sum ./*.AppImage ./*.deb > SHA256SUMS-linux-x64.txt
           printf '%s\n' \
             'YesPlayMusic Tauri Ubuntu x64 experimental test build' \
             "Commit: $GITHUB_SHA" \
             '' \
             'AppImage can run without installation. The deb package targets Ubuntu/Debian systems.' \
-            > TESTING-NOTICE.txt
-          sha256sum -c SHA256SUMS.txt
+            > TESTING-NOTICE-linux-x64.txt
+          sha256sum -c SHA256SUMS-linux-x64.txt
 
       - name: Collect updater artifacts
         if: github.ref_type == 'tag'
-        run: bun scripts/collect-updater-artifacts.mjs linux-x86_64 dist_tauri_linux
+        run: |
+          bun scripts/collect-updater-artifacts.mjs linux-x86_64-appimage dist_tauri_linux
+          bun scripts/collect-updater-artifacts.mjs linux-x86_64-deb dist_tauri_linux
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'

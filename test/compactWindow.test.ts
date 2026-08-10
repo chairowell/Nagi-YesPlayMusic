@@ -112,14 +112,15 @@ test('重启时恢复最后使用的逻辑尺寸，不采用 Tauri 插件保存�
   expect(tauriMain).toContain('.skip_initial_state("main")');
 });
 
-test('纯移动由 native 原子保存，且不会覆盖 compact 的逻辑宽高', () => {
+test('native 保存位置和一次性旧尺寸，compact 仍管理后续逻辑宽高', () => {
   expect(tauriMain).toContain('WindowEvent::Moved(position)');
   expect(tauriMain).toContain('schedule_window_position_save(');
   expect(tauriMain).toContain('persist_current_window_position(app)');
   expect(windowPreferences).toContain('tempfile::NamedTempFile::new_in');
   expect(windowPreferences).toContain('pub position: Option<WindowPosition>');
-  expect(windowPreferences).not.toContain('pub width:');
-  expect(windowPreferences).not.toContain('pub height:');
+  expect(windowPreferences).toContain('pub size: Option<WindowSize>');
+  expect(tauriMain).toContain('preferences.size.unwrap_or(WindowSize');
+  expect(tauriMain).not.toContain('schedule_window_size_save');
 });
 
 test('启动等待 renderer 恢复尺寸，超时兜底不影响 hidden smoke', () => {

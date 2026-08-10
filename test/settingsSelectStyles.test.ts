@@ -30,3 +30,12 @@ test('Windows 和 Linux 设置选择器恢复系统原生下拉外观', () => {
     );
   }
 });
+
+test('数字选项通过动态 value 保持 number 类型', () => {
+  const { descriptor } = parse(readFileSync(filename, 'utf8'), { filename });
+  const template = descriptor.template?.content ?? '';
+
+  for (const value of [128000, 192000, 320000, 999000, 16, 22, 28, 36]) {
+    expect(template).toContain(`<option :value="${value}">`);
+  }
+});

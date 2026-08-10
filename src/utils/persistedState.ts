@@ -96,6 +96,33 @@ function numberValue(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function positiveInteger(value: unknown): number | null {
+  const normalized =
+    typeof value === 'string' && /^(?:0|[1-9]\d*)$/.test(value)
+      ? Number(value)
+      : value;
+  return typeof normalized === 'number' &&
+    Number.isSafeInteger(normalized) &&
+    normalized > 0
+    ? normalized
+    : null;
+}
+
+export function normalizeMusicQuality(
+  value: unknown,
+  fallback: SettingsState['musicQuality']
+): SettingsState['musicQuality'] {
+  if (value === 'flac') return value;
+  return positiveInteger(value) ?? fallback;
+}
+
+export function normalizeLyricFontSize(
+  value: unknown,
+  fallback: number
+): number {
+  return positiveInteger(value) ?? fallback;
+}
+
 function cacheLimitValue(
   value: unknown,
   fallback: number | null
@@ -129,7 +156,6 @@ export function decodeSettingsState(
 ): SettingsState {
   const stored = decodeStoredRecord(value);
   const lang = stored['lang'];
-  const quality = stored['musicQuality'];
   const lyricsBackground = stored['lyricsBackground'];
   const realIP = stored['realIP'];
   const categories = stored['enabledPlaylistCategories'];
@@ -161,12 +187,14 @@ export function decodeSettingsState(
     musicLanguage: stringValue(stored['musicLanguage'], defaults.musicLanguage),
     appearance: stringValue(stored['appearance'], defaults.appearance),
     themeColor: stringValue(stored['themeColor'], defaults.themeColor),
-    musicQuality:
-      quality === 'flac' ||
-      (typeof quality === 'number' && Number.isFinite(quality))
-        ? quality
-        : defaults.musicQuality,
-    lyricFontSize: numberValue(stored['lyricFontSize'], defaults.lyricFontSize),
+    musicQuality: normalizeMusicQuality(
+      stored['musicQuality'],
+      defaults.musicQuality
+    ),
+    lyricFontSize: normalizeLyricFontSize(
+      stored['lyricFontSize'],
+      defaults.lyricFontSize
+    ),
     outputDevice: stringValue(stored['outputDevice'], defaults.outputDevice),
     showPlaylistsByAppleMusic: booleanValue(
       stored['showPlaylistsByAppleMusic'],
