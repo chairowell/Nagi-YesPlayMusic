@@ -9,6 +9,7 @@
         }
       },
       "deb": {
+        "depends": ["libayatana-appindicator3-1"],
         "files": {
           "/usr/lib/yesplaymusic/sidecar.payload": "binaries/yesplaymusic-sidecar-linux.payload"
         }

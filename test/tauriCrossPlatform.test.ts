@@ -114,6 +114,10 @@ describe('Tauri 本机安装包', () => {
     expect(linuxConfig.bundle.linux.deb.files).toEqual(
       linuxConfig.bundle.linux.appimage.files
     );
+    // Tray icons dlopen the appindicator library; apt must install it with the deb.
+    expect(linuxConfig.bundle.linux.deb.depends).toEqual([
+      'libayatana-appindicator3-1',
+    ]);
     expect(packageJson.scripts['build:tauri:windows']).toContain(
       'x86_64-pc-windows-msvc'
     );
