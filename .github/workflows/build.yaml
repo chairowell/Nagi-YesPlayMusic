@@ -46,8 +46,12 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Build Sidecar for Rust tests
-        run: bun run build:sidecar
+      - name: Prepare Tauri resources for Rust tests
+        env:
+          IS_TAURI: 'true'
+        run: |
+          bun run build:renderer
+          bun run build:sidecar
 
       - name: Test Rust backend
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
@@ -200,10 +204,13 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Build Sidecar for Rust tests
+      - name: Prepare Tauri resources for Rust tests
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-target-cache
-        run: bun run build:sidecar
+          IS_TAURI: 'true'
+        run: |
+          bun run build:renderer
+          bun run build:sidecar
 
       - name: Test Rust backend
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
@@ -332,8 +339,12 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Build Sidecar for Rust tests
-        run: bun run build:sidecar
+      - name: Prepare Tauri resources for Rust tests
+        env:
+          IS_TAURI: 'true'
+        run: |
+          bun run build:renderer
+          bun run build:sidecar
 
       - name: Test Rust backend
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml

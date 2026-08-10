@@ -119,7 +119,7 @@ test('三平台测试包只保留七天，避免连续 push 堆积 Artifact', ()
   expect(workflow).not.toContain('retention-days: 14');
 });
 
-test('三平台干净 runner 在 Rust 测试前先生成 Sidecar', () => {
+test('三平台干净 runner 在 Rust 测试前先生成 Tauri 资源', () => {
   const jobBoundaries = [
     ['  build-tauri-arm64:', '  build-tauri-windows-x64:'],
     ['  build-tauri-windows-x64:', '  build-tauri-linux-x64:'],
@@ -128,12 +128,14 @@ test('三平台干净 runner 在 Rust 测试前先生成 Sidecar', () => {
 
   for (const [start, end] of jobBoundaries) {
     const job = workflow.slice(workflow.indexOf(start), workflow.indexOf(end));
-    const sidecarIndex = job.indexOf('run: bun run build:sidecar');
+    const rendererIndex = job.indexOf('bun run build:renderer');
+    const sidecarIndex = job.indexOf('bun run build:sidecar');
     const rustTestIndex = job.indexOf(
       'run: cargo test --locked --manifest-path src-tauri/Cargo.toml'
     );
 
-    expect(sidecarIndex).toBeGreaterThan(-1);
+    expect(rendererIndex).toBeGreaterThan(-1);
+    expect(sidecarIndex).toBeGreaterThan(rendererIndex);
     expect(rustTestIndex).toBeGreaterThan(sidecarIndex);
   }
 });
