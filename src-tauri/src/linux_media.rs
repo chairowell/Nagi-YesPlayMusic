@@ -97,22 +97,13 @@ impl LinuxMedia {
         let queue = Arc::new(UpdateQueue::default());
         let thread_queue = Arc::clone(&queue);
         let control_handler = Arc::new(control_handler);
-        let (startup_tx, startup_rx) = mpsc::sync_channel(1);
 
         thread::Builder::new()
             .name("yesplaymusic-linux-media".into())
             .spawn(move || {
-                futures_lite::future::block_on(run_media_service(
-                    thread_queue,
-                    control_handler,
-                    startup_tx,
-                ));
+                futures_lite::future::block_on(run_media_service(thread_queue, control_handler));
             })
             .map_err(|error| format!("failed to start Linux media thread: {error}"))?;
-
-        startup_rx
-            .recv()
-            .map_err(|_| "Linux media thread stopped during startup".to_string())??;
 
         Ok(Self { queue })
     }
@@ -254,7 +245,6 @@ fn start_osd_worker(queue: Arc<UpdateQueue>) -> Result<mpsc::Sender<OsdLyricsJob
 async fn run_media_service(
     queue: Arc<UpdateQueue>,
     control_handler: Arc<dyn Fn(MediaControl) + Send + Sync>,
-    startup_tx: mpsc::SyncSender<Result<(), String>>,
 ) {
     let player = match Player::builder("yesplaymusic")
         .identity("YesPlayMusic")
@@ -270,13 +260,13 @@ async fn run_media_service(
     {
         Ok(player) => player,
         Err(error) => {
-            let _ = startup_tx.send(Err(format!("failed to register MPRIS service: {error}")));
+            eprintln!("failed to register MPRIS service: {error}");
+            queue.close();
             return;
         }
     };
 
     connect_controls(&player, control_handler.clone());
-    let _ = startup_tx.send(Ok(()));
 
     let server = player.run();
     let mut server = pin!(server);

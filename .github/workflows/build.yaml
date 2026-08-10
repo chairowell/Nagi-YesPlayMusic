@@ -388,7 +388,7 @@ jobs:
         run: src-tauri/binaries/yesplaymusic-sidecar-x86_64-unknown-linux-gnu --unm-addon-smoke-test
 
       - name: Smoke packaged Linux AppImage runtime
-        run: xvfb-run -a bun run smoke:tauri:core
+        run: dbus-run-session -- xvfb-run -a bun run smoke:tauri:core
 
       - name: Collect packages and create SHA-256 checksums
         if: github.event_name != 'pull_request'

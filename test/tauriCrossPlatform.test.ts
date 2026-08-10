@@ -106,6 +106,13 @@ describe('Tauri 本机安装包', () => {
     );
   });
 
+  test('MPRIS 初始化不会阻塞 Sidecar 和主窗口启动', () => {
+    expect(linuxMedia).toContain(
+      'futures_lite::future::block_on(run_media_service(thread_queue, control_handler))'
+    );
+    expect(linuxMedia).not.toContain('startup_rx.recv');
+  });
+
   test('MPRIS DesktopEntry 与 Linux 安装包的 desktop 文件同名', () => {
     expect(linuxMedia).toContain(
       `.desktop_entry("${tauriConfig.productName}")`

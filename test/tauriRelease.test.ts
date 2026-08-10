@@ -149,7 +149,9 @@ test('三平台 CI 都在打包后启动 Tauri 主程序做 core smoke', () => {
   for (const job of jobs) {
     expect(job).toContain('smoke:tauri:core');
   }
-  expect(jobs[2]).toContain('xvfb-run -a bun run smoke:tauri:core');
+  expect(jobs[2]).toContain(
+    'dbus-run-session -- xvfb-run -a bun run smoke:tauri:core'
+  );
 });
 
 test('README 与 Tauri 打包配置一致要求 macOS 14', () => {
