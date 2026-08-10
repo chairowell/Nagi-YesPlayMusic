@@ -28,6 +28,11 @@ macOS Tauri 重构版，不再跟随上游发版。原项目的界面和主要�
 **v0.6.0 是一次完整的 Tauri 重构。** 渲染层升级到 Vue 3 和 Vite 7，桌面外壳改为
 Tauri 2。应用不再捆绑 Chromium，窗口、菜单栏、媒体状态和本地服务由 Rust 主进程接管。
 
+当前代码已迁移到 TypeScript 6.0 严格模式与 Pinia 4。所有 Vue 组件、API、播放器、
+Sidecar 和测试都参加类型检查，外部响应在运行时验证后才进入业务层。Electron 运行时已删除，
+原有桌面能力的 Tauri 对应实现和验收状态见
+[Electron → Tauri 功能迁移表](docs/feature-migration.md)。
+
 包体积是目前可以直接复现的收益：迁移前 Electron 版 `.app` 为 381.5 MiB，当前
 Tauri v0.6.0 约为 80.8 MiB，减少约 79%。内存仍按完整进程树继续测量，已有的后台核心
 数据没有包含 WKWebView，因此这里不写不完整的内存降幅。测试口径和阶段性结果见

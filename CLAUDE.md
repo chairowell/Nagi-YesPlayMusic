@@ -6,27 +6,24 @@ Ubuntu x64 由 CI 提供 Tauri 实验构建。
 
 ## 命令
 
-| 用途                               | 命令                          |
-| ---------------------------------- | ----------------------------- |
-| Tauri 开发                         | `bun run dev:tauri`           |
-| 按当前系统出 Tauri 安装包          | `bun run build:tauri`         |
-| Windows x64 NSIS 安装包            | `bun run build:tauri:windows` |
-| Ubuntu x64 AppImage + deb          | `bun run build:tauri:linux`   |
-| 旧 Electron 开发（只用于回归对照） | `bun run dev`                 |
-| 只构建渲染进程（浏览器里调 UI）    | `bun run build:renderer`      |
+| 用途                            | 命令                          |
+| ------------------------------- | ----------------------------- |
+| Tauri 开发                      | `bun run dev:tauri`           |
+| 按当前系统出 Tauri 安装包       | `bun run build:tauri`         |
+| Windows x64 NSIS 安装包         | `bun run build:tauri:windows` |
+| Ubuntu x64 AppImage + deb       | `bun run build:tauri:linux`   |
+| 只构建渲染进程（浏览器里调 UI） | `bun run build:renderer`      |
 
 Tauri 产物在 `src-tauri/target/<target-triple>/release/bundle/`。macOS 正式发布仍通过
 `bun run package:tauri:dmg` 收集到 `dist_tauri/`。
 
-`bun run dev` 背后是 `electron-vite dev --watch`。**`--watch` 不能省** —— 没有它，
-改主进程代码不会重建，窗口也不会重启，很容易误判成"代码没生效"。
-
 ## 提交前的验证
 
-`.githooks/pre-commit` 会跑 `bun test`（0.5 秒）和 `bun run build:tauri:renderer`（1.5 秒）。
+`.githooks/pre-commit` 会跑 `bun test`、`bun run typecheck` 和
+`bun run build:tauri:renderer`。
 `bun install` 时的 `prepare` 会把 `core.hooksPath` 指过去，新 clone 也自动生效。
 
-两步缺一不可：测试不 import `.vue`，所以"import 了一个不存在的模块"只有渲染构建能发现——
+三步缺一不可：测试不 import `.vue`，所以"import 了一个不存在的模块"只有类型检查或渲染构建能发现——
 2026-08-04 就是这么把临时探针的残留 import 提交进去的，HEAD 里 import 了一个仓库里
 根本不存在的文件。
 
@@ -48,63 +45,56 @@ CI（`.github/workflows/build.yaml`）只验证每次 push 的**最后一个 com
 
 ## 技术栈
 
-Vue 3.5 + Vuex 4 + Vue Router 4 + Vite 7 + Tauri 2；旧 Electron 43 只保留回归对照，包管理用 bun。
-业务代码保留选项式 API，没有 TypeScript。
+Vue 3.5 + Pinia 4 + Vue Router 4 + TypeScript 6.0 + Vite 7 + Tauri 2，包管理用 bun。
+Vue 组件保留选项式 API，统一使用
+`<script lang="ts">` + `defineComponent`。
 
-原项目用的是 Vue CLI 4（webpack 4），在 node 26 上跑不起来、`electron:serve` 会卡死。
-构建链已整体迁到 Vite，构建时间从三四分钟降到约 1.5 秒。渲染进程和主进程的配置都在
-`electron.vite.config.mjs`；`vite.config.mjs` 是纯 Web 模式（浏览器里开发 UI）用的。
+TypeScript 开启严格模式、`exactOptionalPropertyTypes` 和
+`noUncheckedIndexedAccess`；外部数据先以 `unknown` 接收并缩窄，纯类型依赖使用
+`import type`，复杂 props 使用 `PropType`。禁止用新增 `any`、`@ts-ignore` 或
+`@ts-expect-error` 绕过类型检查。
+
+渲染构建统一使用 `vite.config.mjs`。桌面主进程是 Rust，不存在第二套 JavaScript
+桌面运行时或构建配置。
 
 ## 架构要点
 
 Tauri 主进程入口是 `src-tauri/src/main.rs`，负责窗口、托盘、快捷键、单实例和 Sidecar
-生命周期。`src/sidecar.js` 会编译成各平台独立可执行文件，负责网易云 API、托管渲染
+生命周期。`src/sidecar.ts` 会编译成各平台独立可执行文件，负责网易云 API、托管渲染
 产物、同源 `/api` 代理和 UNM。正式版页面来自 `http://127.0.0.1:28232`。
-
-`src/background.js` 是旧 Electron 主进程，只用于迁移回归对照，不再作为 Windows/Linux
-测试包发布。
 
 **生产模式不走 `app://` 协议**，而是加载 Sidecar 的 loopback HTTP 页面。
 dev 的 Vite server 也配了 `/api` 同源代理指向 12754 —— 这个不能省，否则跨端口属于跨站，登录 cookie 会被
 Chromium 的 SameSite 策略丢掉，表现为头像不刷新、library 空。
 
 迷你播放器做在 `src/views/lyrics.vue` 里：窗口宽 < 620 或高 < 340 自动切成紧凑播放条，
-`src/App.vue` 负责在窗口变窄时自动切到歌词页。macOS 菜单栏的封面和歌词在
-`src/electron/tray.js` 的 `YPMTrayMacImpl`。
+`src/App.vue` 负责在窗口变窄时自动切到歌词页。窗口、菜单栏封面/歌词、全局快捷键和
+Discord Rich Presence 都由 `src-tauri/src/` 的 Rust 实现。
 
 ## 数据目录（容易搞错）
 
-`~/Library/Application Support/yesplaymusic` 是同一个目录，但 Chromium 在里面按 origin
-再分一层，而 dev 和正式版端口不同：
+WebView 按 origin 隔离存储，而 dev 和正式版端口不同：
 
-- **共用**：cookie（只认域名不认端口，dev 登录了正式版也是登录的）、electron-store
-  的 JSON（窗口尺寸、置顶状态）
-- **不共用**：IndexedDB 歌曲缓存、localStorage 设置。dev 在 `http_localhost_5173`，
-  正式版在 `http_localhost_27232`，各存各的
+- **共用**：cookie（只认域名不认端口，dev 登录了正式版也是登录的）
+- **不共用**：IndexedDB 歌曲缓存、localStorage 设置。dev 使用 `127.0.0.1:1420`，
+  正式版使用 `127.0.0.1:28232`，各存各的
 
-`Local Storage/leveldb` 是所有 origin 共用的**一个文件**，删它会把正式版设置一起清掉。
-清理 dev 缓存只删 `IndexedDB/http_localhost_5173.*`。
+不要为了清 dev 数据删除整个应用数据目录，那会同时清掉正式版数据。
 
 ## 已知的坑
 
-1. `bun install` 默认拦截依赖的 postinstall。`postinstall` 通过跨平台 Node 脚本清空
-   `npm_execpath` 后再调用 electron-builder；不能改回 POSIX 的 `npm_execpath= ...` 前缀，
-   Windows shell 不保证支持。安装失败时 bun 不会把新依赖写进 package.json，看起来像装了其实没装。
-2. `electron` 和 `electron-builder` 必须待在 `devDependencies`，否则 electron-builder
-   直接拒绝打包。
-3. `src/ncmModDef.js` 是 CommonJS 写法，必须静态 `import` 并在
-   `electron.vite.config.mjs` 的 `commonjsOptions.include` 里点名 —— rollup 把 `src`
-   下的 `.js` 一律当 ESM 解析，漏了它网易云 API 起不来。
-4. `vite-plugin-svg-icons` 只在 dev server 启动时扫一遍 `src/assets/icons`，
+1. `src/ncmModDef.cjs` 是刻意保留的 CommonJS 边界，必须静态 `import`，让 Bun
+   单文件 Sidecar 能收集网易云 API 的全部路由。
+2. `vite-plugin-svg-icons` 只在 dev server 启动时扫一遍 `src/assets/icons`，
    新加的 svg 要重启 dev 才会进 sprite，否则图标位置是空白。
-5. `.player` 上有 `backdrop-filter`，超出它上边界的子元素会被裁掉 —— 进度条上的角色
+3. `.player` 上有 `backdrop-filter`，超出它上边界的子元素会被裁掉 —— 进度条上的角色
    容易缺一块头。
-6. 单实例锁：`/Applications` 里的正式版开着时，新起的实例会静默 `app.quit()`，
+4. 单实例锁：`/Applications` 里的正式版开着时，新起的实例会把焦点交给已有窗口后退出，
    看起来像打包失败。测试前先退掉。
-7. 卸载 brew cask 时**不要加 `--zap`**，会连数据目录一起删。
+5. 卸载 brew cask 时**不要加 `--zap`**，会连数据目录一起删。
 
 ## 约定
 
-- 中文注释，解释"为什么"而不是"做了什么"
+- 代码注释使用精简英文，只解释必要的“为什么”
 - 提交信息用中文，正文说清动机和影响
 - 上游仓库是 `upstream` remote，同步用 `git fetch upstream`
