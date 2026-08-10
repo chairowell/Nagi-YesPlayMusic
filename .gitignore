@@ -3,6 +3,7 @@ node_modules
 /dist
 /dist-tauri
 /dist_tauri
+/out
 
 # local env files
 .env
@@ -26,11 +27,6 @@ pnpm-debug.log*
 
 .vercel
 
-#Electron-builder output
-/dist_electron
-NeteaseCloudMusicApi-master
-NeteaseCloudMusicApi-master.zip
-
 # Local Netlify folder
 .netlify
 vercel.json
@@ -44,11 +40,10 @@ devenv.local.nix
 # pre-commit
 .pre-commit-config.yaml
 
-# electron-vite build output
-out
-dist_electron
+# Generated TypeScript state
+*.tsbuildinfo
 
-# Tauri 的 Bun sidecar 是 60MB 以上的架构产物，只在构建时生成
+# Tauri's Bun sidecar is generated during builds.
 /src-tauri/binaries/*
 /src-tauri/target
 /src-tauri/gen/schemas
