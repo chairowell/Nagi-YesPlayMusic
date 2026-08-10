@@ -421,12 +421,14 @@ export const useAppStore = defineStore('app', {
       });
     },
     async fetchUserProfile() {
-      if (!isAccountLoggedIn()) return;
+      if (!isAccountLoggedIn()) return false;
       const sessionEpoch = this.sessionEpoch;
       const result = await userAccount();
       if (sessionEpoch === this.sessionEpoch && result.code === 200) {
         this.updateData({ key: 'user', value: result.profile });
+        return true;
       }
+      return false;
     },
   },
 });

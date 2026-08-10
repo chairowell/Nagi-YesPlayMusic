@@ -46,11 +46,9 @@ export async function migrateLegacyDesktopSettings({
         decodeSettingsState(legacySettings, defaultStorageState.settings)
       )
     );
-    // Electron lacks complete queue and account snapshots; use safe defaults and let the API restore them.
-    storage.setItem('data', JSON.stringify(defaultStorageState.data));
-    storage.setItem('player', JSON.stringify(defaultStorageState.player));
+    // Renderer-origin data requires a separate migration path.
     storage.setItem('appVersion', JSON.stringify(pkg.version));
-    storage.setItem(MIGRATION_MARKER, 'done');
+    storage.setItem(MIGRATION_MARKER, 'settings-only');
     return true;
   } catch (error) {
     // Keep migration retryable when the legacy app temporarily locks its data.

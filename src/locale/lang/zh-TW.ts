@@ -282,5 +282,11 @@ export default {
     copied: '已複製',
     copyFailed: '複製失敗：',
     needToLogin: '此動作需要登入網易雲帳戶',
+    legacyMigrationComplete: '已匯入舊版帳號與播放狀態',
+    legacyMigrationPartial: '部分舊版資料無法匯入；原資料未被修改',
+    legacyMigrationCache: '已匯入舊版狀態；離線快取需要重新下載',
+    legacyMigrationLogin: '已匯入舊版播放狀態；請重新登入網易雲帳號',
+    legacyMigrationLoginAndCache:
+      '已匯入舊版播放狀態；請重新登入，離線快取需要重新下載',
   },
 };

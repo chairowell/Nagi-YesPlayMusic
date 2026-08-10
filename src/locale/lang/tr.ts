@@ -273,5 +273,14 @@ export default {
   toast: {
     savedToMyLikedSongs: 'Beğendiğim Müziklere Kaydet',
     removedFromMyLikedSongs: 'Beğendiğim Müziklerden Kaldır',
+    legacyMigrationComplete: 'Eski hesap ve oynatma durumu içe aktarıldı',
+    legacyMigrationPartial:
+      'Bazı eski veriler içe aktarılamadı; eski profil değiştirilmedi',
+    legacyMigrationCache:
+      'Eski durum içe aktarıldı; çevrimdışı şarkıları yeniden indirin',
+    legacyMigrationLogin:
+      'Eski oynatma durumu içe aktarıldı; lütfen yeniden giriş yapın',
+    legacyMigrationLoginAndCache:
+      'Eski oynatma durumu içe aktarıldı; giriş yapıp çevrimdışı şarkıları yeniden indirin',
   },
 };

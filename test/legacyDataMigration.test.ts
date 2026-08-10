@@ -7,7 +7,7 @@ import {
 } from './helpers/memoryStorage';
 
 describe('Electron → Tauri 设置迁移', () => {
-  test('首次启动只导入小体积设置并保留新版默认字段', async () => {
+  test('首次启动只标记 settings-only，不伪造 renderer 数据', async () => {
     const storage = createMemoryStorage();
     const migrated = await migrateLegacyDesktopSettings({
       isTauri: true,
@@ -24,13 +24,11 @@ describe('Electron → Tauri 设置迁移', () => {
       cacheLimit: null,
       enableGlobalShortcut: true,
     });
-    expect(JSON.parse(requireStoredItem(storage, 'data'))).toEqual({
-      user: {},
-      likedSongPlaylistID: 0,
-      lastRefreshCookieDate: 0,
-      loginMode: null,
-    });
-    expect(storage.getItem('legacyElectronSettingsImportedV1')).toBe('done');
+    expect(storage.getItem('data')).toBeNull();
+    expect(storage.getItem('player')).toBeNull();
+    expect(storage.getItem('legacyElectronSettingsImportedV1')).toBe(
+      'settings-only'
+    );
   });
 
   test('已有 Tauri 数据时绝不拿旧版设置覆盖', async () => {

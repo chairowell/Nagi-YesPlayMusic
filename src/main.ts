@@ -3,6 +3,10 @@ import '@/assets/css/global.scss';
 import NProgress from 'nprogress';
 import '@/assets/css/nprogress.css';
 import { migrateLegacyDesktopSettings } from '@/services/legacyDataMigration';
+import {
+  migrateLegacyRendererData,
+  type LegacyMigrationNotice,
+} from '@/services/legacyRendererMigration';
 import { isDesktopRuntime } from '@/utils/runtime';
 import { purgeLegacyDesktopAuthStorage } from '@/utils/authStorage';
 import { shouldOpenLibraryOnStartup } from '@/services/startupNavigation';
@@ -25,8 +29,41 @@ console.log(
 
 NProgress.configure({ showSpinner: false, trickleSpeed: 100 });
 
+function showLegacyMigrationRetry(): void {
+  const root = document.querySelector<HTMLElement>('#app');
+  if (!root) return;
+  const isChinese = navigator.language.toLowerCase().startsWith('zh');
+  const title = document.createElement('h1');
+  const message = document.createElement('p');
+  const retry = document.createElement('button');
+  const skip = document.createElement('button');
+  title.textContent = isChinese
+    ? '旧版数据暂时无法读取'
+    : 'Unable to read Electron data';
+  message.textContent = isChinese
+    ? '请退出旧版 YesPlayMusic 后重试。继续会跳过旧账号和播放状态导入。'
+    : 'Quit the Electron version and retry. Continuing skips its account and playback state.';
+  retry.textContent = isChinese ? '重试' : 'Retry';
+  skip.textContent = isChinese ? '跳过导入' : 'Skip import';
+  retry.addEventListener('click', () => window.location.reload());
+  skip.addEventListener('click', () => {
+    localStorage.setItem('legacyElectronRendererImportedV1', 'skipped-by-user');
+    window.location.reload();
+  });
+  root.replaceChildren(title, message, retry, skip);
+  root.style.cssText =
+    'max-width:520px;margin:15vh auto;padding:32px;font:16px/1.6 system-ui;text-align:center';
+  for (const button of [retry, skip]) {
+    button.style.cssText = 'margin:8px;padding:8px 16px;cursor:pointer';
+  }
+}
+
 async function bootstrap() {
-  // Migrate storage before evaluating modules that read it.
+  const rendererMigration = await migrateLegacyRendererData();
+  if (rendererMigration?.status === 'retry-required') {
+    showLegacyMigrationRetry();
+    return;
+  }
   await migrateLegacyDesktopSettings();
   purgeLegacyDesktopAuthStorage(localStorage, isDesktopRuntime);
   const { appStore, default: pinia } = await import('./stores');
@@ -66,6 +103,16 @@ async function bootstrap() {
     await router.replace({ name: 'library' });
   }
   app.mount('#app');
+  if (rendererMigration?.status === 'completed' && rendererMigration.notice) {
+    const noticeKeys: Record<LegacyMigrationNotice, string> = {
+      complete: 'toast.legacyMigrationComplete',
+      'partial-import': 'toast.legacyMigrationPartial',
+      'cache-not-migrated': 'toast.legacyMigrationCache',
+      'login-required': 'toast.legacyMigrationLogin',
+      'login-and-cache': 'toast.legacyMigrationLoginAndCache',
+    };
+    appStore.showToast(i18n.t(noticeKeys[rendererMigration.notice]));
+  }
 }
 
 void bootstrap();

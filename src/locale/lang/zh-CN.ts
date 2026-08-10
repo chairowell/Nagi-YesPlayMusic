@@ -285,5 +285,11 @@ export default {
     copied: '已复制',
     copyFailed: '复制失败：',
     needToLogin: '此操作需要登录网易云帐号',
+    legacyMigrationComplete: '已导入旧版账号和播放状态',
+    legacyMigrationPartial: '部分旧版数据无法导入；原数据未被修改',
+    legacyMigrationCache: '已导入旧版状态；离线缓存需要重新下载',
+    legacyMigrationLogin: '已导入旧版播放状态；请重新登录网易云账号',
+    legacyMigrationLoginAndCache:
+      '已导入旧版播放状态；请重新登录，离线缓存需要重新下载',
   },
 };

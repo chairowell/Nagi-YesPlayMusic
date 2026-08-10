@@ -285,5 +285,15 @@ export default {
     copied: 'Copied',
     copyFailed: 'Copy failed: ',
     needToLogin: 'Need to log into netease account',
+    legacyMigrationComplete:
+      'Imported your Electron account and playback state',
+    legacyMigrationPartial:
+      'Some Electron data could not be imported; the old profile was not changed',
+    legacyMigrationCache:
+      'Imported your Electron state; offline songs must be downloaded again',
+    legacyMigrationLogin:
+      'Imported your Electron playback state; please sign in again',
+    legacyMigrationLoginAndCache:
+      'Imported your Electron playback state; sign in and download offline songs again',
   },
 };

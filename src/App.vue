@@ -68,6 +68,7 @@ import Navbar from './components/Navbar.vue';
 import Player from './components/Player.vue';
 import Toast from './components/Toast.vue';
 import { isAccountLoggedIn, isLooseLoggedIn } from '@/utils/auth';
+import { refreshAccountData } from '@/services/accountBootstrap';
 import Lyrics from './views/lyrics.vue';
 import { mapActions, mapState } from 'pinia';
 import { useAppStore } from '@/stores/app';
@@ -216,6 +217,7 @@ export default defineComponent({
       'fetchLikedSongs',
       'fetchLikedSongsWithDetails',
       'fetchLikedPlaylist',
+      'fetchUserProfile',
       'likeATrack',
       'showToast',
     ]),
@@ -335,11 +337,19 @@ export default defineComponent({
         minimize: () => sendDesktop('minimize'),
       });
     },
-    fetchData() {
+    async fetchData() {
       if (!isLooseLoggedIn()) return;
-      this.fetchLikedSongs();
-      this.fetchLikedSongsWithDetails();
-      this.fetchLikedPlaylist();
+      try {
+        await refreshAccountData({
+          accountLoggedIn: isAccountLoggedIn(),
+          fetchUserProfile: () => this.fetchUserProfile(),
+          fetchLikedSongs: () => this.fetchLikedSongs(),
+          fetchLikedPlaylist: () => this.fetchLikedPlaylist(),
+          fetchLikedSongsWithDetails: () => this.fetchLikedSongsWithDetails(),
+        });
+      } catch (error) {
+        console.warn('[account] Unable to refresh account data', error);
+      }
       // Load large library collections only when the library opens.
     },
     handleScroll() {

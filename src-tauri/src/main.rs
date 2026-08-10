@@ -5,6 +5,7 @@
 
 mod desktop_preferences;
 mod discord_presence;
+mod legacy_renderer_data;
 #[cfg(target_os = "linux")]
 mod linux_media;
 #[cfg(target_os = "macos")]
@@ -1975,6 +1976,7 @@ fn main() {
             renderer_ready,
             restore_compact_window,
             read_legacy_settings,
+            legacy_renderer_data::import_legacy_renderer_data,
             updater_configured
         ])
         .build(tauri::generate_context!())
