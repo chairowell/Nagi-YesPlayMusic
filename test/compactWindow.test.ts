@@ -71,6 +71,18 @@ test('Bar 和浏览尺寸分别记忆，更新一档不会覆盖另一档', () =
   expect(COMPACT_RESIZE_SETTLE_MS).toBeGreaterThanOrEqual(200);
 });
 
+test('窄而高的窗口按浏览档记忆，不污染播放条档', () => {
+  const storage = createMemoryStorage();
+
+  rememberCompactWindowFrame({ x: 0, y: 0, width: 600, height: 890 }, storage);
+
+  expect(loadCompactWindowMemory(storage)).toEqual({
+    bar: null,
+    browse: { x: 0, y: 0, width: 600, height: 890 },
+    lastMode: 'browse',
+  });
+});
+
 test('双屏切换档位时沿用当前屏位置，只恢复目标档位尺寸', () => {
   const currentOnRetina = { x: 5480, y: 220, width: 920, height: 620 };
   const rememberedBarOnExternal = { x: 180, y: 90, width: 520, height: 72 };

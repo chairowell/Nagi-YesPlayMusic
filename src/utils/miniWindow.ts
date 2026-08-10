@@ -92,3 +92,9 @@ export function shouldToggleMiniWindow(event: MiniWindowPointerEvent): boolean {
 export function isMiniWindowSize(size: WindowSize | null | undefined): boolean {
   return Number(size?.width) < 620 || Number(size?.height) < 340;
 }
+
+// The compact bar is for short windows only; a narrow-but-tall window keeps
+// the full player view (isMiniWindowSize still routes it to the lyrics page).
+export function isBarWindowSize(size: WindowSize | null | undefined): boolean {
+  return Number(size?.height) < 340;
+}

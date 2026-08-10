@@ -4,6 +4,7 @@ import {
   MINI_WINDOW_INTERACTIVE_SELECTOR,
   beginMiniWindowDragGesture,
   hasCrossedMiniWindowDragThreshold,
+  isBarWindowSize,
   isMiniWindowSize,
   shouldStartMiniWindowDrag,
   shouldToggleMiniWindow,
@@ -157,5 +158,13 @@ describe('迷你窗口拖拽边界', () => {
     expect(isMiniWindowSize({ width: 1440, height: 103 })).toBe(true);
     expect(isMiniWindowSize({ width: 560, height: 800 })).toBe(true);
     expect(isMiniWindowSize({ width: 920, height: 620 })).toBe(false);
+  });
+
+  test('播放条只属于矮窗口，窄而高保持完整播放器视图', () => {
+    expect(isBarWindowSize({ width: 1440, height: 103 })).toBe(true);
+    expect(isBarWindowSize({ width: 560, height: 800 })).toBe(false);
+    expect(isBarWindowSize({ width: 300, height: 500 })).toBe(false);
+    // 窄高窗口仍会路由到歌词页，只是不进播放条布局。
+    expect(isMiniWindowSize({ width: 560, height: 800 })).toBe(true);
   });
 });

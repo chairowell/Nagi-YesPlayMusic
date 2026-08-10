@@ -1,5 +1,5 @@
 import { isTauriRuntime } from '@/utils/runtime';
-import { isMiniWindowSize } from '@/utils/miniWindow';
+import { isBarWindowSize } from '@/utils/miniWindow';
 
 export const COMPACT_EXPANDED_SIZE = Object.freeze({ width: 920, height: 620 });
 export const COMPACT_RESIZE_SETTLE_MS = 250;
@@ -104,7 +104,7 @@ export function rememberCompactWindowFrame(
   const normalized = normalizeCompactWindowFrame(frame);
   const memory = loadCompactWindowMemory(storage);
   if (!normalized || !storage) return memory;
-  const mode: CompactWindowMode = isMiniWindowSize(normalized)
+  const mode: CompactWindowMode = isBarWindowSize(normalized)
     ? 'bar'
     : 'browse';
   const next: CompactWindowMemory = {
@@ -148,7 +148,7 @@ export function isCompactWindowPhysicalSize(
 ): boolean {
   const scale = Number(scaleFactor);
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-  return isMiniWindowSize({
+  return isBarWindowSize({
     width: Number(size?.width) / safeScale,
     height: Number(size?.height) / safeScale,
   });
@@ -234,7 +234,7 @@ export async function rememberCurrentCompactWindowFrame() {
   if (!frame || !snapshot.normal) return null;
   rememberCompactWindowFrame(frame);
   return {
-    mode: isMiniWindowSize(frame) ? 'bar' : 'browse',
+    mode: isBarWindowSize(frame) ? 'bar' : 'browse',
     frame,
   };
 }
@@ -244,7 +244,7 @@ export async function expandCompactWindow() {
   const snapshot = await captureCurrentCompactWindowSnapshot();
   const current = snapshot?.frame;
   // Ignore transient maximized dimensions from the window manager.
-  if (!current || (snapshot.normal && !isMiniWindowSize(current))) return false;
+  if (!current || (snapshot.normal && !isBarWindowSize(current))) return false;
 
   const memory = snapshot.normal
     ? rememberCompactWindowFrame(current)
@@ -270,7 +270,7 @@ export async function restoreCompactWindow() {
   if (compactWindowTransitioning) return false;
   const snapshot = await captureCurrentCompactWindowSnapshot();
   const current = snapshot?.frame;
-  if (!current || (snapshot.normal && isMiniWindowSize(current))) return false;
+  if (!current || (snapshot.normal && isBarWindowSize(current))) return false;
 
   const memory = snapshot.normal
     ? rememberCompactWindowFrame(current)

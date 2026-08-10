@@ -85,7 +85,7 @@ import {
   restoreCompactWindow,
   signalInitialWindowReady,
 } from '@/services/compactWindow';
-import { isMiniWindowSize } from '@/utils/miniWindow';
+import { isBarWindowSize, isMiniWindowSize } from '@/utils/miniWindow';
 import {
   isEditableShortcutTarget,
   resolveRuntimeShortcutAction,
@@ -133,7 +133,7 @@ export default defineComponent({
       userSelectNone: false,
       autoOpenedLyrics: false, // Restore lyrics only when compact mode opened it.
       compactWindowExpanded:
-        !isMiniWindowSize({
+        !isBarWindowSize({
           width: window.innerWidth,
           height: window.innerHeight,
         }) && hasRememberedBarFrame(),
@@ -274,13 +274,16 @@ export default defineComponent({
       if (!(await restoreCompactWindow())) return;
       this.compactWindowExpanded = false;
     },
-    // Show the compact player when the window becomes narrow.
+    // Open the lyrics player when the window becomes narrow or short.
     handleMiniResize() {
-      const isMini = isMiniWindowSize({
+      const size = {
         width: window.innerWidth,
         height: window.innerHeight,
-      });
-      this.compactWindowExpanded = !isMini && hasRememberedBarFrame();
+      };
+      const isMini = isMiniWindowSize(size);
+      // The Esc pill follows the bar/browse split, not the lyrics routing.
+      this.compactWindowExpanded =
+        !isBarWindowSize(size) && hasRememberedBarFrame();
       if (isMini && !this.showLyrics) {
         this.toggleLyrics();
         this.autoOpenedLyrics = true;

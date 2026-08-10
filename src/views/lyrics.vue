@@ -436,6 +436,7 @@ import {
 import {
   beginMiniWindowDragGesture,
   hasCrossedMiniWindowDragThreshold,
+  isBarWindowSize,
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
 import { ARTWORK_SIZE, buildArtworkURL } from '@/utils/artwork';
@@ -699,9 +700,12 @@ export default defineComponent({
     handleFullscreenChange() {
       this.isFullscreen = !!document.fullscreenElement;
     },
-    // Switch below the compact layout breakpoint.
+    // Switch below the compact layout breakpoint (short windows only).
     checkMini() {
-      const next = window.innerWidth < 620 || window.innerHeight < 340;
+      const next = isBarWindowSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
       // Two lyric lines need at least 64px of height.
       this.miniTall = window.innerHeight >= 64;
       if (next === this.isMini) return;
