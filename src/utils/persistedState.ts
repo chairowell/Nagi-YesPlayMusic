@@ -71,7 +71,6 @@ function decodeShortcuts(value: unknown, defaults: Shortcut[]): Shortcut[] {
 
 function decodeProxyConfig(value: unknown, fallback: ProxyConfig): ProxyConfig {
   const stored = decodeStoredRecord(value);
-  const port = stored['port'];
   const protocol = stored['protocol'];
   return {
     protocol:
@@ -80,8 +79,22 @@ function decodeProxyConfig(value: unknown, fallback: ProxyConfig): ProxyConfig {
         : fallback.protocol,
     server:
       typeof stored['server'] === 'string' ? stored['server'] : fallback.server,
-    port: typeof port === 'number' || port === null ? port : fallback.port,
+    port: proxyPortValue(stored['port'], fallback.port),
   };
+}
+
+function proxyPortValue(value: unknown, fallback: number | null): number | null {
+  if (value === null) return null;
+  const normalized =
+    typeof value === 'string' && /^(?:0|[1-9]\d*)$/.test(value)
+      ? Number(value)
+      : value;
+  return typeof normalized === 'number' &&
+    Number.isSafeInteger(normalized) &&
+    normalized >= 1 &&
+    normalized <= 65_535
+    ? normalized
+    : fallback;
 }
 
 function stringValue(value: unknown, fallback: string): string {

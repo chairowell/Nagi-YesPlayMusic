@@ -174,4 +174,10 @@ describe('Tauri 本机安装包', () => {
       /run_on_main_thread\([\s\S]*tray_by_id\("main-tray"\)[\s\S]*tray\.set_icon/
     );
   });
+
+  test('托盘不可用时仍继续创建主窗口', () => {
+    expect(rustMain).toContain('.plugin(tauri_plugin_dialog::init())');
+    expect(rustMain).toContain('if let Err(error) = create_tray(app)');
+    expect(rustMain).not.toContain('create_tray(app)?;');
+  });
 });

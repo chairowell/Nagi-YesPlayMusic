@@ -49,6 +49,7 @@ use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::{
@@ -352,6 +353,33 @@ fn sidecar_exit_action(shutdown_requested: bool, completed_restarts: usize) -> S
     }
 }
 
+fn sidecar_startup_error_message(port: u16, detail: &str) -> String {
+    format!(
+        "后台服务无法启动。端口 {port} 可能已被其他程序占用。\n\n请退出其他 YesPlayMusic 实例或释放该端口后重试。\n\n技术信息：{detail}"
+    )
+}
+
+fn handle_sidecar_startup_failure(
+    app: &AppHandle,
+    port: u16,
+    error: impl Into<String>,
+    show_dialog: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let error = error.into();
+    if !show_dialog {
+        return Err(std::io::Error::other(error).into());
+    }
+    let message = sidecar_startup_error_message(port, &error);
+    eprintln!("[tauri] {message}");
+    let exit_handle = app.clone();
+    app.dialog()
+        .message(message)
+        .title("YesPlayMusic 无法启动")
+        .kind(MessageDialogKind::Error)
+        .show(move |_| exit_handle.exit(1));
+    Ok(())
+}
+
 struct DesktopPreferencesState(Mutex<DesktopPreferences>);
 
 struct ClosePromptState(AtomicBool);
@@ -378,6 +406,8 @@ struct TrayMenuRegistration {
 }
 
 struct TrayMenuState(Mutex<TrayMenuRegistration>);
+
+struct TrayAvailabilityState(AtomicBool);
 
 #[cfg(target_os = "linux")]
 struct LinuxMediaState(Option<LinuxMedia>);
@@ -718,6 +748,26 @@ fn hide_main_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn tray_recovery_available(is_macos: bool, tray_available: bool) -> bool {
+    is_macos || tray_available
+}
+
+fn can_hide_main_window(app: &AppHandle) -> bool {
+    let tray_available = app
+        .try_state::<TrayAvailabilityState>()
+        .is_some_and(|state| state.0.load(Ordering::Acquire));
+    tray_recovery_available(cfg!(target_os = "macos"), tray_available)
+}
+
+fn hide_main_window_or_exit(app: &AppHandle) -> Result<(), String> {
+    if can_hide_main_window(app) {
+        hide_main_window(app)
+    } else {
+        app.exit(0);
+        Ok(())
+    }
+}
+
 fn show_main_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_minimized().map_err(|error| error.to_string())? {
@@ -789,7 +839,7 @@ fn resolve_close_choice(app: &AppHandle, payload: serde_json::Value) -> Result<(
 
     match choice.action {
         CloseChoiceAction::Exit => app.exit(0),
-        CloseChoiceAction::MinimizeToTray => hide_main_window(app)?,
+        CloseChoiceAction::MinimizeToTray => hide_main_window_or_exit(app)?,
     }
     Ok(())
 }
@@ -849,7 +899,7 @@ fn handle_app_menu_event(app: &AppHandle, id: &str) {
             let _ = app.emit("desktop://changeRouteTo", path);
         }
         AppMenuAction::Hide => {
-            if let Err(error) = hide_main_window(app) {
+            if let Err(error) = hide_main_window_or_exit(app) {
                 eprintln!("[tauri] failed to hide the main window: {error}");
             }
         }
@@ -1598,6 +1648,9 @@ fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.icon(icon.clone());
     }
     builder.build(app)?;
+    app.state::<TrayAvailabilityState>()
+        .0
+        .store(true, Ordering::Release);
     {
         let state = app.state::<TrayMenuState>();
         let mut registration = state.0.lock().map_err(|error| error.to_string())?;
@@ -2103,9 +2156,13 @@ fn create_main_window(
                 match close_decision(cfg!(target_os = "macos"), option) {
                     CloseDecision::Exit => app.exit(0),
                     CloseDecision::Hide | CloseDecision::MinimizeToTray => {
-                        api.prevent_close();
-                        if let Err(error) = hide_main_window(app) {
-                            eprintln!("[tauri] failed to hide the main window: {error}");
+                        if can_hide_main_window(app) {
+                            api.prevent_close();
+                            if let Err(error) = hide_main_window(app) {
+                                eprintln!("[tauri] failed to hide the main window: {error}");
+                            }
+                        } else {
+                            app.exit(0);
                         }
                     }
                     CloseDecision::Ask => {
@@ -2188,6 +2245,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(updater.build())
         // Skip ambiguous physical-pixel restore across mixed-DPI displays.
         // The renderer restores logical size while the plugin still persists on exit.
@@ -2211,6 +2269,7 @@ fn main() {
             )));
             app.manage(ClosePromptState(AtomicBool::new(false)));
             app.manage(TrayMenuState(Mutex::new(TrayMenuRegistration::default())));
+            app.manage(TrayAvailabilityState(AtomicBool::new(false)));
             app.manage(TrayCoverState::default());
             app.manage(TrayTitleState::default());
             app.manage(DiscordPresenceHandle::default());
@@ -2249,6 +2308,9 @@ fn main() {
             } else {
                 RELEASE_WEB_PORT
             };
+            let core_smoke_test = is_smoke_test(env::args());
+            let webview_smoke_test = is_webview_smoke_test(env::args());
+            let show_startup_error_dialog = !core_smoke_test && !webview_smoke_test;
             let sidecar_config = SidecarLaunchConfig {
                 health_token,
                 upstream_proxy: upstream_proxy.map(|proxy| proxy.to_string()),
@@ -2261,14 +2323,28 @@ fn main() {
                 replacement_ready: AtomicBool::new(false),
                 permanently_unavailable: AtomicBool::new(false),
             });
-            let (events, child) = start_sidecar(
+            let (events, child) = match start_sidecar(
                 app.handle(),
                 &sidecar_config.health_token,
                 sidecar_config.upstream_proxy.as_deref(),
-            )
-            .map_err(std::io::Error::other)?;
+            ) {
+                Ok(process) => process,
+                Err(error) => {
+                    return handle_sidecar_startup_failure(
+                        app.handle(),
+                        ready_port,
+                        error,
+                        show_startup_error_dialog,
+                    );
+                }
+            };
             if !install_sidecar_process(app.handle(), child, events, sidecar_config.clone()) {
-                return Err(std::io::Error::other("无法管理 Sidecar 进程").into());
+                return handle_sidecar_startup_failure(
+                    app.handle(),
+                    ready_port,
+                    "无法管理 Sidecar 进程",
+                    show_startup_error_dialog,
+                );
             }
             let sidecar_state = app.state::<SidecarState>();
             if let Err(error) = wait_for_supervised_sidecar(
@@ -2282,15 +2358,18 @@ fn main() {
                     .shutdown_requested
                     .store(true, Ordering::Release);
                 stop_sidecar(app.handle());
-                return Err(std::io::Error::other(error).into());
+                return handle_sidecar_startup_failure(
+                    app.handle(),
+                    ready_port,
+                    error,
+                    show_startup_error_dialog,
+                );
             }
             println!(
                 "[tauri] ready: pid={}, port={ready_port}",
                 std::process::id()
             );
 
-            let core_smoke_test = is_smoke_test(env::args());
-            let webview_smoke_test = is_webview_smoke_test(env::args());
             if core_smoke_test || webview_smoke_test {
                 // Hidden smoke checks avoid the Dock and focus without affecting normal launches.
                 #[cfg(target_os = "macos")]
@@ -2314,7 +2393,9 @@ fn main() {
                     handle.exit(0);
                 });
             } else {
-                create_tray(app)?;
+                if let Err(error) = create_tray(app) {
+                    eprintln!("[tauri] tray integration unavailable; continuing: {error}");
+                }
                 app.state::<StartupWindowState>()
                     .0
                     .store(true, Ordering::Release);
@@ -2377,8 +2458,9 @@ mod tests {
         app_about_metadata, app_menu_action, claim_startup_show, decode_tray_cover, is_smoke_test,
         is_webview_smoke_test, normalize_global_shortcut, parse_legacy_settings,
         response_has_sidecar_identity, should_reset_restart_budget, sidecar_exit_action,
-        tray_cover_url, tray_title_for_visibility, wait_for_supervised_sidecar,
-        window_frame_has_reachable_area, AppMenuAction, SidecarExitAction,
+        sidecar_startup_error_message, tray_cover_url, tray_recovery_available,
+        tray_title_for_visibility, wait_for_supervised_sidecar, window_frame_has_reachable_area,
+        AppMenuAction, SidecarExitAction,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
     use tauri_plugin_global_shortcut::Shortcut;
@@ -2408,6 +2490,22 @@ mod tests {
         pending.store(true, Ordering::Release);
         assert!(claim_startup_show(&pending));
         assert!(!claim_startup_show(&pending));
+    }
+
+    #[test]
+    fn startup_error_explains_how_to_recover_from_an_occupied_port() {
+        let message = sidecar_startup_error_message(28_232, "health check timed out");
+
+        assert!(message.contains("28232"));
+        assert!(message.contains("其他 YesPlayMusic 实例"));
+        assert!(message.contains("health check timed out"));
+    }
+
+    #[test]
+    fn only_macos_can_recover_a_hidden_window_without_a_tray() {
+        assert!(tray_recovery_available(true, false));
+        assert!(tray_recovery_available(false, true));
+        assert!(!tray_recovery_available(false, false));
     }
 
     #[test]

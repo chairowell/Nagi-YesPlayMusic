@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mergeSettings } from '../src/utils/updateApp';
 import defaultStorageState from '../src/stores/defaults';
 import {
+  decodeSettingsState,
   normalizeLyricFontSize,
   normalizeMusicQuality,
 } from '../src/utils/persistedState';
@@ -98,5 +99,32 @@ describe('设置版本迁移', () => {
     });
     expect(settings.musicQuality).toBe(192000);
     expect(settings.lyricFontSize).toBe(36);
+  });
+
+  test('旧版代理端口字符串会被安全迁移', () => {
+    const settings = decodeSettingsState(
+      {
+        proxyConfig: {
+          protocol: 'HTTP',
+          server: '127.0.0.1',
+          port: '7890',
+        },
+      },
+      defaultStorageState.settings
+    );
+
+    expect(settings.proxyConfig).toEqual({
+      protocol: 'HTTP',
+      server: '127.0.0.1',
+      port: 7890,
+    });
+    for (const invalidPort of ['0', '65536', '12.5', 'not-a-port']) {
+      expect(
+        decodeSettingsState(
+          { proxyConfig: { port: invalidPort } },
+          defaultStorageState.settings
+        ).proxyConfig.port
+      ).toBeNull();
+    }
   });
 });
