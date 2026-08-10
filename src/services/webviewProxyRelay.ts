@@ -1,5 +1,7 @@
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
+import tls from 'node:tls';
 import type {
   IncomingMessage,
   RequestOptions,
@@ -18,6 +20,7 @@ export interface ProxyRelay {
 export interface ProxyRelayOptions {
   port: number;
   upstreamProxy: string;
+  upstreamTlsCa?: string;
 }
 
 interface Target {
@@ -57,16 +60,16 @@ function assertPort(port: number): void {
 
 export function parseUpstreamProxy(value: string): URL {
   if (value.trim() !== value) {
-    throw new Error('upstream proxy must be a valid HTTP URL');
+    throw new Error('upstream proxy must be a valid HTTP(S) URL');
   }
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error('upstream proxy must be a valid HTTP URL');
+    throw new Error('upstream proxy must be a valid HTTP(S) URL');
   }
   if (
-    url.protocol !== 'http:' ||
+    !['http:', 'https:'].includes(url.protocol) ||
     !url.hostname ||
     url.username ||
     url.password ||
@@ -77,9 +80,19 @@ export function parseUpstreamProxy(value: string): URL {
     url.hash ||
     url.port === '0'
   ) {
-    throw new Error('upstream proxy must contain only an HTTP host and port');
+    throw new Error(
+      'upstream proxy must contain only an HTTP(S) host and port'
+    );
   }
   return url;
+}
+
+function proxyPort(upstream: URL): number {
+  return upstream.port
+    ? Number(upstream.port)
+    : upstream.protocol === 'https:'
+    ? 443
+    : 80;
 }
 
 function failResponse(
@@ -163,9 +176,11 @@ function parseConnectTarget(authority: string): Target {
 function pipeHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  options: RequestOptions
+  options: RequestOptions,
+  secure = false
 ): void {
-  const outgoing = http.request(options, upstreamResponse => {
+  const transport = secure ? https : http;
+  const outgoing = transport.request(options, upstreamResponse => {
     response.writeHead(
       upstreamResponse.statusCode ?? 502,
       upstreamResponse.statusMessage,
@@ -185,7 +200,8 @@ function pipeHttpRequest(
 function forwardHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  upstream: URL
+  upstream: URL,
+  upstreamTlsCa?: string
 ): void {
   let target: ReturnType<typeof parseHttpTarget>;
   try {
@@ -208,13 +224,19 @@ function forwardHttpRequest(
     return;
   }
 
-  pipeHttpRequest(request, response, {
-    hostname: unbracketHost(upstream.hostname),
-    port: upstream.port ? Number(upstream.port) : 80,
-    method: request.method,
-    path: target.upstreamPath,
-    headers,
-  });
+  pipeHttpRequest(
+    request,
+    response,
+    {
+      hostname: unbracketHost(upstream.hostname),
+      port: proxyPort(upstream),
+      method: request.method,
+      path: target.upstreamPath,
+      headers,
+      ...(upstreamTlsCa === undefined ? {} : { ca: upstreamTlsCa }),
+    },
+    upstream.protocol === 'https:'
+  );
 }
 
 function connectDirectly(
@@ -245,17 +267,25 @@ function connectThroughUpstream(
   head: Buffer,
   authority: string,
   upstream: URL,
-  trackSocket: (socket: Socket) => void
+  trackSocket: (socket: Socket) => void,
+  upstreamTlsCa?: string
 ): void {
-  const upstreamSocket = net.connect(
-    upstream.port ? Number(upstream.port) : 80,
-    unbracketHost(upstream.hostname)
-  );
+  const upstreamHost = unbracketHost(upstream.hostname);
+  const secure = upstream.protocol === 'https:';
+  const upstreamSocket = secure
+    ? tls.connect({
+        host: upstreamHost,
+        port: proxyPort(upstream),
+        ALPNProtocols: ['http/1.1'],
+        ...(net.isIP(upstreamHost) === 0 ? { servername: upstreamHost } : {}),
+        ...(upstreamTlsCa === undefined ? {} : { ca: upstreamTlsCa }),
+      })
+    : net.connect(proxyPort(upstream), upstreamHost);
   trackSocket(upstreamSocket);
   let responseBuffer = Buffer.alloc(0);
   let responseStarted = false;
   let tunnelReady = false;
-  upstreamSocket.once('connect', () => {
+  upstreamSocket.once(secure ? 'secureConnect' : 'connect', () => {
     upstreamSocket.write(
       `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\nProxy-Connection: keep-alive\r\n\r\n`
     );
@@ -304,7 +334,8 @@ function forwardConnect(
   client: Duplex,
   head: Buffer,
   upstream: URL,
-  trackSocket: (socket: Socket) => void
+  trackSocket: (socket: Socket) => void,
+  upstreamTlsCa?: string
 ): void {
   const authority = request.url ?? '';
   let target: Target;
@@ -318,7 +349,14 @@ function forwardConnect(
     connectDirectly(client, head, target, trackSocket);
     return;
   }
-  connectThroughUpstream(client, head, authority, upstream, trackSocket);
+  connectThroughUpstream(
+    client,
+    head,
+    authority,
+    upstream,
+    trackSocket,
+    upstreamTlsCa
+  );
 }
 
 export async function startWebviewProxyRelay(
@@ -332,10 +370,17 @@ export async function startWebviewProxyRelay(
     socket.once('close', () => sockets.delete(socket));
   };
   const server = http.createServer((request, response) => {
-    forwardHttpRequest(request, response, upstream);
+    forwardHttpRequest(request, response, upstream, options.upstreamTlsCa);
   });
   server.on('connect', (request, socket, head) => {
-    forwardConnect(request, socket, head, upstream, trackSocket);
+    forwardConnect(
+      request,
+      socket,
+      head,
+      upstream,
+      trackSocket,
+      options.upstreamTlsCa
+    );
   });
   server.on('connection', trackSocket);
 

@@ -54,7 +54,7 @@ describe('sidecar 参数', () => {
     );
   });
 
-  test('代理 relay 参数必须成对且 upstream 只能是纯 HTTP endpoint', () => {
+  test('代理 relay 参数必须成对且 upstream 只能是纯 HTTP(S) endpoint', () => {
     expect(
       parseSidecarArgs([
         '--api-only',
@@ -67,6 +67,13 @@ describe('sidecar 参数', () => {
       proxyRelayPort: 28233,
       upstreamProxy: 'http://proxy.example:8080',
     });
+    expect(
+      parseSidecarArgs([
+        '--api-only',
+        '--upstream-proxy',
+        'https://proxy.example:8443',
+      ])
+    ).toMatchObject({ upstreamProxy: 'https://proxy.example:8443' });
     expect(() =>
       parseSidecarArgs(['--api-only', '--proxy-relay-port', '28233'])
     ).toThrow('--proxy-relay-port 必须与 --upstream-proxy 一起使用');
@@ -76,6 +83,6 @@ describe('sidecar 参数', () => {
         '--upstream-proxy',
         'https://user:pass@proxy.example:8080/path',
       ])
-    ).toThrow('upstream proxy must contain only an HTTP host and port');
+    ).toThrow('upstream proxy must contain only an HTTP(S) host and port');
   });
 });

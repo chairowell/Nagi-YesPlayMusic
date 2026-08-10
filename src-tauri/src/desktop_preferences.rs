@@ -205,14 +205,16 @@ pub fn parse_set_proxy_payload(value: Value) -> Result<Url, PreferenceError> {
         ));
     }
 
-    // WebView uses an HTTP CONNECT endpoint for both renderer choices.
-    let _protocol = payload.protocol;
+    let protocol = match payload.protocol {
+        ProxyProtocol::Http => "http",
+        ProxyProtocol::Https => "https",
+    };
     let server = if payload.server.parse::<std::net::Ipv6Addr>().is_ok() {
         format!("[{}]", payload.server)
     } else {
         payload.server
     };
-    let url = Url::parse(&format!("http://{}:{}", server, payload.port))
+    let url = Url::parse(&format!("{protocol}://{}:{}", server, payload.port))
         .map_err(|_| PreferenceError::invalid("proxy server or port is invalid"))?;
     validate_proxy_url(&url)?;
     Ok(url)
@@ -346,7 +348,7 @@ fn remove_proxy_from_dir(config_dir: &Path) -> Result<(), PreferenceError> {
 }
 
 fn validate_proxy_url(url: &Url) -> Result<(), PreferenceError> {
-    if url.scheme() != "http"
+    if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
@@ -355,7 +357,7 @@ fn validate_proxy_url(url: &Url) -> Result<(), PreferenceError> {
         || url.fragment().is_some()
     {
         return Err(PreferenceError::invalid(
-            "proxy URL must contain only an HTTP host and port",
+            "proxy URL must contain only an HTTP(S) host and port",
         ));
     }
     Ok(())
@@ -598,7 +600,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(http.as_str(), "http://proxy.example.com:8080/");
-        assert_eq!(https.as_str(), "http://127.0.0.1:3128/");
+        assert_eq!(https.as_str(), "https://127.0.0.1:3128/");
         assert_eq!(
             parse_set_proxy_payload(json!({
                 "protocol": "HTTP",

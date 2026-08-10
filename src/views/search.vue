@@ -91,6 +91,7 @@ import { useAppStore } from '@/stores/app';
 import { getTrackDetail } from '@/api/track';
 import { search as searchApi } from '@/api/others';
 import type { SearchResult } from '@/api/others';
+import { settleIndependentRequests } from '@/services/searchBatches';
 import NProgress from 'nprogress';
 
 import TrackList from '@/components/TrackList.vue';
@@ -181,10 +182,10 @@ export default defineComponent({
 
       const requestAll = (requests: Array<Promise<SearchBatch>>) => {
         const keywords = this.keywords;
-        Promise.all(requests)
-          .then(results => {
+        settleIndependentRequests(requests)
+          .then(({ values, errors }) => {
             if (keywords != this.keywords) return;
-            results.forEach(batch => {
+            values.forEach(batch => {
               const searchType = batch.type;
               const result = batch.result;
               if (result === undefined) return;
@@ -209,6 +210,9 @@ export default defineComponent({
             });
             NProgress.done();
             this.show = true;
+            if (errors.length > 0) {
+              this.showToast(`部分搜索失败：${String(errors[0])}`);
+            }
           })
           .catch((error: unknown) => {
             NProgress.done();

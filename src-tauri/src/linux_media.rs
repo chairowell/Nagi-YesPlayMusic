@@ -159,11 +159,24 @@ impl LinuxMedia {
 #[derive(Debug)]
 enum MediaUpdate {
     Metadata(MediaMetadata),
+    LyricsDelivered {
+        generation: u64,
+        metadata: MediaMetadata,
+    },
     Playback(PlaybackState),
-    Position { seconds: f64, emit_seeked: bool },
+    Position {
+        seconds: f64,
+        emit_seeked: bool,
+    },
     Repeat(RepeatMode),
     Shuffle(bool),
     Shutdown,
+}
+
+struct OsdLyricsJob {
+    generation: u64,
+    metadata: MediaMetadata,
+    lyrics: OsdLyrics,
 }
 
 #[derive(Default)]
@@ -204,6 +217,40 @@ impl UpdateQueue {
     }
 }
 
+fn spawn_osd_worker<F>(
+    queue: Arc<UpdateQueue>,
+    mut deliver: F,
+) -> Result<mpsc::Sender<OsdLyricsJob>, String>
+where
+    F: FnMut(&OsdLyrics) + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel::<OsdLyricsJob>();
+    thread::Builder::new()
+        .name("yesplaymusic-osdlyrics".into())
+        .spawn(move || {
+            while let Ok(job) = receiver.recv() {
+                deliver(&job.lyrics);
+                queue.push(MediaUpdate::LyricsDelivered {
+                    generation: job.generation,
+                    metadata: job.metadata,
+                });
+            }
+        })
+        .map_err(|error| format!("failed to start OSDLyrics worker: {error}"))?;
+    Ok(sender)
+}
+
+fn start_osd_worker(queue: Arc<UpdateQueue>) -> Result<mpsc::Sender<OsdLyricsJob>, String> {
+    let mut osd_started = false;
+    spawn_osd_worker(queue, move |lyrics| {
+        if let Err(error) =
+            futures_lite::future::block_on(deliver_osd_lyrics(lyrics, &mut osd_started))
+        {
+            eprintln!("OSDLyrics update failed: {error}");
+        }
+    })
+}
+
 async fn run_media_service(
     queue: Arc<UpdateQueue>,
     control_handler: Arc<dyn Fn(MediaControl) + Send + Sync>,
@@ -233,7 +280,10 @@ async fn run_media_service(
 
     let server = player.run();
     let mut server = pin!(server);
-    let mut osd_started = false;
+    let osd_sender = start_osd_worker(Arc::clone(&queue))
+        .map_err(|error| eprintln!("{error}"))
+        .ok();
+    let mut metadata_generation = 0_u64;
 
     loop {
         let next = poll_fn(|context| {
@@ -251,7 +301,14 @@ async fn run_media_service(
             break;
         }
 
-        if let Err(error) = apply_update(&player, update, &mut osd_started).await {
+        if let Err(error) = apply_update(
+            &player,
+            update,
+            osd_sender.as_ref(),
+            &mut metadata_generation,
+        )
+        .await
+        {
             eprintln!("Linux media update failed: {error}");
         }
     }
@@ -308,17 +365,34 @@ fn connect_controls(player: &Player, control_handler: Arc<dyn Fn(MediaControl) +
 async fn apply_update(
     player: &Player,
     update: MediaUpdate,
-    osd_started: &mut bool,
+    osd_sender: Option<&mpsc::Sender<OsdLyricsJob>>,
+    metadata_generation: &mut u64,
 ) -> Result<(), zbus::Error> {
     match update {
         MediaUpdate::Metadata(mut metadata) => {
+            *metadata_generation = (*metadata_generation).wrapping_add(1);
             if let Some(lyrics) = metadata.lyrics.take() {
-                if let Err(error) = deliver_osd_lyrics(&lyrics, osd_started).await {
-                    eprintln!("OSDLyrics update failed: {error}");
+                if let Some(sender) = osd_sender {
+                    let job = OsdLyricsJob {
+                        generation: *metadata_generation,
+                        metadata,
+                        lyrics,
+                    };
+                    match sender.send(job) {
+                        Ok(()) => return Ok(()),
+                        Err(error) => metadata = error.0.metadata,
+                    }
                 }
             }
-            player.set_position(Time::ZERO);
-            player.set_metadata(to_mpris_metadata(metadata)).await?;
+            publish_metadata(player, metadata).await?;
+        }
+        MediaUpdate::LyricsDelivered {
+            generation,
+            metadata,
+        } => {
+            if generation == *metadata_generation {
+                publish_metadata(player, metadata).await?;
+            }
         }
         MediaUpdate::Playback(state) => {
             player
@@ -345,6 +419,11 @@ async fn apply_update(
     }
 
     Ok(())
+}
+
+async fn publish_metadata(player: &Player, metadata: MediaMetadata) -> Result<(), zbus::Error> {
+    player.set_position(Time::ZERO);
+    player.set_metadata(to_mpris_metadata(metadata)).await
 }
 
 fn to_mpris_metadata(metadata: MediaMetadata) -> Metadata {
@@ -504,6 +583,27 @@ async fn call_osd_lyrics(
 mod tests {
     use super::*;
 
+    fn metadata_fixture(track_id: &str) -> MediaMetadata {
+        MediaMetadata {
+            track_id: track_id.to_string(),
+            title: "Title".to_string(),
+            album: "Album".to_string(),
+            artists: vec!["Artist".to_string()],
+            artwork_url: None,
+            media_url: None,
+            length_seconds: 180.0,
+            lyrics: None,
+        }
+    }
+
+    fn lyrics_fixture() -> OsdLyrics {
+        OsdLyrics {
+            title: "Title".to_string(),
+            artists: vec!["Artist".to_string()],
+            content: "[00:00.00]Lyrics".to_string(),
+        }
+    }
+
     #[test]
     fn sanitizes_mpris_track_paths() {
         assert_eq!(
@@ -540,5 +640,55 @@ mod tests {
             std::iter::repeat_n(Duration::ZERO, attempts),
         ));
         assert_eq!(result, Ok(7));
+    }
+
+    #[test]
+    fn osd_worker_does_not_block_the_media_update_queue() {
+        let queue = Arc::new(UpdateQueue::default());
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let sender = spawn_osd_worker(Arc::clone(&queue), move |_| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        })
+        .unwrap();
+
+        sender
+            .send(OsdLyricsJob {
+                generation: 7,
+                metadata: metadata_fixture("7"),
+                lyrics: lyrics_fixture(),
+            })
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        queue.push(MediaUpdate::Playback(PlaybackState::Playing));
+
+        let update = queue
+            .values
+            .lock()
+            .expect("media queue poisoned")
+            .pop_front();
+        assert!(matches!(
+            update,
+            Some(MediaUpdate::Playback(PlaybackState::Playing))
+        ));
+
+        release_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            let delivered = queue
+                .values
+                .lock()
+                .expect("media queue poisoned")
+                .pop_front();
+            if matches!(
+                delivered,
+                Some(MediaUpdate::LyricsDelivered { generation: 7, .. })
+            ) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 }

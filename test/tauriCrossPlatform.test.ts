@@ -14,6 +14,7 @@ const linuxConfig = JSON.parse(
   readFileSync('src-tauri/tauri.linux.conf.json', 'utf8')
 );
 const rustMain = readFileSync('src-tauri/src/main.rs', 'utf8');
+const linuxMedia = readFileSync('src-tauri/src/linux_media.rs', 'utf8');
 
 describe('Tauri 跨平台 Sidecar', () => {
   test('三个受支持平台生成 Tauri 要求的 target triple 文件名', () => {
@@ -92,5 +93,13 @@ describe('Tauri 本机安装包', () => {
       targetTriple: 'x86_64-pc-windows-msvc',
     });
     expect(windows.args).toContain('--windows-hide-console');
+  });
+
+  test('OSDLyrics 投递不占用 MPRIS 服务循环', () => {
+    expect(linuxMedia).toContain('yesplaymusic-osdlyrics');
+    expect(linuxMedia).toContain('MediaUpdate::LyricsDelivered');
+    expect(linuxMedia).not.toContain(
+      'deliver_osd_lyrics(&lyrics, osd_started).await'
+    );
   });
 });

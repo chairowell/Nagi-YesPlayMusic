@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
 import {
   isLoopbackProxyHost,
@@ -10,6 +12,14 @@ import type { AddressInfo } from 'node:net';
 import type { ProxyRelay } from '../src/services/webviewProxyRelay';
 
 const HOST = '127.0.0.1';
+const PROXY_CERTIFICATE = readFileSync(
+  new URL('./fixtures/proxy-ca.pem', import.meta.url),
+  'utf8'
+);
+const PROXY_PRIVATE_KEY = readFileSync(
+  new URL('./fixtures/proxy-key.pem', import.meta.url),
+  'utf8'
+);
 const servers: Array<http.Server | net.Server> = [];
 const relays: ProxyRelay[] = [];
 
@@ -169,12 +179,14 @@ afterEach(async () => {
 });
 
 describe('WebView 本地代理 relay', () => {
-  test('严格拒绝认证、路径、查询和非 HTTP upstream', () => {
+  test('接受 HTTP/HTTPS upstream 并拒绝认证、路径和查询', () => {
     expect(parseUpstreamProxy('http://proxy.example:8080').href).toBe(
       'http://proxy.example:8080/'
     );
+    expect(parseUpstreamProxy('https://proxy.example:8443').href).toBe(
+      'https://proxy.example:8443/'
+    );
     for (const value of [
-      'https://proxy.example:8080',
       'http://user@proxy.example:8080',
       'http://proxy.example:8080/path',
       'http://proxy.example:8080?mode=1',
@@ -253,6 +265,45 @@ describe('WebView 本地代理 relay', () => {
     const tunnel = await connectTunnel(relayPort, 'outside.invalid:443');
     expect(await exchange(tunnel.socket, tunnel.remainder, 'hello')).toBe(
       'hello'
+    );
+    expect(authority).toBe('outside.invalid:443');
+    tunnel.socket.destroy();
+  });
+
+  test('HTTPS upstream 通过 TLS 转发普通请求和 CONNECT', async () => {
+    let requestTarget = '';
+    let authority = '';
+    const upstream = https.createServer(
+      { cert: PROXY_CERTIFICATE, key: PROXY_PRIVATE_KEY },
+      (request, response) => {
+        requestTarget = request.url ?? '';
+        response.end('via-secure-upstream');
+      }
+    );
+    upstream.on('connect', (request, client, head) => {
+      authority = request.url ?? '';
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length) client.write(head);
+      client.pipe(client);
+    });
+    const upstreamPort = await listen(upstream);
+    const port = await reservePort();
+    const relay = await startWebviewProxyRelay({
+      port,
+      upstreamProxy: `https://localhost:${upstreamPort}`,
+      upstreamTlsCa: PROXY_CERTIFICATE,
+    });
+    relays.push(relay);
+    const relayPort = (relay.server.address() as AddressInfo).port;
+    const target = 'http://outside.invalid:8123/secure?id=7';
+
+    expect(await rawProxyGet(relayPort, target)).toContain(
+      'via-secure-upstream'
+    );
+    expect(requestTarget).toBe(target);
+    const tunnel = await connectTunnel(relayPort, 'outside.invalid:443');
+    expect(await exchange(tunnel.socket, tunnel.remainder, 'secure')).toBe(
+      'secure'
     );
     expect(authority).toBe('outside.invalid:443');
     tunnel.socket.destroy();
