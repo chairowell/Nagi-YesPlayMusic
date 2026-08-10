@@ -67,8 +67,9 @@ Tauri 主进程入口是 `src-tauri/src/main.rs`，负责窗口、托盘、快�
 dev 的 Vite server 也配了 `/api` 同源代理指向 12754 —— 这个不能省，否则跨端口属于跨站，登录 cookie 会被
 Chromium 的 SameSite 策略丢掉，表现为头像不刷新、library 空。
 
-迷你播放器做在 `src/views/lyrics.vue` 里：窗口宽 < 620 或高 < 340 自动切成紧凑播放条，
-`src/App.vue` 负责在窗口变窄时自动切到歌词页。窗口、菜单栏封面/歌词、全局快捷键和
+迷你播放器做在 `src/views/lyrics.vue` 里：窗口高 < 340（`isBarWindowSize`）才切成
+紧凑播放条；宽 < 620 或高 < 340（`isMiniWindowSize`）时 `src/App.vue` 自动切到歌词页，
+窄而高的窗口保持完整播放器视图。两个判定都在 `src/utils/miniWindow.ts`，语义不能合并。窗口、菜单栏封面/歌词、全局快捷键和
 Discord Rich Presence 都由 `src-tauri/src/` 的 Rust 实现。
 
 ## 数据目录（容易搞错）
