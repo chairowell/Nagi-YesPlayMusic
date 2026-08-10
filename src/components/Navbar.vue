@@ -306,6 +306,8 @@ nav.has-custom-titlebar {
     color: var(--color-text);
     transition: 0.2s;
     -webkit-user-drag: none;
+    /* CJK labels wrap per character when squeezed; never break inside a link. */
+    white-space: nowrap;
     margin: {
       right: 12px;
       left: 12px;
@@ -320,6 +322,25 @@ nav.has-custom-titlebar {
   }
   a.active {
     color: var(--color-primary);
+  }
+}
+@media (max-width: 970px) {
+  .navigation-links a {
+    margin: 0 6px;
+    padding: 6px 8px;
+    font-size: 16px;
+  }
+}
+@media (max-width: 768px) {
+  nav {
+    /* Keep the left clearance for macOS traffic lights; only the right side shrinks. */
+    padding: 0 max(24px, 3vw) 0 90px;
+  }
+  .navigation-buttons .restore-compact-window {
+    span,
+    kbd {
+      display: none;
+    }
   }
 }
 
@@ -341,7 +362,8 @@ nav.has-custom-titlebar {
     height: 32px;
     background: var(--color-secondary-bg-for-transparent);
     border-radius: 8px;
-    width: 200px;
+    /* Shrink fluidly before the navigation links run out of room. */
+    width: clamp(128px, 16vw, 200px);
   }
 
   .svg-icon {
