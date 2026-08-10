@@ -17,7 +17,10 @@
         class="playlist"
         @click="addTrackToPlaylist(playlist.id)"
       >
-        <img :src="$filters.resizeImage(playlist.coverImgUrl, 224)" loading="lazy" />
+        <img
+          :src="$filters.resizeImage(playlist.coverImgUrl, 224)"
+          loading="lazy"
+        />
         <div class="info">
           <div class="title">{{ playlist.name }}</div>
           <div class="track-count">{{ playlist.trackCount }} 首</div>
@@ -27,56 +30,56 @@
   </Modal>
 </template>
 
-<script>
-import { mapActions, mapMutations, mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import Modal from '@/components/Modal.vue';
 import locale from '@/locale';
 import { addOrRemoveTrackFromPlaylist } from '@/api/playlist';
 
-export default {
+export default defineComponent({
   name: 'ModalAddTrackToPlaylist',
   components: {
     Modal,
   },
-  data() {
-    return {
-      playlists: [],
-    };
-  },
   computed: {
-    ...mapState(['modals', 'data', 'liked']),
+    ...mapState(useAppStore, ['modals', 'data', 'liked']),
     show: {
       get() {
         return this.modals.addTrackToPlaylistModal.show;
       },
-      set(value) {
+      set(value: boolean) {
         this.updateModal({
           modalName: 'addTrackToPlaylistModal',
           key: 'show',
           value,
         });
         if (value) {
-          this.$store.commit('enableScrolling', false);
+          this.enableScrollingWith(false);
         } else {
-          this.$store.commit('enableScrolling', true);
+          this.enableScrollingWith(true);
         }
       },
     },
     ownPlaylists() {
       return this.liked.playlists.filter(
         p =>
-          p.creator.userId === this.data.user.userId &&
+          p.creator?.userId === this.data.user.userId &&
           p.id !== this.data.likedSongPlaylistID
       );
     },
   },
   methods: {
-    ...mapMutations(['updateModal']),
-    ...mapActions(['showToast']),
+    ...mapActions(useAppStore, [
+      'updateModal',
+      'showToast',
+      'enableScrollingWith',
+    ]),
     close() {
       this.show = false;
     },
-    addTrackToPlaylist(playlistID) {
+    addTrackToPlaylist(playlistID: number) {
       addOrRemoveTrackFromPlaylist({
         op: 'add',
         pid: playlistID,
@@ -86,7 +89,7 @@ export default {
           this.show = false;
           this.showToast(locale.t('toast.savedToPlaylist'));
         } else {
-          this.showToast(data.body.message);
+          this.showToast(data.body.message ?? '添加歌曲失败');
         }
       });
     },
@@ -104,7 +107,7 @@ export default {
       });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

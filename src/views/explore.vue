@@ -63,8 +63,10 @@
   </div>
 </template>
 
-<script>
-import { mapState, mapMutations } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import NProgress from 'nprogress';
 import { topPlaylist, highQualityPlaylist, toplists } from '@/api/playlist';
 import { playlistCategories } from '@/utils/staticData';
@@ -73,8 +75,14 @@ import { getRecommendPlayList } from '@/utils/playList';
 import ButtonTwoTone from '@/components/ButtonTwoTone.vue';
 import CoverRow from '@/components/CoverRow.vue';
 import SvgIcon from '@/components/SvgIcon.vue';
+import type { Playlist } from '@/types/domain';
 
-export default {
+function queryString(value: unknown, fallback = ''): string {
+  if (Array.isArray(value)) return String(value[0] ?? fallback);
+  return typeof value === 'string' ? value : fallback;
+}
+
+export default defineComponent({
   name: 'Explore',
   inject: ['appShell'],
   components: {
@@ -86,15 +94,14 @@ export default {
     this.showLoadMoreButton = false;
     this.hasMore = true;
     this.playlists = [];
-    this.offset = 1;
-    this.activeCategory = to.query.category;
+    this.activeCategory = queryString(to.query['category'], '全部');
     this.getPlaylist();
     next();
   },
   data() {
     return {
       show: false,
-      playlists: [],
+      playlists: [] as Playlist[],
       activeCategory: '全部',
       loadingMore: false,
       showLoadMoreButton: false,
@@ -104,7 +111,7 @@ export default {
     };
   },
   computed: {
-    ...mapState(['settings']),
+    ...mapState(useAppStore, ['settings']),
     subText() {
       if (this.activeCategory === '排行榜') return 'updateFrequency';
       if (this.activeCategory === '推荐歌单') return 'copywriter';
@@ -116,25 +123,25 @@ export default {
     this.appShell.restoreScrollPosition();
   },
   methods: {
-    ...mapMutations(['togglePlaylistCategory']),
+    ...mapActions(useAppStore, ['togglePlaylistCategory']),
     loadData() {
       setTimeout(() => {
         if (!this.show) NProgress.start();
       }, 1000);
-      const queryCategory = this.$route.query.category;
+      const queryCategory = this.$route.query['category'];
       if (queryCategory === undefined) {
         this.playlists = [];
         this.activeCategory = '全部';
       } else {
-        this.activeCategory = queryCategory;
+        this.activeCategory = queryString(queryCategory, '全部');
       }
       this.getPlaylist();
     },
-    goToCategory(Category) {
+    goToCategory(category: string) {
       this.showCatOptions = false;
-      this.$router.push({ name: 'explore', query: { category: Category } });
+      this.$router.push({ name: 'explore', query: { category } });
     },
-    updatePlaylist(playlists) {
+    updatePlaylist(playlists: Playlist[]) {
       this.playlists.push(...playlists);
       this.loadingMore = false;
       this.showLoadMoreButton = true;
@@ -161,10 +168,12 @@ export default {
       });
     },
     getHighQualityPlaylist() {
-      let playlists = this.playlists;
-      let before =
-        playlists.length !== 0 ? playlists[playlists.length - 1].updateTime : 0;
-      highQualityPlaylist({ limit: 50, before }).then(data => {
+      const lastPlaylist = this.playlists.at(-1);
+      const before = lastPlaylist?.updateTime ?? 0;
+      highQualityPlaylist({
+        limit: 50,
+        before,
+      }).then(data => {
         this.updatePlaylist(data.playlists);
         this.hasMore = data.more;
       });
@@ -177,6 +186,7 @@ export default {
     },
     getTopPlayList() {
       topPlaylist({
+        order: 'hot',
         cat: this.activeCategory,
         offset: this.playlists.length,
       }).then(data => {
@@ -184,14 +194,14 @@ export default {
         this.hasMore = data.more;
       });
     },
-    getCatsByBigCat(name) {
+    getCatsByBigCat(name: string) {
       return playlistCategories.filter(c => c.bigCat === name);
     },
-    toggleCat(name) {
+    toggleCat(name: string) {
       this.togglePlaylistCategory(name);
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

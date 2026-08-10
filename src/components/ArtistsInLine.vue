@@ -13,12 +13,15 @@
   </span>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent } from 'vue';
+import type { PropType } from 'vue';
+import type { Artist } from '@/types/domain';
+export default defineComponent({
   name: 'ArtistInLine',
   props: {
     artists: {
-      type: Array,
+      type: Array as PropType<Artist[]>,
       required: true,
     },
     exclude: {
@@ -31,15 +34,15 @@ export default {
     },
   },
   computed: {
-    filteredArtists() {
-      return this.artists.filter(a => a.name !== this.exclude);
+    filteredArtists(): Artist[] {
+      return this.artists.filter(artist => artist.name !== this.exclude);
     },
     computedPrefix() {
       if (this.filteredArtists.length !== 0) return this.prefix;
       else return '';
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

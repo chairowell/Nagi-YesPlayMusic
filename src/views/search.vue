@@ -84,17 +84,34 @@
   </div>
 </template>
 
-<script>
-import { mapActions } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { getTrackDetail } from '@/api/track';
-import { search } from '@/api/others';
+import { search as searchApi } from '@/api/others';
+import type { SearchResult } from '@/api/others';
 import NProgress from 'nprogress';
 
 import TrackList from '@/components/TrackList.vue';
 import MvRow from '@/components/MvRow.vue';
 import CoverRow from '@/components/CoverRow.vue';
+import type {
+  Album,
+  Artist,
+  MusicVideo,
+  Playlist,
+  Track,
+} from '@/types/domain';
 
-export default {
+type SearchKind = 'musicVideos' | 'tracks' | 'albums' | 'artists' | 'playlists';
+
+interface SearchBatch {
+  result?: SearchResult;
+  type: SearchKind;
+}
+
+export default defineComponent({
   name: 'Search',
   components: {
     TrackList,
@@ -104,16 +121,17 @@ export default {
   data() {
     return {
       show: false,
-      tracks: [],
-      artists: [],
-      albums: [],
-      playlists: [],
-      musicVideos: [],
+      tracks: [] as Track[],
+      artists: [] as Artist[],
+      albums: [] as Album[],
+      playlists: [] as Playlist[],
+      musicVideos: [] as MusicVideo[],
     };
   },
   computed: {
-    keywords() {
-      return this.$route.params.keywords ?? '';
+    ...mapState(useAppStore, ['player']),
+    keywords(): string {
+      return String(this.$route.params['keywords'] ?? '');
     },
     haveResult() {
       return (
@@ -127,7 +145,7 @@ export default {
     },
   },
   watch: {
-    keywords: function (newKeywords) {
+    keywords(newKeywords: string) {
       if (newKeywords.length === 0) return;
       this.getData();
     },
@@ -136,32 +154,24 @@ export default {
     this.getData();
   },
   methods: {
-    ...mapActions(['showToast']),
-    playTrackInSearchResult(id) {
-      let track = this.tracks.find(t => t.id === id);
-      this.$store.state.player.appendTrackToPlayerList(track, true);
-    },
-    search(type = 'all') {
-      let showToast = this.showToast;
-      const typeTable = {
-        all: 1018,
+    ...mapActions(useAppStore, ['showToast']),
+    search(type: SearchKind): Promise<SearchBatch> {
+      const typeTable: Record<SearchKind, number> = {
         musicVideos: 1004,
         tracks: 1,
         albums: 10,
         artists: 100,
         playlists: 1000,
       };
-      return search({
+      return searchApi({
         keywords: this.keywords,
         type: typeTable[type],
         limit: 16,
-      })
-        .then(result => {
-          return { result: result.result, type };
-        })
-        .catch(err => {
-          showToast(err.response.data.msg || err.response.data.message);
-        });
+      }).then(response =>
+        response.result === undefined
+          ? { type }
+          : { result: response.result, type }
+      );
     },
     getData() {
       setTimeout(() => {
@@ -169,39 +179,41 @@ export default {
       }, 1000);
       this.show = false;
 
-      const requestAll = requests => {
+      const requestAll = (requests: Array<Promise<SearchBatch>>) => {
         const keywords = this.keywords;
-        Promise.all(requests).then(results => {
-          if (keywords != this.keywords) return;
-          results.map(result => {
-            const searchType = result.type;
-            if (result.result === undefined) return;
-            result = result.result;
-            switch (searchType) {
-              case 'all':
-                this.result = result;
-                break;
-              case 'musicVideos':
-                this.musicVideos = result.mvs ?? [];
-                break;
-              case 'artists':
-                this.artists = result.artists ?? [];
-                break;
-              case 'albums':
-                this.albums = result.albums ?? [];
-                break;
-              case 'tracks':
-                this.tracks = result.songs ?? [];
-                this.getTracksDetail();
-                break;
-              case 'playlists':
-                this.playlists = result.playlists ?? [];
-                break;
-            }
+        Promise.all(requests)
+          .then(results => {
+            if (keywords != this.keywords) return;
+            results.forEach(batch => {
+              const searchType = batch.type;
+              const result = batch.result;
+              if (result === undefined) return;
+              switch (searchType) {
+                case 'musicVideos':
+                  this.musicVideos = result.mvs ?? [];
+                  break;
+                case 'artists':
+                  this.artists = result.artists ?? [];
+                  break;
+                case 'albums':
+                  this.albums = result.albums ?? [];
+                  break;
+                case 'tracks':
+                  this.tracks = result.songs ?? [];
+                  this.getTracksDetail();
+                  break;
+                case 'playlists':
+                  this.playlists = result.playlists ?? [];
+                  break;
+              }
+            });
+            NProgress.done();
+            this.show = true;
+          })
+          .catch((error: unknown) => {
+            NProgress.done();
+            this.showToast(`搜索失败：${String(error)}`);
           });
-          NProgress.done();
-          this.show = true;
-        });
       };
 
       const requests = [
@@ -222,7 +234,7 @@ export default {
       });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

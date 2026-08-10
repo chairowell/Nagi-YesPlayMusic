@@ -8,8 +8,8 @@
     >
       <div
         v-if="
-          (settings.lyricsBackground === 'blur') |
-            (settings.lyricsBackground === 'dynamic')
+          settings.lyricsBackground === 'blur' ||
+          settings.lyricsBackground === 'dynamic'
         "
         data-tauri-drag-region
         class="lyrics-background"
@@ -35,7 +35,7 @@
         :style="{ background }"
       ></div>
 
-      <!-- 迷你模式：小封面 + 一行歌词。窗口拖窄时自动切换 -->
+      <!-- Compact mode: artwork and one lyric line. -->
       <div
         v-if="isMini"
         class="mini-player"
@@ -45,10 +45,7 @@
         @dblclick="handleMiniDoubleClick"
       >
         <img class="mini-cover" :src="miniImageUrl" />
-        <!--
-          只有真正压在字上才可选中复制，所以 .mini-copyable 只包住文字本身，
-          不包外面的容器：容器的空白仍然是"按住挪窗口"。
-        -->
+        <!-- Keep blank space draggable while allowing text selection. -->
         <div class="mini-info">
           <div class="mini-title" :title="currentTrack.name">
             <span class="mini-copyable">{{ currentTrack.name }}</span>
@@ -281,10 +278,7 @@
                 >
                   <svg-icon :icon-class="player.playing ? 'pause' : 'play'" />
                 </button-icon>
-                <button-icon
-                  :title="$t('player.next')"
-                  @click="playNextTrack"
-                >
+                <button-icon :title="$t('player.next')" @click="playNextTrack">
                   <svg-icon icon-class="next" />
                 </button-icon>
               </div>
@@ -299,7 +293,7 @@
               <button-icon
                 v-show="
                   isShowLyricTypeSwitch &&
-                  $store.state.settings.showLyricsTranslation &&
+                  settings.showLyricsTranslation &&
                   lyricType === 'translation'
                 "
                 :title="$t('player.translationLyric')"
@@ -310,7 +304,7 @@
               <button-icon
                 v-show="
                   isShowLyricTypeSwitch &&
-                  $store.state.settings.showLyricsTranslation &&
+                  settings.showLyricsTranslation &&
                   lyricType === 'romaPronunciation'
                 "
                 :title="$t('player.PronunciationLyric')"
@@ -350,10 +344,7 @@
                 >
                 <br />
                 <span
-                  v-if="
-                    line.contents[1] &&
-                    $store.state.settings.showLyricsTranslation
-                  "
+                  v-if="line.contents[1] && settings.showLyricsTranslation"
                   class="translation"
                   @click.right="openLyricMenu($event, line, 1)"
                   >{{ line.contents[1] }}</span
@@ -368,7 +359,7 @@
                 v-if="
                   rightClickLyric &&
                   rightClickLyric.contents[1] &&
-                  $store.state.settings.showLyricsTranslation
+                  settings.showLyricsTranslation
                 "
                 class="item"
                 @click="copyLyric(true)"
@@ -398,11 +389,13 @@
   </transition>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 // The lyrics page of Apple Music is so gorgeous, so I copy the design.
 // Some of the codes are from https://github.com/sl1673495/vue-netease-music
 
-import { mapState, mapMutations, mapActions } from 'vuex';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import VueSlider from 'vue-slider-component';
 import ContextMenu from '@/components/ContextMenu.vue';
 import PlayerProgressSlider from '@/components/PlayerProgressSlider.vue';
@@ -418,8 +411,9 @@ import {
   resolveLyricDisplay,
   shouldRunLyricClock,
 } from '@/utils/lyrics';
+import type { ParsedLyric } from '@/utils/lyrics';
 import ButtonIcon from '@/components/ButtonIcon.vue';
-import * as Vibrant from 'node-vibrant/dist/vibrant.worker.min.js';
+import Vibrant from 'node-vibrant/dist/vibrant.worker.min.js';
 import Color from 'color';
 import { isAccountLoggedIn } from '@/utils/auth';
 import { hasListSource, getListSourcePath } from '@/utils/playList';
@@ -445,10 +439,55 @@ import {
   shouldToggleMiniWindow,
 } from '@/utils/miniWindow';
 import { ARTWORK_SIZE, buildArtworkURL } from '@/utils/artwork';
+import type { Artist } from '@/types/domain';
 
-export default {
+type LyricType = 'translation' | 'romaPronunciation';
+
+interface DisplayLyricLine {
+  time: number;
+  content: string;
+  contents: string[];
+}
+
+interface RightClickLyric extends DisplayLyricLine {
+  idx: number;
+}
+
+interface MiniDragStart {
+  clientX: number;
+  clientY: number;
+}
+
+function formatClockTime(value: Date): string {
+  const hour = value.getHours().toString().padStart(2, '0');
+  const minute = value.getMinutes().toString().padStart(2, '0');
+  const second = value.getSeconds().toString().padStart(2, '0');
+  return `${hour}:${minute}:${second}`;
+}
+
+function mergeLyrics(
+  lyrics: ParsedLyric[],
+  secondaryLyrics: ParsedLyric[]
+): DisplayLyricLine[] {
+  return lyrics
+    .filter(({ content }) => Boolean(content))
+    .map(({ rawTime, time, content }) => {
+      const secondary = secondaryLyrics.find(
+        item => item.rawTime === rawTime
+      )?.content;
+      return {
+        time,
+        content,
+        contents: secondary ? [content, secondary] : [content],
+      };
+    });
+}
+
+export default defineComponent({
   name: 'Lyrics',
-  emits: ['expand-compact-window'],
+  emits: {
+    'expand-compact-window': () => true,
+  },
   components: {
     VueSlider,
     PlayerProgressSlider,
@@ -457,48 +496,45 @@ export default {
   },
   data() {
     return {
-      lyricsIntervalCleanup: null,
-      timer: null,
-      listenerCleanups: [],
-      lyric: [],
-      tlyric: [],
-      romalyric: [],
+      lyricsIntervalCleanup: null as (() => void) | null,
+      timer: null as ReturnType<typeof setInterval> | null,
+      listenerCleanups: [] as Array<() => void>,
+      lyric: [] as ParsedLyric[],
+      tlyric: [] as ParsedLyric[],
+      romalyric: [] as ParsedLyric[],
       lyricLoading: false,
       lyricRequestVersion: 0,
-      lyricType: 'translation', // or 'romaPronunciation'
+      lyricType: 'translation' as LyricType,
       highlightLyricIndex: -1,
       minimize: true,
       background: '',
-      date: this.formatTime(new Date()),
+      date: formatClockTime(new Date()),
       isFullscreen: !!document.fullscreenElement,
-      rightClickLyric: null,
+      rightClickLyric: null as RightClickLyric | null,
       isMini: false,
       miniTall: false,
       isAlwaysOnTop: false,
       pinDismissed: false,
       miniSeekDragging: false,
-      miniSeekPreview: null,
-      miniWindowDragStart: null,
+      miniSeekPreview: null as number | null,
+      miniWindowDragStart: null as MiniDragStart | null,
     };
   },
   computed: {
-    ...mapState(['player', 'settings', 'showLyrics']),
+    ...mapState(useAppStore, ['player', 'settings', 'showLyrics', 'data']),
     activeLyricIndex() {
-      if (this.miniSeekDragging && Number.isFinite(this.miniSeekPreview)) {
-        return findActiveLyricIndex(
-          this.lyricToShow,
-          this.miniSeekPreview
-        );
+      if (this.miniSeekDragging && typeof this.miniSeekPreview === 'number') {
+        return findActiveLyricIndex(this.lyricToShow, this.miniSeekPreview);
       }
       return this.highlightLyricIndex;
     },
-    // 迷你模式下只显示当前这一行歌词
+    // Compact mode shows only the active lyric.
     currentLyric() {
       const line = this.lyricToShow[this.activeLyricIndex];
       if (!line) return '';
-      return Array.isArray(line.contents) ? line.contents[0] : line.contents;
+      return line.contents[0] ?? '';
     },
-    // 纯音乐没有歌词，用网易云那套标准引导词占位
+    // Use the standard placeholder for instrumental tracks.
     displayLyric() {
       return resolveLyricDisplay(
         this.currentLyric,
@@ -510,7 +546,7 @@ export default {
       const line = this.lyricToShow[this.activeLyricIndex];
       return Array.isArray(line?.contents) ? line.contents[1] : '';
     },
-    // 窗口够高才塞得下两行，太扁就只留原文
+    // Hide translations when the compact window is too short.
     showMiniTranslation() {
       return (
         this.settings.showLyricsTranslation &&
@@ -534,7 +570,7 @@ export default {
       get() {
         return this.player.volume;
       },
-      set(value) {
+      set(value: number) {
         this.player.volume = value;
       },
     },
@@ -544,9 +580,7 @@ export default {
         ARTWORK_SIZE.lyricsCover
       );
     },
-    // 迷你条那张封面只有 58px（视网膜下 116px），却一直在下大歌词页用的
-    // 1024×1024，比菜单栏那张 64px 大两个数量级。切歌时菜单栏秒换、播放条
-    // 慢半拍就是这么来的——同一份数据，只是它要等一张大图下完。
+    // Request artwork sized for the 58px compact cover.
     miniImageUrl() {
       return buildArtworkURL(
         this.player.currentTrack?.al?.picUrl,
@@ -567,80 +601,22 @@ export default {
         ? this.lyricWithTranslation
         : this.lyricWithRomaPronunciation;
     },
-    lyricWithTranslation() {
-      let ret = [];
-      // 空内容的去除
-      const lyricFiltered = this.lyric.filter(({ content }) =>
-        Boolean(content)
-      );
-      // content统一转换数组形式
-      if (lyricFiltered.length) {
-        lyricFiltered.forEach(l => {
-          const { rawTime, time, content } = l;
-          const lyricItem = { time, content, contents: [content] };
-          const sameTimeTLyric = this.tlyric.find(
-            ({ rawTime: tLyricRawTime }) => tLyricRawTime === rawTime
-          );
-          if (sameTimeTLyric) {
-            const { content: tLyricContent } = sameTimeTLyric;
-            if (content) {
-              lyricItem.contents.push(tLyricContent);
-            }
-          }
-          ret.push(lyricItem);
-        });
-      } else {
-        ret = lyricFiltered.map(({ time, content }) => ({
-          time,
-          content,
-          contents: [content],
-        }));
-      }
-      return ret;
+    lyricWithTranslation(): DisplayLyricLine[] {
+      return mergeLyrics(this.lyric, this.tlyric);
     },
-    lyricWithRomaPronunciation() {
-      let ret = [];
-      // 空内容的去除
-      const lyricFiltered = this.lyric.filter(({ content }) =>
-        Boolean(content)
-      );
-      // content统一转换数组形式
-      if (lyricFiltered.length) {
-        lyricFiltered.forEach(l => {
-          const { rawTime, time, content } = l;
-          const lyricItem = { time, content, contents: [content] };
-          const sameTimeRomaLyric = this.romalyric.find(
-            ({ rawTime: tLyricRawTime }) => tLyricRawTime === rawTime
-          );
-          if (sameTimeRomaLyric) {
-            const { content: romaLyricContent } = sameTimeRomaLyric;
-            if (content) {
-              lyricItem.contents.push(romaLyricContent);
-            }
-          }
-          ret.push(lyricItem);
-        });
-      } else {
-        ret = lyricFiltered.map(({ time, content }) => ({
-          time,
-          content,
-          contents: [content],
-        }));
-      }
-      return ret;
+    lyricWithRomaPronunciation(): DisplayLyricLine[] {
+      return mergeLyrics(this.lyric, this.romalyric);
     },
     lyricFontSize() {
       return {
-        fontSize: `${this.$store.state.settings.lyricFontSize || 28}px`,
+        fontSize: `${this.settings.lyricFontSize || 28}px`,
       };
     },
     noLyric() {
       return hasNoLyric(this.lyric.length, this.lyricLoading);
     },
-    artist() {
-      return this.currentTrack?.ar
-        ? this.currentTrack.ar[0]
-        : { id: 0, name: 'unknown' };
+    artist(): Artist {
+      return this.currentTrack.ar?.[0] ?? { id: 0, name: 'unknown' };
     },
     album() {
       return this.currentTrack?.al || { id: 0, name: 'unknown' };
@@ -651,7 +627,7 @@ export default {
   },
   watch: {
     currentTrack() {
-      // 新歌歌词尚未返回时不能继续拿上一首的时间轴更新菜单栏。
+      // Clear stale lyrics before updating the tray.
       this.highlightLyricIndex = -1;
       this.lyric = [];
       this.tlyric = [];
@@ -660,17 +636,17 @@ export default {
       this.getCoverColor();
       this.pushToTray();
     },
-    // 歌词逐行推给菜单栏
+    // Push each active lyric to the tray.
     displayLyric() {
       this.pushToTray();
     },
-    showLyrics(show) {
+    showLyrics(show: boolean) {
       if (shouldRunLyricClock(show, isDesktopRuntime)) {
         this.setLyricsInterval(show);
       } else {
         this.stopLyricsInterval();
       }
-      this.$store.commit('enableScrolling', !show);
+      this.enableScrollingWith(!show);
     },
   },
   created() {
@@ -678,19 +654,20 @@ export default {
     this.getCoverColor();
     this.initDate();
     this.listenerCleanups.push(
-      listen(document, 'keydown', this.handleLyricsKeydown),
+      listen(document, 'keydown', event =>
+        this.handleLyricsKeydown(event as KeyboardEvent)
+      ),
       listen(document, 'fullscreenchange', this.handleFullscreenChange),
       listen(window, 'resize', this.checkMini)
     );
-    // watcher 不会在组件首次创建时触发；桌面端即使收起歌词页，
-    // 菜单栏仍需用低频时钟跟随当前歌词。
+    // Keep tray lyrics current before the watcher first runs.
     if (shouldRunLyricClock(this.showLyrics, isDesktopRuntime)) {
       this.setLyricsInterval(this.showLyrics);
     }
     this.checkMini();
     if (isDesktopRuntime) {
       invokeDesktop('isAlwaysOnTop').then(v => {
-        this.isAlwaysOnTop = v;
+        this.isAlwaysOnTop = v === true;
       });
     }
   },
@@ -701,15 +678,20 @@ export default {
     this.stopLyricsInterval();
     this.cancelMiniWindowDrag();
     disposeListeners(this.listenerCleanups);
-    this.setWindowButtons(true); // 离开歌词页别把红绿灯留在隐藏状态
+    this.setWindowButtons(true); // Restore window controls when leaving.
   },
   unmounted() {
     this.stopLyricsInterval();
   },
   methods: {
-    ...mapMutations(['toggleLyrics', 'updateModal']),
-    ...mapActions(['likeATrack']),
-    handleLyricsKeydown(event) {
+    ...mapActions(useAppStore, [
+      'toggleLyrics',
+      'updateModal',
+      'likeATrack',
+      'enableScrollingWith',
+      'fetchLikedPlaylist',
+    ]),
+    handleLyricsKeydown(event: KeyboardEvent) {
       if (event.key !== 'F11') return;
       event.preventDefault();
       this.fullscreen();
@@ -717,54 +699,55 @@ export default {
     handleFullscreenChange() {
       this.isFullscreen = !!document.fullscreenElement;
     },
-    // 窗口拖到这个尺寸以下就切成迷你播放器
+    // Switch below the compact layout breakpoint.
     checkMini() {
       const next = window.innerWidth < 620 || window.innerHeight < 340;
-      // 28px 原文 + 14px 译文 + 间距 ≈ 53px，留点余量到 64 就够放两行
+      // Two lyric lines need at least 64px of height.
       this.miniTall = window.innerHeight >= 64;
       if (next === this.isMini) return;
       this.isMini = next;
       this.pinDismissed = false;
-      // 进迷你模式就把红绿灯收起来，退出时恢复
+      // Hide window controls in compact mode.
       this.setWindowButtons(!next);
-      // 切换迷你模式会改变菜单栏该不该显示歌词
+      // Compact mode changes tray lyric visibility.
       this.pushToTray();
     },
     pushToTray() {
       if (!isDesktopRuntime) return;
       void sendDesktop('updateTrayNowPlaying', {
-        // 要不要在菜单栏显示文字由主进程定：
-        // 它还要考虑窗口是不是被隐藏了，这边看不到
+        // The backend also considers window visibility.
         title: this.displayLyric || this.currentTrack.name,
         isMini: this.isMini,
-        // 菜单栏只有 18px，拉小图省流量
-        coverUrl: buildArtworkURL(this.currentTrack?.al?.picUrl, ARTWORK_SIZE.tray),
+        // Request artwork sized for the 18px tray.
+        coverUrl: buildArtworkURL(
+          this.currentTrack?.al?.picUrl,
+          ARTWORK_SIZE.tray
+        ),
       });
     },
-    setWindowButtons(visible) {
+    setWindowButtons(visible: boolean) {
       if (!isDesktopRuntime) return;
       void sendDesktop('setWindowButtonVisibility', visible);
     },
     async toggleAlwaysOnTop() {
       if (!isDesktopRuntime) return;
-      this.isAlwaysOnTop = await invokeDesktop('toggleAlwaysOnTop');
-      // 点击后的鼠标仍压在按钮上，单靠 :hover 不会自动淡出。
+      this.isAlwaysOnTop = (await invokeDesktop('toggleAlwaysOnTop')) === true;
+      // Dismiss the pin before hover can reset.
       this.pinDismissed = true;
     },
     handleMiniMouseLeave() {
       this.pinDismissed = false;
       this.setWindowButtons(false);
     },
-    handleMiniMouseDown(event) {
-      // 按在空白处就当场掐掉选中起点（见 beginMiniWindowDragGesture）；
-      // Electron 靠原生 app-region 拖窗，这里到此为止。
+    handleMiniMouseDown(event: MouseEvent) {
+      // Clear text selection before handing the gesture to Tauri.
       if (
         !beginMiniWindowDragGesture(event, window.getSelection()) ||
         !isTauriRuntime
       ) {
         return;
       }
-      // 等鼠标真的移动后再交给原生窗口，否则第一次按下会吞掉双击事件。
+      // Wait for movement so the first press still participates in a double-click.
       this.cancelMiniWindowDrag();
       this.miniWindowDragStart = {
         clientX: event.clientX,
@@ -773,10 +756,10 @@ export default {
       document.addEventListener('mousemove', this.handleMiniDragMove);
       document.addEventListener('mouseup', this.cancelMiniWindowDrag);
     },
-    handleMiniDragMove(event) {
-      if (
-        !hasCrossedMiniWindowDragThreshold(this.miniWindowDragStart, event)
-      ) {
+    handleMiniDragMove(event: MouseEvent) {
+      const dragStart = this.miniWindowDragStart;
+      if (!dragStart) return;
+      if (!hasCrossedMiniWindowDragThreshold(dragStart, event)) {
         return;
       }
       event.preventDefault();
@@ -788,14 +771,16 @@ export default {
       document.removeEventListener('mousemove', this.handleMiniDragMove);
       document.removeEventListener('mouseup', this.cancelMiniWindowDrag);
     },
-    handleMiniDoubleClick(event) {
+    handleMiniDoubleClick(event: MouseEvent) {
       if (!shouldToggleMiniWindow(event)) return;
       event.preventDefault();
       event.stopPropagation();
       this.$emit('expand-compact-window');
     },
-    updateMiniSeekPreview(event) {
-      const bounds = event.currentTarget.getBoundingClientRect();
+    updateMiniSeekPreview(event: PointerEvent) {
+      const target = event.currentTarget;
+      if (!(target instanceof HTMLElement)) return;
+      const bounds = target.getBoundingClientRect();
       this.miniSeekPreview = calculateMiniSeekTime(
         event.clientX,
         bounds.left,
@@ -803,32 +788,33 @@ export default {
         this.player.currentTrackDuration
       );
     },
-    startMiniSeek(event) {
-      // 同 handleMiniMouseDown：preventDefault 会连"按下清除选中"一起拦掉
+    startMiniSeek(event: PointerEvent) {
+      // Clear selection before preventDefault blocks it.
       window.getSelection()?.removeAllRanges();
       event.preventDefault();
       event.stopPropagation();
       this.miniSeekDragging = true;
-      event.currentTarget.setPointerCapture?.(event.pointerId);
+      if (event.currentTarget instanceof HTMLElement) {
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+      }
       this.updateMiniSeekPreview(event);
     },
-    moveMiniSeek(event) {
+    moveMiniSeek(event: PointerEvent) {
       if (!this.miniSeekDragging) return;
       this.updateMiniSeekPreview(event);
     },
-    finishMiniSeek(event) {
+    finishMiniSeek(event: PointerEvent) {
       if (!this.miniSeekDragging) return;
       this.updateMiniSeekPreview(event);
       this.commitMiniSeek(event);
     },
-    commitMiniSeek(event) {
+    commitMiniSeek(event: PointerEvent) {
       if (!this.miniSeekDragging) return;
       const seekTime = this.miniSeekPreview;
-      if (Number.isFinite(seekTime)) {
+      if (typeof seekTime === 'number' && Number.isFinite(seekTime)) {
         this.player.progress = seekTime;
         const actualSeekTime = this.player.progress;
-        // WKWebView 可能修正流媒体 seek 的落点；歌词必须跟随读回的实际
-        // 播放位置，不能继续使用指针请求值。
+        // Follow WKWebView's resolved seek position.
         this.highlightLyricIndex = findActiveLyricIndex(
           this.lyricToShow,
           actualSeekTime
@@ -836,12 +822,15 @@ export default {
       }
       this.miniSeekDragging = false;
       this.miniSeekPreview = null;
-      const target = event?.currentTarget;
-      if (target?.hasPointerCapture?.(event.pointerId)) {
+      const target = event.currentTarget;
+      if (
+        target instanceof HTMLElement &&
+        target.hasPointerCapture?.(event.pointerId)
+      ) {
         target.releasePointerCapture(event.pointerId);
       }
     },
-    nudgeMiniSeek(offset) {
+    nudgeMiniSeek(offset: number) {
       const duration = this.player.currentTrackDuration;
       this.player.progress = Math.min(
         duration,
@@ -849,23 +838,10 @@ export default {
       );
     },
     initDate() {
-      var _this = this;
-      clearInterval(this.timer);
-      this.timer = setInterval(function () {
-        _this.date = _this.formatTime(new Date());
+      if (this.timer !== null) clearInterval(this.timer);
+      this.timer = setInterval(() => {
+        this.date = formatClockTime(new Date());
       }, 1000);
-    },
-    formatTime(value) {
-      let hour = value.getHours().toString();
-      let minute = value.getMinutes().toString();
-      let second = value.getSeconds().toString();
-      return (
-        hour.padStart(2, '0') +
-        ':' +
-        minute.padStart(2, '0') +
-        ':' +
-        second.padStart(2, '0')
-      );
     },
     fullscreen() {
       if (document.fullscreenElement) {
@@ -879,7 +855,7 @@ export default {
         this.showToast(locale.t('toast.needToLogin'));
         return;
       }
-      this.$store.dispatch('fetchLikedPlaylist');
+      this.fetchLikedPlaylist();
       this.updateModal({
         modalName: 'addTrackToPlaylistModal',
         key: 'show',
@@ -888,7 +864,7 @@ export default {
       this.updateModal({
         modalName: 'addTrackToPlaylistModal',
         key: 'selectedTrackID',
-        value: this.currentTrack?.id,
+        value: this.currentTrack?.id ?? 0,
       });
     },
     playPrevTrack() {
@@ -909,8 +885,7 @@ export default {
         this.lyricLoading = false;
         return;
       }
-      // 记下这次请求对应的歌曲。网络慢的时候前一首的响应可能后到，
-      // 不加这个判断就会把已经切过去的新歌的歌词覆盖掉。
+      // Ignore responses for tracks that are no longer active.
       const requestedId = this.currentTrack.id;
       const requestVersion = ++this.lyricRequestVersion;
       this.lyricLoading = true;
@@ -923,119 +898,120 @@ export default {
       if (
         this.currentTrack.pc !== null &&
         this.currentTrack.cd === null &&
-        this.$store.state.data.user?.userId
+        this.data.user?.userId
       ) {
-        //云盘未设置关联的歌曲获取其内置歌词
-        return getCloudLyric(
-          requestedId,
-          this.$store.state.data.user?.userId
-        )
+        // Fetch embedded lyrics for unlinked cloud tracks.
+        return getCloudLyric(requestedId, this.data.user?.userId)
           .then(data => {
             if (isStale()) return false;
             this.tlyric = [];
             this.romalyric = [];
-            this.lyric = data?.lrc?.length > 0 ? parseLyric(data.lrc) : [];
+            this.lyric = data.lrc?.lyric ? parseLyric(data.lrc.lyric) : [];
             this.lyricType = 'translation';
             return true;
           })
           .finally(finishLyricRequest);
       }
-      return getLyric(requestedId).then(data => {
-        if (isStale()) return false;
-        if (!data?.lrc?.lyric) {
-          this.lyric = [];
-          this.tlyric = [];
-          this.romalyric = [];
-          return false;
-        } else {
-          let { lyric, tlyric, romalyric } = lyricParser(data);
-          lyric = lyric.filter(
-            l => !/^作(词|曲)\s*(:|：)\s*无$/.exec(l.content)
-          );
-          let includeAM =
-            lyric.length <= 10 &&
-            lyric.map(l => l.content).includes('纯音乐，请欣赏');
-          if (includeAM) {
-            let reg = /^作(词|曲)\s*(:|：)\s*/;
-            let author = this.currentTrack?.ar[0]?.name;
-            lyric = lyric.filter(l => {
-              let regExpArr = l.content.match(reg);
-              return (
-                !regExpArr || l.content.replace(regExpArr[0], '') !== author
-              );
-            });
-          }
-          if (lyric.length === 1 && includeAM) {
+      return getLyric(requestedId)
+        .then(data => {
+          if (isStale()) return false;
+          if (!data?.lrc?.lyric) {
             this.lyric = [];
             this.tlyric = [];
             this.romalyric = [];
             return false;
           } else {
-            this.lyric = lyric;
-            this.tlyric = tlyric;
-            this.romalyric = romalyric;
-            if (tlyric.length * romalyric.length > 0) {
-              this.lyricType = 'translation';
-            } else {
-              this.lyricType =
-                lyric.length > 0 ? 'translation' : 'romaPronunciation';
+            let { lyric, tlyric, romalyric } = lyricParser(data);
+            lyric = lyric.filter(
+              l => !/^作(词|曲)\s*(:|：)\s*无$/.exec(l.content)
+            );
+            let includeAM =
+              lyric.length <= 10 &&
+              lyric.map(l => l.content).includes('纯音乐，请欣赏');
+            if (includeAM) {
+              let reg = /^作(词|曲)\s*(:|：)\s*/;
+              const author = this.currentTrack.ar?.[0]?.name;
+              lyric = lyric.filter(l => {
+                let regExpArr = l.content.match(reg);
+                return (
+                  !regExpArr || l.content.replace(regExpArr[0], '') !== author
+                );
+              });
             }
-            return true;
+            if (lyric.length === 1 && includeAM) {
+              this.lyric = [];
+              this.tlyric = [];
+              this.romalyric = [];
+              return false;
+            } else {
+              this.lyric = lyric;
+              this.tlyric = tlyric;
+              this.romalyric = romalyric;
+              if (tlyric.length * romalyric.length > 0) {
+                this.lyricType = 'translation';
+              } else {
+                this.lyricType =
+                  lyric.length > 0 ? 'translation' : 'romaPronunciation';
+              }
+              return true;
+            }
           }
-        }
-      }).finally(finishLyricRequest);
+        })
+        .finally(finishLyricRequest);
     },
     switchLyricType() {
       this.lyricType =
         this.lyricType === 'translation' ? 'romaPronunciation' : 'translation';
     },
-    formatTrackTime(value) {
+    formatTrackTime(value: number) {
       return formatTrackTime(value);
     },
-    clickLyricLine(value, startPlay = false) {
-      // TODO: 双击选择还会选中文字，考虑搞个右键菜单复制歌词
+    clickLyricLine(value: number, startPlay = false) {
+      // TODO: Avoid text selection on double-click lyric seeking.
       let jumpFlag = false;
-      this.lyric.filter(function (item) {
+      this.lyric.forEach(item => {
         if (item.content == '纯音乐，请欣赏') {
           jumpFlag = true;
         }
       });
-      if (window.getSelection().toString().length === 0 && !jumpFlag) {
+      if ((window.getSelection()?.toString().length ?? 0) === 0 && !jumpFlag) {
         this.player.seek(value);
       }
       if (startPlay === true) {
         this.player.play();
       }
     },
-    openLyricMenu(e, lyric, idx) {
+    openLyricMenu(e: MouseEvent, lyric: DisplayLyricLine, idx: number) {
       this.rightClickLyric = { ...lyric, idx };
-      this.$refs.lyricMenu.openMenu(e);
+      (this.$refs['lyricMenu'] as InstanceType<typeof ContextMenu>).openMenu(e);
       e.preventDefault();
     },
-    copyLyric(withTranslation) {
+    copyLyric(withTranslation: boolean) {
       if (this.rightClickLyric) {
         const idx = this.rightClickLyric.idx;
         if (!withTranslation) {
-          copyLyric(this.rightClickLyric.contents[idx]);
+          const content = this.rightClickLyric.contents[idx];
+          if (content) void copyLyric(content);
         } else {
-          copyLyric(this.rightClickLyric.contents.join(' '));
+          void copyLyric(this.rightClickLyric.contents.join(' '));
         }
       }
     },
-    setLyricsInterval(showLyrics = this.showLyrics) {
+    setLyricsInterval(showLyrics?: boolean) {
+      const shouldShowLyrics = showLyrics ?? this.showLyrics;
       this.stopLyricsInterval();
       this.lyricsIntervalCleanup = startVisibilityAwareInterval(
         document,
         () => {
           if (this.player.seeking) return;
-          const progress = this.player.seek(null, false) ?? 0;
-          let oldHighlightLyricIndex = this.highlightLyricIndex;
+          const progress = this.player.seek() ?? 0;
+          const oldHighlightLyricIndex = this.highlightLyricIndex;
           this.highlightLyricIndex = findActiveLyricIndex(
             this.lyricToShow,
             progress
           );
           if (
-            showLyrics &&
+            shouldShowLyrics &&
             oldHighlightLyricIndex !== this.highlightLyricIndex
           ) {
             const el = document.getElementById(
@@ -1049,7 +1025,7 @@ export default {
           }
         },
         {
-          foregroundMs: lyricClockInterval(showLyrics),
+          foregroundMs: lyricClockInterval(shouldShowLyrics),
           backgroundMs: 250,
         }
       );
@@ -1069,11 +1045,17 @@ export default {
     },
     getCoverColor() {
       if (this.settings.lyricsBackground !== true) return;
-      const cover = buildArtworkURL(this.currentTrack.al?.picUrl, ARTWORK_SIZE.coverColor);
-      Vibrant.from(cover, { colorCount: 1 })
+      const cover = buildArtworkURL(
+        this.currentTrack.al?.picUrl,
+        ARTWORK_SIZE.coverColor
+      );
+      Vibrant.from(cover)
+        .maxColorCount(1)
         .getPalette()
         .then(palette => {
-          const originColor = Color.rgb(palette.DarkMuted._rgb);
+          const swatch = palette.DarkMuted;
+          if (!swatch) return;
+          const originColor = Color.rgb(swatch.rgb);
           const color = originColor.darken(0.1).rgb().string();
           const color2 = originColor.lighten(0.28).rotate(-30).rgb().string();
           this.background = `linear-gradient(to top left, ${color}, ${color2})`;
@@ -1089,11 +1071,11 @@ export default {
       this.player.mute();
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
-// ===== 迷你播放器：小封面 + 一行歌词 =====
+// Compact player
 .mini-player {
   position: absolute;
   top: 0;
@@ -1103,30 +1085,27 @@ export default {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px 0 76px; // 左边留出红绿灯的位置
+  padding: 0 16px 0 76px; // Reserve space for window controls.
   -webkit-app-region: drag;
   user-select: none;
   overflow: hidden;
 
-  // 角色 GIF 就是进度条的抓手，用户是冲着它去点的。轨道的命中高度必须
-  // 完整盖住角色，否则点在角色身上会漏到下面的窗口拖拽（表现为"想点进度
-  // 结果窗口跑了"）。macOS 还会吃掉贴边几像素做缩放热区，底部 10px 的旧
-  // 命中区在左下角几乎点不中，所以这里按角色尺寸取值而不是按视觉条粗细。
+  // Cover the rider and macOS resize inset with the hit area.
   --mini-rider-size: 22px;
   --mini-rider-bottom: 1px;
   --mini-progress-hit-height: 24px;
 
-  // 只有文字本身可选中复制。容器空白不带这个类，那里按住就是挪窗口。
+  // Keep blank container space draggable.
   .mini-copyable {
     -webkit-app-region: no-drag;
     user-select: text;
     cursor: text;
-    // 命中区变高后会盖住窄窗口里歌名/歌词的下半截，抬一层保住选中和复制
+    // Keep selectable text above the progress hit area.
     position: relative;
     z-index: 2;
   }
 
-  // 跟着窗口高度缩，压到最扁也不会溢出
+  // Shrink with the window height.
   .mini-cover {
     height: min(58px, calc(100% - 8px));
     width: auto;
@@ -1138,7 +1117,7 @@ export default {
     -webkit-user-drag: none;
   }
 
-  // 固定宽度，不然长歌名会一路挤占歌词的空间
+  // Keep long titles from crowding lyrics.
   .mini-info {
     flex: 0 0 168px;
     min-width: 0;
@@ -1163,7 +1142,7 @@ export default {
     text-overflow: ellipsis;
   }
 
-  // 歌词放右边，字号沿用设置里的 lyricFontSize（和大视图一致）
+  // Match the full lyrics view font size.
   .mini-lyric {
     flex: 1;
     min-width: 0;
@@ -1196,8 +1175,7 @@ export default {
     gap: 2px;
     flex-shrink: 0;
     -webkit-app-region: no-drag;
-    // 进度命中区是绝对定位又排在后面，48px 高的窗口里会压住按钮下沿；
-    // 抬一层保证上一首/播放/下一首在任何窗口高度下都点得着
+    // Keep controls above the progress hit area.
     position: relative;
     z-index: 2;
 
@@ -1212,7 +1190,7 @@ export default {
       height: 20px;
     }
 
-    // 任何时候都藏着，只有鼠标移到播放条上才浮现（置顶开着也一样）
+    // Reveal the pin control only on hover.
     .mini-pin {
       margin-right: 6px;
       opacity: 0;
@@ -1223,7 +1201,7 @@ export default {
         height: 14px;
       }
 
-      // 只在浮现出来的时候用颜色区分开关状态
+      // Color the active state only while visible.
       &.active {
         color: var(--color-primary);
       }
@@ -1259,8 +1237,7 @@ export default {
       outline-offset: -2px;
     }
 
-    // 只画已播放的那一段。试过给未播放部分补一条贯穿全宽的底色轨，
-    // 顶满窗口下沿反而像给窗口描了道边，用户否掉了。
+    // Draw only the played segment to avoid a window-edge border.
     .mini-progress {
       position: absolute;
       left: 0;
@@ -1294,7 +1271,7 @@ export default {
       }
     }
 
-    // 角色在轨道内部完成整段行程；它的右边缘只在 100% 时碰到终点。
+    // Keep the rider inside the track until 100%.
     .mini-progress-rider {
       position: absolute;
       bottom: var(--mini-rider-bottom);

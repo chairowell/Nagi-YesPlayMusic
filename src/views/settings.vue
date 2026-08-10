@@ -77,7 +77,7 @@
           </select>
         </div>
       </div>
-      <div v-if="isElectron" class="item">
+      <div v-if="isDesktop" class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.trayIcon.text') }} </div>
         </div>
@@ -116,7 +116,6 @@
         </div>
       </div>
 
-      <!-- <h3>音质</h3> -->
       <div class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.musicQuality.text') }} </div>
@@ -139,7 +138,7 @@
           </select>
         </div>
       </div>
-      <div v-if="isElectron" class="item">
+      <div v-if="isDesktop" class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.deviceSelector') }} </div>
         </div>
@@ -157,8 +156,8 @@
         </div>
       </div>
 
-      <h3 v-if="isElectron">缓存</h3>
-      <div v-if="isElectron" class="item">
+      <h3 v-if="isDesktop">缓存</h3>
+      <div v-if="isDesktop" class="item">
         <div class="left">
           <div class="title">
             {{ $t('settings.automaticallyCacheSongs') }}
@@ -176,7 +175,7 @@
           </div>
         </div>
       </div>
-      <div v-if="isElectron" class="item">
+      <div v-if="isDesktop" class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.cacheLimit.text') }} </div>
         </div>
@@ -193,7 +192,7 @@
           </select>
         </div>
       </div>
-      <div v-if="isElectron" class="item">
+      <div v-if="isDesktop" class="item">
         <div class="left">
           <div class="title">
             {{
@@ -284,35 +283,7 @@
           </select>
         </div>
       </div>
-      <div v-if="isElectron && isLinux" class="item">
-        <div class="left">
-          <div class="title">
-            {{ $t('settings.unm.enable') }}
-            <a target="_blank" href="https://github.com/osdlyrics/osdlyrics"
-              >OSDLyrics</a
-            >
-            {{ $t('settings.enableOsdlyricsSupport.title') }}
-          </div>
-          <div class="description">
-            {{ $t('settings.enableOsdlyricsSupport.desc1') }}
-            <br />
-            {{ $t('settings.enableOsdlyricsSupport.desc2') }}
-          </div>
-        </div>
-        <div class="right">
-          <div class="toggle">
-            <input
-              id="enable-osdlyrics-support"
-              v-model="enableOsdlyricsSupport"
-              type="checkbox"
-              name="enable-osdlyrics-support"
-            />
-            <label for="enable-osdlyrics-support"></label>
-          </div>
-        </div>
-      </div>
-
-      <section v-if="isElectron" class="unm-configuration">
+      <section v-if="isDesktop" class="unm-configuration">
         <h3>UnblockNeteaseMusic</h3>
         <div class="item">
           <div class="left">
@@ -498,7 +469,7 @@
           <button v-else @click="lastfmConnect()"> 授权连接 </button>
         </div>
       </div>
-      <div v-if="isElectron" class="item">
+      <div v-if="isDesktop" class="item">
         <div class="left">
           <div class="title">
             {{ $t('settings.enableDiscordRichPresence') }}</div
@@ -516,9 +487,8 @@
           </div>
         </div>
       </div>
-
       <h3>{{ $t('settings.others') }}</h3>
-      <div v-if="isElectron && !isMac" class="item">
+      <div v-if="isDesktop && !isMac" class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.closeAppOption.text') }} </div>
         </div>
@@ -537,7 +507,7 @@
         </div>
       </div>
 
-      <div v-if="isElectron && isLinux" class="item">
+      <div v-if="isDesktop && isLinux" class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.enableCustomTitlebar') }} </div>
         </div>
@@ -554,7 +524,32 @@
         </div>
       </div>
 
-      <div v-if="isElectron" class="item">
+      <div v-if="isDesktop && isLinux" class="item">
+        <div class="left">
+          <div class="title">
+            <a href="https://github.com/osdlyrics/osdlyrics" target="_blank"
+              >OSDLyrics</a
+            >
+            {{ $t('settings.enableOsdlyricsSupport.title') }}
+          </div>
+          <div class="description">
+            {{ $t('settings.enableOsdlyricsSupport.desc') }}
+          </div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="enable-osdlyrics-support"
+              v-model="enableOsdlyricsSupport"
+              type="checkbox"
+              name="enable-osdlyrics-support"
+            />
+            <label for="enable-osdlyrics-support"></label>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="isDesktop" class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.showLibraryDefault') }}</div>
         </div>
@@ -658,7 +653,7 @@
         </div>
       </div>
 
-      <div v-if="isElectron">
+      <div v-if="isDesktop">
         <h3>代理</h3>
         <div class="item">
           <div class="left">
@@ -669,7 +664,6 @@
               <option value="noProxy"> 关闭代理 </option>
               <option value="HTTP"> HTTP 代理 </option>
               <option value="HTTPS"> HTTPS 代理 </option>
-              <!-- <option value="SOCKS"> SOCKS 代理 </option> -->
             </select>
           </div>
         </div>
@@ -691,7 +685,7 @@
           <button @click="sendProxyConfig">更新代理</button>
         </div>
       </div>
-      <div v-if="isElectron">
+      <div v-if="isDesktop">
         <h3>Real IP</h3>
         <div class="item">
           <div class="left">
@@ -719,7 +713,7 @@
         </div>
       </div>
 
-      <div v-if="isElectron">
+      <div v-if="isDesktop">
         <h3>快捷键</h3>
         <div class="item">
           <div class="left">
@@ -739,6 +733,7 @@
         </div>
         <div
           id="shortcut-table"
+          ref="shortcutTable"
           :class="{ 'global-disabled': !enableGlobalShortcut }"
           tabindex="0"
           @keydown="handleShortcutKeydown"
@@ -803,6 +798,26 @@
         </div>
       </div>
 
+      <template v-if="isDesktop">
+        <h3>{{ $t('settings.updater.title') }}</h3>
+        <div class="item updater">
+          <div class="left">
+            <div class="title">
+              {{ $t('settings.updater.currentVersion', { version }) }}
+            </div>
+            <div class="description">{{ updaterStatusText }}</div>
+            <div v-if="updaterNotes" class="description updater-notes">
+              {{ updaterNotes }}
+            </div>
+          </div>
+          <div class="right">
+            <button :disabled="updaterActionDisabled" @click="handleAppUpdate">
+              {{ updaterActionText }}
+            </button>
+          </div>
+        </div>
+      </template>
+
       <div class="footer">
         <p class="author"
           >MADE BY
@@ -811,7 +826,7 @@
         <p class="version">v{{ version }}</p>
 
         <a
-          v-if="!isElectron"
+          v-if="!isDesktop"
           href="https://vercel.com/?utm_source=ohmusic&utm_campaign=oss"
         >
           <img
@@ -824,10 +839,16 @@
   </div>
 </template>
 
-<script>
-import { mapState, mapActions } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { isLooseLoggedIn, doLogout } from '@/utils/auth';
 import { auth as lastfmAuth } from '@/api/lastfm';
+import {
+  persistAuthorizedLastfmSession,
+  startDesktopLastfmAuthorization,
+} from '@/services/lastfmAuth';
 import {
   changeAppearance,
   changeThemeColor,
@@ -845,12 +866,37 @@ import {
   isMac as platformIsMac,
 } from '@/utils/platform';
 import pkg from '../../package.json';
-import { sendDesktop } from '@/services/desktopTransport';
+import { relaunchDesktop, sendDesktop } from '@/services/desktopTransport';
 import { isDesktopRuntime } from '@/utils/runtime';
+import { getRecordedShortcutKeyIdentity } from '@/utils/shortcuts';
+import type { RecordedShortcutKey } from '@/utils/shortcuts';
+import { decodeLastfmState, readStoredJson } from '@/utils/persistedState';
+import type { SettingsState } from '@/types/persistence';
+import {
+  checkForAppUpdate,
+  clearPendingAppUpdate,
+  installPendingAppUpdate,
+} from '@/services/appUpdater';
+import { syncDesktopSettings } from '@/services/desktopSettings';
 
 const validShortcutCodes = ['=', '-', '~', '[', ']', ';', "'", ',', '.', '/'];
 
-export default {
+type ShortcutKind = 'shortcut' | 'globalShortcut';
+type AppUpdaterState =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'unconfigured'
+  | 'upToDate'
+  | 'error';
+
+interface OutputDevice {
+  deviceId: string;
+  label: string;
+}
+
+export default defineComponent({
   name: 'Settings',
   data() {
     return {
@@ -863,19 +909,25 @@ export default {
           deviceId: 'default',
           label: 'settings.permissionRequired',
         },
-      ],
+      ] as OutputDevice[],
       shortcutInput: {
         id: '',
-        type: '',
+        type: '' as ShortcutKind | '',
         recording: false,
       },
-      recordedShortcut: [],
-      lastfmChecker: null,
+      recordedShortcut: [] as RecordedShortcutKey[],
+      lastfmChecker: null as ReturnType<typeof setInterval> | null,
+      lastfmAuthorizationCleanup: null as (() => void) | null,
+      lastfmAuthorizationEpoch: 0,
+      updaterState: 'idle' as AppUpdaterState,
+      updaterVersion: '',
+      updaterNotes: '',
+      updaterProgress: null as number | null,
     };
   },
   computed: {
-    ...mapState(['player', 'settings', 'data', 'lastfm']),
-    isElectron() {
+    ...mapState(useAppStore, ['player', 'settings', 'data', 'lastfm']),
+    isDesktop() {
       return isDesktopRuntime;
     },
     isMac() {
@@ -887,70 +939,120 @@ export default {
     version() {
       return pkg.version;
     },
+    updaterActionDisabled(): boolean {
+      return ['checking', 'downloading', 'unconfigured'].includes(
+        this.updaterState
+      );
+    },
+    updaterActionText(): string {
+      if (this.updaterState === 'checking') {
+        return String(this.$t('settings.updater.checking'));
+      }
+      if (this.updaterState === 'downloading') {
+        return this.updaterProgress === null
+          ? String(this.$t('settings.updater.downloading'))
+          : String(
+              this.$t('settings.updater.downloadingProgress', {
+                progress: this.updaterProgress,
+              })
+            );
+      }
+      if (this.updaterState === 'available') {
+        return String(this.$t('settings.updater.install'));
+      }
+      return String(this.$t('settings.updater.check'));
+    },
+    updaterStatusText(): string {
+      if (this.updaterState === 'unconfigured') {
+        return String(this.$t('settings.updater.unconfigured'));
+      }
+      if (this.updaterState === 'upToDate') {
+        return String(this.$t('settings.updater.upToDate'));
+      }
+      if (this.updaterState === 'available') {
+        return String(
+          this.$t('settings.updater.available', {
+            version: this.updaterVersion,
+          })
+        );
+      }
+      if (this.updaterState === 'downloading') {
+        return String(this.$t('settings.updater.installing'));
+      }
+      if (this.updaterState === 'error') {
+        return String(this.$t('settings.updater.failed'));
+      }
+      return String(this.$t('settings.updater.ready'));
+    },
     showUserInfo() {
       return isLooseLoggedIn() && this.data.user.nickname;
     },
-    recordedShortcutComputed() {
-      let shortcut = [];
-      this.recordedShortcut.map(e => {
-        if (e.keyCode >= 65 && e.keyCode <= 90) {
+    recordedShortcutComputed(): string {
+      let shortcut: string[] = [];
+      this.recordedShortcut.forEach(event => {
+        if (/^Key[A-Z]$/.test(event.code)) {
           // A-Z
-          shortcut.push(e.code.replace('Key', ''));
-        } else if (e.key === 'Meta') {
+          shortcut.push(event.code.replace('Key', ''));
+        } else if (event.key === 'Meta') {
           // ⌘ Command on macOS
           shortcut.push('Command');
-        } else if (['Alt', 'Control', 'Shift'].includes(e.key)) {
-          shortcut.push(e.key);
-        } else if (e.keyCode >= 48 && e.keyCode <= 57) {
+        } else if (['Alt', 'Control', 'Shift'].includes(event.key)) {
+          shortcut.push(event.key);
+        } else if (/^Digit[0-9]$/.test(event.code)) {
           // 0-9
-          shortcut.push(e.code.replace('Digit', ''));
-        } else if (e.keyCode >= 112 && e.keyCode <= 123) {
+          shortcut.push(event.code.replace('Digit', ''));
+        } else if (/^F(?:[1-9]|1[0-2])$/.test(event.code)) {
           // F1-F12
-          shortcut.push(e.code);
+          shortcut.push(event.code);
+        } else if (event.code === 'Space') {
+          shortcut.push('Space');
         } else if (
-          ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(e.key)
+          ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(
+            event.key
+          )
         ) {
           // Arrows
-          shortcut.push(e.code.replace('Arrow', ''));
-        } else if (validShortcutCodes.includes(e.key)) {
-          shortcut.push(e.key);
+          shortcut.push(event.code.replace('Arrow', ''));
+        } else if (validShortcutCodes.includes(event.key)) {
+          shortcut.push(event.key);
         }
       });
-      const sortTable = {
+      const sortTable: Record<string, number> = {
         Control: 1,
         Shift: 2,
         Alt: 3,
         Command: 4,
       };
       shortcut = shortcut.sort((a, b) => {
-        if (!sortTable[a] || !sortTable[b]) return 0;
-        if (sortTable[a] - sortTable[b] <= -1) {
+        const aOrder = sortTable[a];
+        const bOrder = sortTable[b];
+        if (aOrder === undefined || bOrder === undefined) return 0;
+        if (aOrder - bOrder <= -1) {
           return -1;
-        } else if (sortTable[a] - sortTable[b] >= 1) {
+        } else if (aOrder - bOrder >= 1) {
           return 1;
         } else {
           return 0;
         }
       });
-      shortcut = shortcut.join('+');
-      return shortcut;
+      return shortcut.join('+');
     },
 
     lang: {
       get() {
         return this.settings.lang;
       },
-      set(lang) {
+      set(lang: string) {
         this.$i18n.locale = lang;
-        this.$store.commit('changeLang', lang);
+        this.changeLang(lang);
       },
     },
     musicLanguage: {
       get() {
         return this.settings.musicLanguage ?? 'all';
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: SettingsState['musicLanguage']) {
+        this.updateSettings({
           key: 'musicLanguage',
           value,
         });
@@ -961,8 +1063,8 @@ export default {
         if (this.settings.appearance === undefined) return 'auto';
         return this.settings.appearance;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: SettingsState['appearance']) {
+        this.updateSettings({
           key: 'appearance',
           value,
         });
@@ -979,8 +1081,8 @@ export default {
         if (this.settings.themeColor === undefined) return 'default';
         return this.settings.themeColor;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: SettingsState['themeColor']) {
+        this.updateSettings({
           key: 'themeColor',
           value,
         });
@@ -993,26 +1095,19 @@ export default {
     },
     trayIconTheme: {
       get() {
-        if (this.settings.trayIconTheme === undefined) return 'auto';
         return this.settings.trayIconTheme;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
-          key: 'trayIconTheme',
-          value,
-        });
-        if (this.isElectron) {
-          void sendDesktop('updateTrayIcon', value);
-        }
+      set(value: SettingsState['trayIconTheme']) {
+        this.updateSettings({ key: 'trayIconTheme', value });
       },
     },
     musicQuality: {
       get() {
         return this.settings.musicQuality ?? 320000;
       },
-      set(value) {
+      set(value: SettingsState['musicQuality']) {
         if (value === this.settings.musicQuality) return;
-        this.$store.commit('changeMusicQuality', value);
+        this.changeMusicQuality(value);
         this.clearCache();
       },
     },
@@ -1021,8 +1116,8 @@ export default {
         if (this.settings.lyricFontSize === undefined) return 28;
         return this.settings.lyricFontSize;
       },
-      set(value) {
-        this.$store.commit('changeLyricFontSize', value);
+      set(value: SettingsState['lyricFontSize']) {
+        this.changeLyricFontSize(value);
       },
     },
     outputDevice: {
@@ -1037,10 +1132,10 @@ export default {
           return 'default'; // Default deviceId
         return this.settings.outputDevice;
       },
-      set(deviceId) {
+      set(deviceId: string) {
         if (deviceId === this.settings.outputDevice || deviceId === undefined)
           return;
-        this.$store.commit('changeOutputDevice', deviceId);
+        this.changeOutputDevice(deviceId);
         this.player.setOutputDevice();
       },
     },
@@ -1049,8 +1144,8 @@ export default {
         const value = this.settings.enableUnblockNeteaseMusic;
         return value !== undefined ? value : true;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'enableUnblockNeteaseMusic',
           value,
         });
@@ -1061,8 +1156,8 @@ export default {
         if (this.settings.showPlaylistsByAppleMusic === undefined) return true;
         return this.settings.showPlaylistsByAppleMusic;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'showPlaylistsByAppleMusic',
           value,
         });
@@ -1073,14 +1168,14 @@ export default {
         if (this.settings.nyancatStyle === undefined) return false;
         return this.settings.nyancatStyle;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'nyancatStyle',
           value,
         });
-        // 两种进度条样式只能开一个
+        // Keep progress styles mutually exclusive.
         if (value) {
-          this.$store.commit('updateSettings', {
+          this.updateSettings({
             key: 'anonStyle',
             value: false,
           });
@@ -1092,10 +1187,10 @@ export default {
         if (this.settings.anonStyle === undefined) return false;
         return this.settings.anonStyle;
       },
-      set(value) {
-        this.$store.commit('updateSettings', { key: 'anonStyle', value });
+      set(value: boolean) {
+        this.updateSettings({ key: 'anonStyle', value });
         if (value) {
-          this.$store.commit('updateSettings', {
+          this.updateSettings({
             key: 'nyancatStyle',
             value: false,
           });
@@ -1107,8 +1202,8 @@ export default {
         if (this.settings.automaticallyCacheSongs === undefined) return false;
         return this.settings.automaticallyCacheSongs;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'automaticallyCacheSongs',
           value,
         });
@@ -1118,8 +1213,8 @@ export default {
       get() {
         return this.settings.showLyricsTranslation;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'showLyricsTranslation',
           value,
         });
@@ -1129,8 +1224,8 @@ export default {
       get() {
         return this.settings.lyricsBackground || false;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: SettingsState['lyricsBackground']) {
+        this.updateSettings({
           key: 'lyricsBackground',
           value,
         });
@@ -1140,8 +1235,8 @@ export default {
       get() {
         return this.settings.showLyricsTime;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'showLyricsTime',
           value,
         });
@@ -1151,19 +1246,17 @@ export default {
       get() {
         return this.settings.enableOsdlyricsSupport;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
-          key: 'enableOsdlyricsSupport',
-          value,
-        });
+      set(value: boolean) {
+        this.updateSettings({ key: 'enableOsdlyricsSupport', value });
+        if (value) this.player.syncDesktopMediaMetadata();
       },
     },
     closeAppOption: {
       get() {
         return this.settings.closeAppOption;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: SettingsState['closeAppOption']) {
+        this.updateSettings({
           key: 'closeAppOption',
           value,
         });
@@ -1173,19 +1266,20 @@ export default {
       get() {
         return this.settings.enableDiscordRichPresence;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'enableDiscordRichPresence',
           value,
         });
+        if (value) this.player.syncDiscordPresence();
       },
     },
     subTitleDefault: {
       get() {
         return this.settings.subTitleDefault;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'subTitleDefault',
           value,
         });
@@ -1196,13 +1290,13 @@ export default {
         if (this.settings.enableReversedMode === undefined) return false;
         return this.settings.enableReversedMode;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'enableReversedMode',
           value,
         });
         if (value === false) {
-          this.$store.state.player.reversed = false;
+          this.player.reversed = false;
         }
       },
     },
@@ -1210,8 +1304,8 @@ export default {
       get() {
         return this.settings.enableGlobalShortcut;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'enableGlobalShortcut',
           value,
         });
@@ -1221,8 +1315,8 @@ export default {
       get() {
         return this.settings.showLibraryDefault || false;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'showLibraryDefault',
           value,
         });
@@ -1232,8 +1326,8 @@ export default {
       get() {
         return normalizeCacheLimit(this.settings.cacheLimit);
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: number | null) {
+        this.updateSettings({
           key: 'cacheLimit',
           value: normalizeCacheLimit(value),
         });
@@ -1244,14 +1338,13 @@ export default {
       get() {
         return this.settings.proxyConfig?.protocol || 'noProxy';
       },
-      set(value) {
-        let config = this.settings.proxyConfig || {};
+      set(value: SettingsState['proxyConfig']['protocol']) {
+        const config = { ...this.settings.proxyConfig };
         config.protocol = value;
         if (value === 'noProxy') {
-          void sendDesktop('removeProxy');
-          this.showToast('已关闭代理');
+          void this.disableProxy();
         }
-        this.$store.commit('updateSettings', {
+        this.updateSettings({
           key: 'proxyConfig',
           value: config,
         });
@@ -1261,10 +1354,10 @@ export default {
       get() {
         return this.settings.proxyConfig?.server || '';
       },
-      set(value) {
-        let config = this.settings.proxyConfig || {};
+      set(value: string) {
+        const config = { ...this.settings.proxyConfig };
         config.server = value;
-        this.$store.commit('updateSettings', {
+        this.updateSettings({
           key: 'proxyConfig',
           value: config,
         });
@@ -1274,8 +1367,8 @@ export default {
       get() {
         return this.settings.enableRealIP || false;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'enableRealIP',
           value: value,
         });
@@ -1285,8 +1378,8 @@ export default {
       get() {
         return this.settings.realIP || '';
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: SettingsState['proxyConfig']['protocol']) {
+        this.updateSettings({
           key: 'realIP',
           value: value,
         });
@@ -1296,10 +1389,11 @@ export default {
       get() {
         return this.settings.proxyConfig?.port || '';
       },
-      set(value) {
-        let config = this.settings.proxyConfig || {};
-        config.port = value;
-        this.$store.commit('updateSettings', {
+      set(value: string | number) {
+        const config = { ...this.settings.proxyConfig };
+        const port = Number(value);
+        config.port = Number.isInteger(port) && port > 0 ? port : null;
+        this.updateSettings({
           key: 'proxyConfig',
           value: config,
         });
@@ -1313,10 +1407,10 @@ export default {
         return this.settings.unmSource || '';
       },
       /** @param {string?} value */
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: string) {
+        this.updateSettings({
           key: 'unmSource',
-          value: value.length && value,
+          value: value || undefined,
         });
       },
     },
@@ -1324,8 +1418,8 @@ export default {
       get() {
         return this.settings.unmSearchMode || 'fast-first';
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: string) {
+        this.updateSettings({
           key: 'unmSearchMode',
           value: value,
         });
@@ -1335,8 +1429,8 @@ export default {
       get() {
         return this.settings.unmEnableFlac || false;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'unmEnableFlac',
           value: value || false,
         });
@@ -1346,10 +1440,10 @@ export default {
       get() {
         return this.settings.unmProxyUri || '';
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: string) {
+        this.updateSettings({
           key: 'unmProxyUri',
-          value: value.length && value,
+          value: value || undefined,
         });
       },
     },
@@ -1357,10 +1451,10 @@ export default {
       get() {
         return this.settings.unmJooxCookie || '';
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: string) {
+        this.updateSettings({
           key: 'unmJooxCookie',
-          value: value.length && value,
+          value: value || undefined,
         });
       },
     },
@@ -1368,10 +1462,10 @@ export default {
       get() {
         return this.settings.unmQQCookie || '';
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: string) {
+        this.updateSettings({
           key: 'unmQQCookie',
-          value: value.length && value,
+          value: value || undefined,
         });
       },
     },
@@ -1379,10 +1473,10 @@ export default {
       get() {
         return this.settings.unmYtDlExe || '';
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: string) {
+        this.updateSettings({
           key: 'unmYtDlExe',
-          value: value.length && value,
+          value: value || undefined,
         });
       },
     },
@@ -1390,41 +1484,53 @@ export default {
       get() {
         return this.settings.linuxEnableCustomTitlebar;
       },
-      set(value) {
-        this.$store.commit('updateSettings', {
+      set(value: boolean) {
+        this.updateSettings({
           key: 'linuxEnableCustomTitlebar',
           value,
         });
       },
     },
     isLastfmConnected() {
-      return this.lastfm.key !== undefined;
+      return this.lastfm['key'] !== undefined;
     },
   },
   created() {
-    this.countDBSize('tracks');
+    this.countDBSize();
     if (isDesktopRuntime) this.getAllOutputDevices();
   },
   activated() {
-    this.countDBSize('tracks');
+    this.countDBSize();
     if (isDesktopRuntime) this.getAllOutputDevices();
   },
   beforeUnmount() {
     this.stopLastfmChecker();
+    this.stopLastfmAuthorization();
+    void clearPendingAppUpdate();
   },
   methods: {
-    ...mapActions(['showToast']),
+    ...mapActions(useAppStore, [
+      'showToast',
+      'changeLang',
+      'updateSettings',
+      'changeMusicQuality',
+      'changeLyricFontSize',
+      'changeOutputDevice',
+      'updateLastfm',
+      'updateShortcut',
+    ]),
+    ...mapActions(useAppStore, {
+      restoreDefaultShortcutsInStore: 'restoreDefaultShortcuts',
+    }),
     getAllOutputDevices() {
       navigator.mediaDevices.enumerateDevices().then(devices => {
-        this.allOutputDevices = devices.filter(device => {
-          return device.kind == 'audiooutput';
-        });
+        this.allOutputDevices = devices
+          .filter(device => device.kind === 'audiooutput')
+          .map(({ deviceId, label }) => ({ deviceId, label }));
         if (
-          this.allOutputDevices.length > 0 &&
-          this.allOutputDevices[0].label !== ''
+          this.allOutputDevices.length === 0 ||
+          this.allOutputDevices[0]?.label === ''
         ) {
-          this.withoutAudioPriviledge = false;
-        } else {
           this.allOutputDevices = [
             {
               deviceId: 'default',
@@ -1456,27 +1562,127 @@ export default {
         this.countDBSize();
       });
     },
+    async handleAppUpdate() {
+      if (this.updaterState === 'available') {
+        await this.installAppUpdate();
+        return;
+      }
+      await this.checkAppUpdate();
+    },
+    async checkAppUpdate() {
+      this.updaterState = 'checking';
+      this.updaterNotes = '';
+      this.updaterProgress = null;
+      try {
+        const result = await checkForAppUpdate();
+        if (result.status === 'unconfigured') {
+          this.updaterState = 'unconfigured';
+          return;
+        }
+        if (result.status === 'up-to-date') {
+          this.updaterState = 'upToDate';
+          this.showToast(String(this.$t('settings.updater.upToDate')));
+          return;
+        }
+        this.updaterState = 'available';
+        this.updaterVersion = result.version;
+        this.updaterNotes = result.notes;
+        this.showToast(
+          String(
+            this.$t('settings.updater.available', {
+              version: result.version,
+            })
+          )
+        );
+      } catch (error) {
+        console.error('[updater] update check failed', error);
+        this.updaterState = 'error';
+        this.showToast(String(this.$t('settings.updater.failed')));
+      }
+    },
+    async installAppUpdate() {
+      this.updaterState = 'downloading';
+      this.updaterProgress = null;
+      try {
+        await installPendingAppUpdate(progress => {
+          this.updaterProgress = progress.percent;
+        });
+      } catch (error) {
+        console.error('[updater] update installation failed', error);
+        this.updaterState = 'available';
+        this.showToast(String(this.$t('settings.updater.failed')));
+      }
+    },
     lastfmConnect() {
       this.stopLastfmChecker();
+      this.stopLastfmAuthorization();
+      if (isDesktopRuntime) {
+        const authorizationEpoch = this.lastfmAuthorizationEpoch;
+        let completed = false;
+        void startDesktopLastfmAuthorization({
+          onAuthorized: session => {
+            if (authorizationEpoch !== this.lastfmAuthorizationEpoch) return;
+            completed = true;
+            const persisted = persistAuthorizedLastfmSession(
+              session,
+              localStorage
+            );
+            this.updateLastfm(persisted);
+            this.lastfmAuthorizationCleanup = null;
+          },
+          onError: error => {
+            if (authorizationEpoch !== this.lastfmAuthorizationEpoch) return;
+            console.error('[lastfm] authorization failed', error);
+            this.showToast('Last.fm 授权失败');
+          },
+        })
+          .then(cleanup => {
+            if (
+              completed ||
+              authorizationEpoch !== this.lastfmAuthorizationEpoch
+            ) {
+              cleanup();
+              return;
+            }
+            this.lastfmAuthorizationCleanup = cleanup;
+          })
+          .catch(error => {
+            if (authorizationEpoch !== this.lastfmAuthorizationEpoch) return;
+            console.error(
+              '[lastfm] failed to open authorization window',
+              error
+            );
+            this.showToast('无法打开 Last.fm 授权窗口');
+          });
+        return;
+      }
       lastfmAuth();
       this.lastfmChecker = setInterval(() => {
         const session = localStorage.getItem('lastfm');
         if (session) {
-          this.$store.commit('updateLastfm', JSON.parse(session));
+          this.updateLastfm(
+            decodeLastfmState(readStoredJson(localStorage, 'lastfm'))
+          );
           this.stopLastfmChecker();
         }
       }, 1000);
     },
     lastfmDisconnect() {
       this.stopLastfmChecker();
+      this.stopLastfmAuthorization();
       localStorage.removeItem('lastfm');
-      this.$store.commit('updateLastfm', {});
+      this.updateLastfm({});
     },
     stopLastfmChecker() {
       stopInterval(this.lastfmChecker);
       this.lastfmChecker = null;
     },
-    sendProxyConfig() {
+    stopLastfmAuthorization() {
+      this.lastfmAuthorizationEpoch += 1;
+      this.lastfmAuthorizationCleanup?.();
+      this.lastfmAuthorizationCleanup = null;
+    },
+    async sendProxyConfig() {
       if (this.proxyProtocol === 'noProxy') return;
       const config = this.settings.proxyConfig;
       if (
@@ -1484,16 +1690,32 @@ export default {
         !config.port ||
         config.protocol === 'noProxy'
       ) {
-        void sendDesktop('removeProxy');
-      } else {
-        void sendDesktop('setProxy', config);
+        this.showToast('代理配置不完整');
+        return;
       }
-      this.showToast('已更新代理设置');
+      try {
+        await sendDesktop('setProxy', config);
+        this.showToast('已更新代理设置，正在重启');
+        await relaunchDesktop();
+      } catch (error) {
+        console.error('[proxy] failed to update the native proxy', error);
+        this.showToast('代理设置失败');
+      }
+    },
+    async disableProxy() {
+      try {
+        await sendDesktop('removeProxy');
+        this.showToast('已关闭代理，正在重启');
+        await relaunchDesktop();
+      } catch (error) {
+        console.error('[proxy] failed to remove the native proxy', error);
+        this.showToast('关闭代理失败');
+      }
     },
     clickOutside() {
       this.exitRecordShortcut();
     },
-    formatShortcut(shortcut) {
+    formatShortcut(shortcut: string) {
       shortcut = shortcut
         .replaceAll('+', ' + ')
         .replace('Up', '↑')
@@ -1515,46 +1737,65 @@ export default {
       }
       return shortcut.replace('CommandOrControl', 'Ctrl');
     },
-    readyToRecordShortcut(id, type) {
+    readyToRecordShortcut(id: string, type: ShortcutKind) {
       if (type === 'globalShortcut' && this.enableGlobalShortcut === false) {
         return;
       }
       this.shortcutInput = { id, type, recording: true };
       this.recordedShortcut = [];
+      (this.$refs['shortcutTable'] as HTMLElement).focus();
       void sendDesktop('switchGlobalShortcutStatusTemporary', 'disable');
     },
-    handleShortcutKeydown(e) {
+    handleShortcutKeydown(e: KeyboardEvent) {
       if (this.shortcutInput.recording === false) return;
       e.preventDefault();
-      if (this.recordedShortcut.find(s => s.keyCode === e.keyCode)) return;
-      this.recordedShortcut.push(e);
+      const recordedKey = { code: e.code, key: e.key };
+      const identity = getRecordedShortcutKeyIdentity(recordedKey);
       if (
-        (e.keyCode >= 65 && e.keyCode <= 90) || // A-Z
-        (e.keyCode >= 48 && e.keyCode <= 57) || // 0-9
-        (e.keyCode >= 112 && e.keyCode <= 123) || // F1-F12
+        this.recordedShortcut.some(
+          key => getRecordedShortcutKeyIdentity(key) === identity
+        )
+      ) {
+        return;
+      }
+      this.recordedShortcut.push(recordedKey);
+      if (
+        /^Key[A-Z]$/.test(e.code) ||
+        /^Digit[0-9]$/.test(e.code) ||
+        /^F(?:[1-9]|1[0-2])$/.test(e.code) ||
+        e.code === 'Space' ||
         ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(e.key) || // Arrows
         validShortcutCodes.includes(e.key)
       ) {
         this.saveShortcut();
       }
     },
-    handleShortcutKeyup(e) {
-      if (this.recordedShortcut.find(s => s.keyCode === e.keyCode)) {
+    handleShortcutKeyup(e: KeyboardEvent) {
+      const identity = getRecordedShortcutKeyIdentity({
+        code: e.code,
+        key: e.key,
+      });
+      if (
+        this.recordedShortcut.some(
+          key => getRecordedShortcutKeyIdentity(key) === identity
+        )
+      ) {
         this.recordedShortcut = this.recordedShortcut.filter(
-          s => s.keyCode !== e.keyCode
+          key => getRecordedShortcutKeyIdentity(key) !== identity
         );
       }
     },
     saveShortcut() {
       const { id, type } = this.shortcutInput;
+      if (type === '') return;
       const payload = {
         id,
         type,
         shortcut: this.recordedShortcutComputed,
       };
-      this.$store.commit('updateShortcut', payload);
+      this.updateShortcut(payload);
       void sendDesktop('updateShortcut', payload);
-      void sendDesktop('settings', this.settings);
+      void syncDesktopSettings(this.settings);
       this.showToast('快捷键已保存');
       this.recordedShortcut = [];
     },
@@ -1565,11 +1806,11 @@ export default {
       void sendDesktop('switchGlobalShortcutStatusTemporary', 'enable');
     },
     restoreDefaultShortcuts() {
-      this.$store.commit('restoreDefaultShortcuts');
+      this.restoreDefaultShortcutsInStore();
       void sendDesktop('restoreDefaultShortcuts', this.settings);
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
@@ -1691,6 +1932,24 @@ h3 {
   }
 }
 
+.updater {
+  align-items: flex-start;
+
+  .left {
+    max-width: 70%;
+  }
+
+  .updater-notes {
+    white-space: pre-line;
+  }
+
+  button:disabled {
+    cursor: default;
+    opacity: 0.55;
+    transform: none;
+  }
+}
+
 select {
   min-width: 192px;
   max-width: 600px;
@@ -1708,11 +1967,9 @@ select {
   }
 }
 
-// Electron 的 Chromium 和 macOS WebKit 即使隐藏箭头，点开后仍有自然的
-// 系统选择菜单；Windows WebView2 / Linux WebKit 则会只剩一块无提示的灰条。
-// 这两个平台保留原生箭头与点击反馈，避免为下拉菜单重造一套键盘和无障碍交互。
-:global(body[data-electron-os='win32'] .settings-page select),
-:global(body[data-electron-os='linux'] .settings-page select) {
+// Keep native affordances on WebView2 and WebKitGTK.
+:global(body[data-platform='win32'] .settings-page select),
+:global(body[data-platform='linux'] .settings-page select) {
   appearance: auto;
 }
 

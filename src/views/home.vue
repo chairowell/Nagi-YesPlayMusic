@@ -68,39 +68,42 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import { toplists } from '@/api/playlist';
 import { toplistOfArtists } from '@/api/artist';
 import { newAlbums } from '@/api/album';
 import { byAppleMusic } from '@/utils/staticData';
 import { getRecommendPlayList } from '@/utils/playList';
 import NProgress from 'nprogress';
-import { mapState } from 'vuex';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import CoverRow from '@/components/CoverRow.vue';
 import FMCard from '@/components/FMCard.vue';
 import DailyTracksCard from '@/components/DailyTracksCard.vue';
+import type { Album, Artist, Playlist } from '@/types/domain';
 
-export default {
+export default defineComponent({
   name: 'Home',
   inject: ['appShell'],
   components: { CoverRow, FMCard, DailyTracksCard },
   data() {
     return {
       show: false,
-      recommendPlaylist: { items: [] },
-      newReleasesAlbum: { items: [] },
+      recommendPlaylist: { items: [] as Playlist[] },
+      newReleasesAlbum: { items: [] as Album[] },
       topList: {
-        items: [],
+        items: [] as Playlist[],
         ids: [19723756, 180106, 60198, 3812895, 60131],
       },
       recommendArtists: {
-        items: [],
-        indexs: [],
+        items: [] as Artist[],
+        indexes: [] as number[],
       },
     };
   },
   computed: {
-    ...mapState(['settings']),
+    ...mapState(useAppStore, ['settings']),
     byAppleMusic() {
       return byAppleMusic;
     },
@@ -126,7 +129,7 @@ export default {
         this.newReleasesAlbum.items = data.albums;
       });
 
-      const toplistOfArtistsAreaTable = {
+      const toplistOfArtistsAreaTable: Record<string, number | null> = {
         all: null,
         zh: 1,
         ea: 2,
@@ -134,16 +137,16 @@ export default {
         kr: 3,
       };
       toplistOfArtists(
-        toplistOfArtistsAreaTable[this.settings.musicLanguage ?? 'all']
+        toplistOfArtistsAreaTable[this.settings.musicLanguage] ?? null
       ).then(data => {
-        let indexs = [];
-        while (indexs.length < 6) {
-          let tmp = ~~(Math.random() * 100);
-          if (!indexs.includes(tmp)) indexs.push(tmp);
+        const indexes: number[] = [];
+        while (indexes.length < 6) {
+          const index = ~~(Math.random() * 100);
+          if (!indexes.includes(index)) indexes.push(index);
         }
-        this.recommendArtists.indexs = indexs;
-        this.recommendArtists.items = data.list.artists.filter((l, index) =>
-          indexs.includes(index)
+        this.recommendArtists.indexes = indexes;
+        this.recommendArtists.items = data.list.artists.filter(
+          (_artist, index) => indexes.includes(index)
         );
       });
       toplists().then(data => {
@@ -151,10 +154,12 @@ export default {
           this.topList.ids.includes(l.id)
         );
       });
-      this.$refs.DailyTracksCard.loadDailyTracks();
+      (
+        this.$refs['DailyTracksCard'] as InstanceType<typeof DailyTracksCard>
+      ).loadDailyTracks();
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

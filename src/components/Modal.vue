@@ -9,20 +9,23 @@
       </div>
       <div class="content"><slot></slot></div>
       <div v-if="showFooter" class="footer">
-        <!-- <button>取消</button>
-        <button class="primary">确定</button> -->
         <slot name="footer"></slot>
       </div>
     </div>
   </div>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent } from 'vue';
+import type { PropType } from 'vue';
+export default defineComponent({
   name: 'Modal',
   props: {
     show: Boolean,
-    close: Function,
+    close: {
+      type: Function as PropType<() => void>,
+      default: () => {},
+    },
     title: {
       type: String,
       default: 'Title',
@@ -59,7 +62,7 @@ export default {
       }
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

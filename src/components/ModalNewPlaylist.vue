@@ -28,13 +28,15 @@
   </Modal>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import Modal from '@/components/Modal.vue';
 import locale from '@/locale';
-import { mapMutations, mapState, mapActions } from 'vuex';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { createPlaylist, addOrRemoveTrackFromPlaylist } from '@/api/playlist';
 
-export default {
+export default defineComponent({
   name: 'ModalNewPlaylist',
   components: {
     Modal,
@@ -46,28 +48,33 @@ export default {
     };
   },
   computed: {
-    ...mapState(['modals']),
+    ...mapState(useAppStore, ['modals']),
     show: {
       get() {
         return this.modals.newPlaylistModal.show;
       },
-      set(value) {
+      set(value: boolean) {
         this.updateModal({
           modalName: 'newPlaylistModal',
           key: 'show',
           value,
         });
         if (value) {
-          this.$store.commit('enableScrolling', false);
+          this.enableScrollingWith(false);
         } else {
-          this.$store.commit('enableScrolling', true);
+          this.enableScrollingWith(true);
         }
       },
     },
   },
   methods: {
-    ...mapMutations(['updateModal', 'updateData']),
-    ...mapActions(['showToast', 'fetchLikedPlaylist']),
+    ...mapActions(useAppStore, [
+      'updateModal',
+      'updateData',
+      'showToast',
+      'fetchLikedPlaylist',
+      'enableScrollingWith',
+    ]),
     close() {
       this.show = false;
       this.title = '';
@@ -75,8 +82,10 @@ export default {
       this.resetAfterCreateAddTrackID();
     },
     createPlaylist() {
-      let params = { name: this.title };
-      if (this.private) params.type = 10;
+      const params = {
+        name: this.title,
+        ...(this.privatePlaylist ? { privacy: 10 as const } : {}),
+      };
       createPlaylist(params).then(data => {
         if (data.code === 200) {
           if (this.modals.newPlaylistModal.afterCreateAddTrackID !== 0) {
@@ -88,7 +97,7 @@ export default {
               if (data.body.code === 200) {
                 this.showToast(locale.t('toast.savedToPlaylist'));
               } else {
-                this.showToast(data.body.message);
+                this.showToast(data.body.message ?? '添加歌曲失败');
               }
               this.resetAfterCreateAddTrackID();
             });
@@ -103,12 +112,12 @@ export default {
     resetAfterCreateAddTrackID() {
       this.updateModal({
         modalName: 'newPlaylistModal',
-        key: 'AfterCreateAddTrackID',
+        key: 'afterCreateAddTrackID',
         value: 0,
       });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

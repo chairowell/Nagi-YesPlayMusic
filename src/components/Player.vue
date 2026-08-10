@@ -26,7 +26,12 @@
       <div class="playing">
         <div class="container" @click.stop>
           <img
-            :src="$filters.resizeImage(currentTrack.al && currentTrack.al.picUrl, 224)"
+            :src="
+              $filters.resizeImage(
+                currentTrack.al && currentTrack.al.picUrl,
+                224
+              )
+            "
             loading="lazy"
             @click="goToAlbum"
           />
@@ -39,12 +44,14 @@
             </div>
             <div class="artist">
               <span
-                v-for="(ar, index) in currentTrack.ar"
+                v-for="(ar, index) in currentTrack.ar || []"
                 :key="ar.id"
                 @click="ar.id && goToArtist(ar.id)"
               >
                 <span :class="{ ar: ar.id }"> {{ ar.name }} </span
-                ><span v-if="index !== currentTrack.ar.length - 1">, </span>
+                ><span v-if="index !== (currentTrack.ar || []).length - 1"
+                  >,
+                </span>
               </span>
             </div>
           </div>
@@ -180,8 +187,10 @@
   </div>
 </template>
 
-<script>
-import { mapState, mapMutations, mapActions } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import '@/assets/css/slider.css';
 
 import ButtonIcon from '@/components/ButtonIcon.vue';
@@ -190,7 +199,7 @@ import VueSlider from 'vue-slider-component';
 import { goToListSource, hasListSource } from '@/utils/playList';
 import { formatTrackTime } from '@/utils/common';
 
-export default {
+export default defineComponent({
   name: 'Player',
   components: {
     ButtonIcon,
@@ -199,11 +208,11 @@ export default {
   },
   data() {
     return {
-      mouseDownTarget: null,
+      mouseDownTarget: null as EventTarget | null,
     };
   },
   computed: {
-    ...mapState(['player', 'settings', 'data']),
+    ...mapState(useAppStore, ['player', 'settings', 'data']),
     currentTrack() {
       return this.player.currentTrack;
     },
@@ -211,7 +220,7 @@ export default {
       get() {
         return this.player.volume;
       },
-      set(value) {
+      set(value: number) {
         this.player.volume = value;
       },
     },
@@ -219,7 +228,7 @@ export default {
       return this.player.playing;
     },
     audioSource() {
-      return this.player._howler?._src.includes('kuwo.cn')
+      return this.player.currentAudioSourceUrl.includes('kuwo.cn')
         ? '音源来自酷我音乐'
         : '';
     },
@@ -232,14 +241,13 @@ export default {
     window.removeEventListener('keydown', this.handleKeydown);
   },
   methods: {
-    ...mapMutations(['toggleLyrics']),
-    ...mapActions(['showToast', 'likeATrack']),
-    handleClick(event) {
+    ...mapActions(useAppStore, ['toggleLyrics', 'showToast', 'likeATrack']),
+    handleClick(event: MouseEvent) {
       if (event.target == this.mouseDownTarget) {
         this.toggleLyrics();
       }
     },
-    handleMouseDown(event) {
+    handleMouseDown(event: MouseEvent) {
       this.mouseDownTarget = event.target;
     },
     playPrevTrack() {
@@ -261,7 +269,7 @@ export default {
         ? this.$router.go(-1)
         : this.$router.push({ name: 'next' });
     },
-    formatTrackTime(value) {
+    formatTrackTime(value: number) {
       return formatTrackTime(value);
     },
     hasList() {
@@ -271,10 +279,11 @@ export default {
       goToListSource();
     },
     goToAlbum() {
-      if (this.player.currentTrack.al.id === 0) return;
-      this.$router.push({ path: '/album/' + this.player.currentTrack.al.id });
+      const albumId = this.player.currentTrack.al?.id;
+      if (!albumId) return;
+      this.$router.push({ path: '/album/' + albumId });
     },
-    goToArtist(id) {
+    goToArtist(id: number) {
       this.$router.push({ path: '/artist/' + id });
     },
     moveToFMTrash() {
@@ -310,7 +319,7 @@ export default {
       }
     },
 
-    handleKeydown(event) {
+    handleKeydown(event: KeyboardEvent) {
       switch (event.code) {
         case 'MediaPlayPause':
           this.playOrPause();
@@ -326,7 +335,7 @@ export default {
       }
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
@@ -342,8 +351,7 @@ export default {
   isolation: isolate;
   z-index: 100;
 
-  // backdrop-filter 放在播放器本体上会裁掉越过顶边的进度条角色。背景单独
-  // 放进伪元素，既保留磨砂效果，又允许角色站在播放器上沿之外。
+  // Isolate the backdrop so the progress rider can overflow.
   &::before {
     content: '';
     position: absolute;

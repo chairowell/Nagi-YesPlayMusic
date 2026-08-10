@@ -14,19 +14,21 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import { newAlbums } from '@/api/album';
 import NProgress from 'nprogress';
 
 import CoverRow from '@/components/CoverRow.vue';
+import type { Album } from '@/types/domain';
 
-export default {
+export default defineComponent({
   components: {
     CoverRow,
   },
   data() {
     return {
-      albums: [],
+      albums: [] as Album[],
     };
   },
   created() {
@@ -38,7 +40,7 @@ export default {
       NProgress.done();
     });
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

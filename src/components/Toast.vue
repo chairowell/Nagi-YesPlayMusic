@@ -4,15 +4,17 @@
   </transition>
 </template>
 
-<script>
-import { mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 
-export default {
+export default defineComponent({
   name: 'Toast',
   computed: {
-    ...mapState(['toast']),
+    ...mapState(useAppStore, ['toast']),
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
@@ -45,7 +47,8 @@ export default {
 .fade-leave-active {
   transition: opacity 0.2s;
 }
-.fade-enter-from, .fade-leave-to {
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 </style>

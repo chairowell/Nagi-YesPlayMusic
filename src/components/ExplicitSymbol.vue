@@ -2,10 +2,12 @@
   <svg-icon icon-class="explicit" :style="svgStyle"></svg-icon>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
+import type { CSSProperties } from 'vue';
 import SvgIcon from '@/components/SvgIcon.vue';
 
-export default {
+export default defineComponent({
   name: 'ExplicitSymbol',
   components: {
     SvgIcon,
@@ -18,7 +20,7 @@ export default {
   },
   data() {
     return {
-      svgStyle: {},
+      svgStyle: {} as CSSProperties,
     };
   },
   created() {
@@ -29,7 +31,7 @@ export default {
       left: '-1px',
     };
   },
-};
+});
 </script>
 
 <style lang="scss" scoped></style>

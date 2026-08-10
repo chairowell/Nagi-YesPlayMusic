@@ -34,11 +34,19 @@
   </div>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent } from 'vue';
+import type { PropType } from 'vue';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
+import type { MusicVideo } from '@/types/domain';
+export default defineComponent({
   name: 'CoverVideo',
   props: {
-    mvs: Array,
+    mvs: {
+      type: Array as PropType<MusicVideo[]>,
+      default: () => [],
+    },
     subtitle: {
       type: String,
       default: 'artist',
@@ -50,42 +58,41 @@ export default {
       hoverVideoID: 0,
     };
   },
+  computed: {
+    ...mapState(useAppStore, ['player']),
+  },
   methods: {
-    goToMv(id) {
-      let query = {};
-      if (this.$parent.player !== undefined) {
-        query = { autoplay: this.$parent.player.playing };
-      }
+    goToMv(id: number): void {
+      const query = { autoplay: String(this.player.playing) };
       this.$router.push({ path: '/mv/' + id, query });
     },
-    getUrl(mv) {
-      let url = mv.imgurl16v9 ?? mv.cover ?? mv.coverUrl;
+    getUrl(mv: MusicVideo): string {
+      const url = mv.imgurl16v9 ?? mv.cover ?? mv.coverUrl ?? '';
       return url.replace(/^http:/, 'https:') + '?param=464y260';
     },
-    getID(mv) {
-      if (mv.id !== undefined) return mv.id;
-      if (mv.vid !== undefined) return mv.vid;
+    getID(mv: MusicVideo): number {
+      return mv.id ?? mv.vid ?? 0;
     },
-    getTitle(mv) {
-      if (mv.name !== undefined) return mv.name;
-      if (mv.title !== undefined) return mv.title;
+    getTitle(mv: MusicVideo): string {
+      return mv.name ?? mv.title ?? '';
     },
-    getArtist(mv) {
+    getArtist(mv: MusicVideo): { name: string; id: number } {
       if (mv.artistName !== undefined) {
-        return { name: mv.artistName, id: mv.artistId };
+        return { name: mv.artistName, id: mv.artistId ?? 0 };
       }
       const creator = mv.creator?.[0];
       return creator
-        ? { name: creator.userName, id: creator.userId }
+        ? { name: creator.userName ?? '', id: creator.userId ?? 0 }
         : { name: 'null', id: 0 };
     },
-    getSubtitle(mv) {
+    getSubtitle(mv: MusicVideo): string {
       if (this.subtitle === 'publishTime') {
-        return mv.publishTime;
+        return mv.publishTime ?? '';
       }
+      return '';
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
@@ -177,7 +184,8 @@ img {
 .fade-leave-active {
   transition: opacity 0.3s;
 }
-.fade-enter-from, .fade-leave-to {
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 </style>

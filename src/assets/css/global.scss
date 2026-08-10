@@ -88,7 +88,9 @@ textarea,
 }
 
 // 光标只对真的能敲字的地方改成 I 形；开关、滑块这类 input 保持原样。
-input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not(
+    [type='file']
+  ):not([type='color']),
 textarea,
 [contenteditable='true'],
 .selectable {
@@ -138,7 +140,7 @@ a {
   }
 }
 
-[data-electron='yes'] {
+[data-desktop='tauri'] {
   button,
   .navigation-links a,
   .playlist-info .description {

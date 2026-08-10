@@ -42,7 +42,8 @@
         </div>
         <div class="date-and-count">
           {{ $t('playlist.updatedAt') }}
-          {{ $filters.formatDate(playlist.updateTime) }} · {{ playlist.trackCount }}
+          {{ $filters.formatDate(playlist.updateTime) }} ·
+          {{ playlist.trackCount }}
           {{ $t('common.songs') }}
         </div>
         <div class="description" @click="toggleFullDescription">
@@ -170,6 +171,7 @@
       :extra-context-menu-item="
         isUserOwnPlaylist ? ['removeTrackFromPlaylist'] : []
       "
+      @remove-track="removeTrack"
     />
 
     <div class="load-more">
@@ -217,14 +219,17 @@
   </div>
 </template>
 
-<script>
-import { mapMutations, mapActions, mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import NProgress from 'nprogress';
 import {
   getPlaylistDetail,
   subscribePlaylist,
   deletePlaylist,
 } from '@/api/playlist';
+import type { DetailedPlaylist } from '@/api/playlist';
 import { getTrackDetail } from '@/api/track';
 import { isAccountLoggedIn } from '@/utils/auth';
 import nativeAlert from '@/utils/nativeAlert';
@@ -235,8 +240,14 @@ import ContextMenu from '@/components/ContextMenu.vue';
 import TrackList from '@/components/TrackList.vue';
 import Cover from '@/components/Cover.vue';
 import Modal from '@/components/Modal.vue';
+import type { Track } from '@/types/domain';
 
-const specialPlaylist = {
+interface SpecialPlaylistInfo {
+  name: string;
+  gradient: string;
+}
+
+const specialPlaylist: Record<number, SpecialPlaylistInfo> = {
   2829816518: {
     name: '欧美私人订制',
     gradient: 'gradient-pink-purple-blue',
@@ -327,7 +338,17 @@ const specialPlaylist = {
   },
 };
 
-export default {
+function emptyPlaylist(): DetailedPlaylist {
+  return {
+    id: 0,
+    coverImgUrl: '',
+    creator: { userId: 0 },
+    trackIds: [],
+    tracks: [],
+  };
+}
+
+export default defineComponent({
   name: 'Playlist',
   components: {
     Cover,
@@ -338,7 +359,7 @@ export default {
   },
   directives: {
     focus: {
-      inserted: function (el) {
+      mounted(el: HTMLInputElement) {
         el.focus();
       },
     },
@@ -346,53 +367,47 @@ export default {
   data() {
     return {
       show: false,
-      playlist: {
-        id: 0,
-        coverImgUrl: '',
-        creator: {
-          userId: '',
-        },
-        trackIds: [],
-      },
+      playlist: emptyPlaylist(),
+      playlistId: 0,
       showFullDescription: false,
-      tracks: [],
+      tracks: [] as Track[],
       loadingMore: false,
       hasMore: false,
       lastLoadedTrackIndex: 9,
-      displaySearchInPlaylist: false, // 是否显示搜索框
-      searchKeyWords: '', // 搜索使用的关键字
-      inputSearchKeyWords: '', // 搜索框中正在输入的关键字
+      displaySearchInPlaylist: false, // Whether the search box is visible.
+      searchKeyWords: '', // Applied search query.
+      inputSearchKeyWords: '', // Draft search query.
       inputFocus: false,
-      debounceTimeout: null,
-      searchInputWidth: '0px', // 搜索框宽度
+      debounceTimeout: null as ReturnType<typeof setTimeout> | null,
+      searchInputWidth: '0px', // Search box width.
     };
   },
   computed: {
-    ...mapState(['player', 'data']),
-    isLikeSongsPage() {
+    ...mapState(useAppStore, ['player', 'data']),
+    isLikeSongsPage(): boolean {
       return this.$route.name === 'likedSongs';
     },
-    specialPlaylistInfo() {
+    specialPlaylistInfo(): SpecialPlaylistInfo | undefined {
       return specialPlaylist[this.playlist.id];
     },
-    isUserOwnPlaylist() {
+    isUserOwnPlaylist(): boolean {
       return (
         this.playlist.creator.userId === this.data.user.userId &&
         this.playlist.id !== this.data.likedSongPlaylistID
       );
     },
-    filteredTracks() {
+    filteredTracks(): Track[] {
       return this.tracks.filter(
         track =>
           (track.name &&
             track.name
               .toLowerCase()
               .includes(this.searchKeyWords.toLowerCase())) ||
-          (track.al.name &&
+          (track.al?.name &&
             track.al.name
               .toLowerCase()
               .includes(this.searchKeyWords.toLowerCase())) ||
-          track.ar.find(
+          track.ar?.find(
             artist =>
               artist.name &&
               artist.name
@@ -404,20 +419,21 @@ export default {
   },
   created() {
     if (this.$route.name === 'likedSongs') {
-      this.loadData(this.data.likedSongPlaylistID);
+      if (this.data.likedSongPlaylistID !== undefined) {
+        this.loadData(this.data.likedSongPlaylistID);
+      }
     } else {
-      this.loadData(this.$route.params.id);
+      this.loadData(this.$route.params['id']);
     }
     setTimeout(() => {
       if (!this.show) NProgress.start();
     }, 1000);
   },
   methods: {
-    ...mapMutations(['appendTrackToPlayerList']),
-    ...mapActions(['playFirstTrackOnList', 'playTrackOnListByID', 'showToast']),
-    playPlaylistByID(trackID = 'first') {
-      let trackIDs = this.playlist.trackIds.map(t => t.id);
-      this.$store.state.player.replacePlaylist(
+    ...mapActions(useAppStore, ['showToast', 'enableScrollingWith']),
+    playPlaylistByID(trackID: number | 'first' = 'first') {
+      const trackIDs = this.playlist.trackIds.map(t => t.id);
+      this.player.replacePlaylist(
         trackIDs,
         this.playlist.id,
         'playlist',
@@ -440,15 +456,18 @@ export default {
               this.playlist.subscribed ? '已保存到音乐库' : '已从音乐库删除'
             );
         }
-        getPlaylistDetail(this.id, true).then(data => {
-          this.playlist = data.playlist;
+        getPlaylistDetail(this.playlistId, true).then(data => {
+          if (data.playlist) this.playlist = data.playlist;
         });
       });
     },
-    loadData(id, next = undefined) {
-      this.id = id;
-      getPlaylistDetail(this.id, true)
+    loadData(id: unknown, next?: () => void) {
+      const playlistId = Number(id);
+      if (!Number.isFinite(playlistId)) return;
+      this.playlistId = playlistId;
+      getPlaylistDetail(playlistId, true)
         .then(data => {
+          if (!data.playlist) throw new Error('歌单详情缺少 playlist');
           this.playlist = data.playlist;
           this.tracks = data.playlist.tracks;
           NProgress.done();
@@ -458,22 +477,24 @@ export default {
           return data;
         })
         .then(() => {
-          if (this.playlist.trackCount > this.tracks.length) {
+          if ((this.playlist.trackCount ?? 0) > this.tracks.length) {
             this.loadingMore = true;
             this.loadMore();
           }
         });
     },
     loadMore(loadNum = 100) {
-      let trackIDs = this.playlist.trackIds.filter((t, index) => {
-        if (
-          index > this.lastLoadedTrackIndex &&
-          index <= this.lastLoadedTrackIndex + loadNum
-        ) {
-          return t;
-        }
-      });
-      trackIDs = trackIDs.map(t => t.id);
+      const trackIDs = this.playlist.trackIds
+        .filter((_track, index) => {
+          if (
+            index > this.lastLoadedTrackIndex &&
+            index <= this.lastLoadedTrackIndex + loadNum
+          ) {
+            return true;
+          }
+          return false;
+        })
+        .map(track => track.id);
       getTrackDetail(trackIDs.join(',')).then(data => {
         this.tracks.push(...data.songs);
         this.lastLoadedTrackIndex += trackIDs.length;
@@ -485,15 +506,17 @@ export default {
         }
       });
     },
-    openMenu(e) {
-      this.$refs.playlistMenu.openMenu(e);
+    openMenu(e: MouseEvent) {
+      (this.$refs['playlistMenu'] as InstanceType<typeof ContextMenu>).openMenu(
+        e
+      );
     },
     deletePlaylist() {
       if (!isAccountLoggedIn()) {
         this.showToast(locale.t('toast.needToLogin'));
         return;
       }
-      let confirmation = confirm(`确定要删除歌单 ${this.playlist.name}？`);
+      const confirmation = confirm(`确定要删除歌单 ${this.playlist.name}？`);
       if (confirmation === true) {
         deletePlaylist(this.playlist.id).then(data => {
           if (data.code === 200) {
@@ -519,7 +542,7 @@ export default {
         this.loadMore(500);
       }
     },
-    removeTrack(trackID) {
+    removeTrack(trackID: number) {
       if (!isAccountLoggedIn()) {
         this.showToast(locale.t('toast.needToLogin'));
         return;
@@ -535,13 +558,13 @@ export default {
     toggleFullDescription() {
       this.showFullDescription = !this.showFullDescription;
       if (this.showFullDescription) {
-        this.$store.commit('enableScrolling', false);
+        this.enableScrollingWith(false);
       } else {
-        this.$store.commit('enableScrolling', true);
+        this.enableScrollingWith(true);
       }
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

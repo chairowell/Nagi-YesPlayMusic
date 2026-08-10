@@ -14,11 +14,16 @@
   </div>
 </template>
 
-<script>
-import { mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 
-export default {
+export default defineComponent({
   name: 'ContextMenu',
+  emits: {
+    close: () => true,
+  },
   data() {
     return {
       showMenu: false,
@@ -27,14 +32,15 @@ export default {
     };
   },
   computed: {
-    ...mapState(['player']),
+    ...mapState(useAppStore, ['player']),
   },
   methods: {
-    setMenu(top, left) {
+    ...mapActions(useAppStore, ['enableScrollingWith']),
+    setMenu(top: number, left: number) {
       let heightOffset = this.player.enabled ? 64 : 0;
-      let largestHeight =
-        window.innerHeight - this.$refs.menu.offsetHeight - heightOffset;
-      let largestWidth = window.innerWidth - this.$refs.menu.offsetWidth - 25;
+      const menu = this.$refs['menu'] as HTMLDivElement;
+      let largestHeight = window.innerHeight - menu.offsetHeight - heightOffset;
+      let largestWidth = window.innerWidth - menu.offsetWidth - 25;
       if (top > largestHeight) top = largestHeight;
       if (left > largestWidth) left = largestWidth;
       this.top = top + 'px';
@@ -43,25 +49,21 @@ export default {
 
     closeMenu() {
       this.showMenu = false;
-      if (this.$parent.closeMenu !== undefined) {
-        this.$parent.closeMenu();
-      }
-      this.$store.commit('enableScrolling', true);
+      this.$emit('close');
+      this.enableScrollingWith(true);
     },
 
-    openMenu(e) {
+    openMenu(e: MouseEvent) {
       this.showMenu = true;
-      this.$nextTick(
-        function () {
-          this.$refs.menu.focus();
-          this.setMenu(e.y, e.x);
-        }.bind(this)
-      );
+      this.$nextTick(() => {
+        (this.$refs['menu'] as HTMLDivElement).focus();
+        this.setMenu(e.y, e.x);
+      });
       e.preventDefault();
-      this.$store.commit('enableScrolling', false);
+      this.enableScrollingWith(false);
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

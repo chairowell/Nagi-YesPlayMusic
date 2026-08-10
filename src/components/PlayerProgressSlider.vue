@@ -13,14 +13,20 @@
   ></vue-slider>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import VueSlider from 'vue-slider-component';
 import {
   PLAYBACK_SLIDER_INTERVAL,
   normalizePlaybackSliderMax,
 } from '@/utils/progressSliderScale';
 
-export default {
+interface SliderInstance {
+  setValue(value: number): void;
+  dragEnd(event: Event): void;
+}
+
+export default defineComponent({
   name: 'PlayerProgressSlider',
   inheritAttrs: false,
   components: { VueSlider },
@@ -34,7 +40,9 @@ export default {
       required: true,
     },
   },
-  emits: ['update:modelValue'],
+  emits: {
+    'update:modelValue': (value: number) => Number.isFinite(value),
+  },
   data() {
     return {
       acceptCommits: true,
@@ -54,26 +62,24 @@ export default {
     window.removeEventListener('blur', this.finishCancelledDrag);
   },
   methods: {
-    commitValue(value) {
+    commitValue(value: number) {
       if (!this.acceptCommits) return;
       this.$emit('update:modelValue', value);
     },
     finishDrag() {
       this.$nextTick(() => {
-        const slider = this.$refs.slider;
+        const slider = this.$refs['slider'] as SliderInstance | undefined;
         if (!slider) return;
-        // lazy 滑块在 Drag 状态会忽略父级修正值；拖拽结束后主动采用
-        // Player 在原生 seeked 后确认的位置，避免滑块与歌词各走各的。
+        // Adopt the player's resolved seek position after dragging.
         slider.setValue(this.modelValue);
       });
     },
-    finishCancelledDrag(event) {
-      const slider = this.$refs.slider;
+    finishCancelledDrag(event: Event) {
+      const slider = this.$refs['slider'] as SliderInstance | undefined;
       if (!slider) return;
-      // vue-slider 的 lazy 模式只监听 mouseup/touchend；WKWebView 取消手势时
-      // 必须主动走 dragEnd，否则视觉预览会留在新位置，播放仍停在旧时间。
+      // Finish lazy drags cancelled by WKWebView.
       slider.dragEnd(event);
     },
   },
-};
+});
 </script>

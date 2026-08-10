@@ -16,21 +16,28 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import { artistMv, getArtist } from '@/api/artist';
 import NProgress from 'nprogress';
 
 import ButtonTwoTone from '@/components/ButtonTwoTone.vue';
 import MvRow from '@/components/MvRow.vue';
+import type { Artist, MusicVideo } from '@/types/domain';
 
-export default {
+function routeArtistId(value: unknown): number {
+  const id = Number(value);
+  return Number.isFinite(id) ? id : 0;
+}
+
+export default defineComponent({
   name: 'ArtistMV',
   components: {
     MvRow,
     ButtonTwoTone,
   },
   beforeRouteUpdate(to, from, next) {
-    this.id = to.params.id;
+    this.id = routeArtistId(to.params['id']);
     this.loadData();
     next();
   },
@@ -39,19 +46,20 @@ export default {
       id: 0,
       show: false,
       hasMore: true,
-      artist: {},
-      mvs: [],
+      artist: { id: 0 } as Artist,
+      mvs: [] as MusicVideo[],
     };
   },
   created() {
-    this.id = this.$route.params.id;
+    this.id = routeArtistId(this.$route.params['id']);
     this.loadData();
   },
   activated() {
-    if (this.$route.params.id !== this.id) {
-      this.id = this.$route.params.id;
+    const routeId = routeArtistId(this.$route.params['id']);
+    if (routeId !== this.id) {
+      this.id = routeId;
       this.mvs = [];
-      this.artist = {};
+      this.artist = { id: 0 };
       this.show = false;
       this.hasMore = true;
       this.loadData();
@@ -78,7 +86,7 @@ export default {
       );
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

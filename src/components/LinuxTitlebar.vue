@@ -1,9 +1,13 @@
 <template>
-  <div class="linux-titlebar">
+  <div
+    class="linux-titlebar"
+    data-tauri-drag-region
+    @dblclick="windowMaxRestore"
+  >
     <div class="logo">
       <img src="/img/logos/yesplaymusic-white24x24.png" />
     </div>
-    <div class="title">{{ title }}</div>
+    <div class="title" data-tauri-drag-region>{{ title }}</div>
     <div class="controls">
       <div
         class="button minimize codicon codicon-chrome-minimize"
@@ -25,46 +29,56 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 // icons by https://github.com/microsoft/vscode-codicons
 import 'vscode-codicons/dist/codicon.css';
 
-import { mapState } from 'vuex';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
+import { sendDesktop } from '@/services/desktopTransport';
+import { isTauriRuntime } from '@/utils/runtime';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 
-const electron =
-  process.env.IS_ELECTRON === true ? window.require('electron') : null;
-const ipcRenderer =
-  process.env.IS_ELECTRON === true ? electron.ipcRenderer : null;
-
-export default {
+export default defineComponent({
   name: 'LinuxTitlebar',
   data() {
     return {
       isMaximized: false,
+      stopMaximizeListener: null as UnlistenFn | null,
+      listenerDisposed: false,
     };
   },
   computed: {
-    ...mapState(['title']),
+    ...mapState(useAppStore, ['title']),
   },
   created() {
-    if (process.env.IS_ELECTRON === true) {
-      ipcRenderer.on('isMaximized', (_, value) => {
-        this.isMaximized = value;
+    if (isTauriRuntime) {
+      import('@tauri-apps/api/event').then(async ({ listen }) => {
+        const stop = await listen<boolean>('desktop://isMaximized', event => {
+          this.isMaximized = event.payload;
+        });
+        if (this.listenerDisposed) stop();
+        else this.stopMaximizeListener = stop;
       });
     }
   },
+  beforeUnmount() {
+    this.listenerDisposed = true;
+    this.stopMaximizeListener?.();
+  },
   methods: {
     windowMinimize() {
-      ipcRenderer.send('minimize');
+      void sendDesktop('minimize');
     },
     windowMaxRestore() {
-      ipcRenderer.send('maximizeOrUnmaximize');
+      void sendDesktop('maximizeOrUnmaximize');
     },
     windowClose() {
-      ipcRenderer.send('close');
+      void sendDesktop('close');
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
@@ -74,7 +88,6 @@ export default {
   left: 0;
   top: 0;
   right: 0;
-  -webkit-app-region: drag;
   display: flex;
   align-items: center;
   --hover: #e6e6e6;
@@ -93,7 +106,6 @@ export default {
   }
   .controls {
     height: 32px;
-    //margin-left: auto;
     justify-content: flex-end;
     display: flex;
     .button {
@@ -103,7 +115,6 @@ export default {
       display: flex;
       justify-content: center;
       align-items: center;
-      -webkit-app-region: no-drag;
       &:hover {
         background: var(--hover);
       }

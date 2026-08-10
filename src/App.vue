@@ -6,7 +6,11 @@
       'window-hidden': windowHidden,
     }"
   >
-    <Scrollbar v-show="!showLyrics" ref="scrollbar" />
+    <Scrollbar
+      v-show="!showLyrics"
+      ref="scrollbar"
+      @drag-state-change="userSelectNone = $event"
+    />
     <Navbar
       v-show="showNavbar"
       ref="navbar"
@@ -15,6 +19,7 @@
     />
     <main
       ref="main"
+      data-scroll-container
       :style="{ overflow: enableScrolling ? 'auto' : 'hidden' }"
       @scroll="handleScroll"
     >
@@ -22,13 +27,13 @@
         <keep-alive :max="4">
           <component
             :is="Component"
-            v-if="route.meta.keepAlive"
+            v-if="route.meta['keepAlive']"
             :key="route.fullPath"
           />
         </keep-alive>
         <component
           :is="Component"
-          v-if="!route.meta.keepAlive"
+          v-if="!route.meta['keepAlive']"
           :key="route.fullPath"
         />
       </router-view>
@@ -39,6 +44,11 @@
     <Toast />
     <ModalAddTrackToPlaylist v-if="isAccountLoggedIn" />
     <ModalNewPlaylist v-if="isAccountLoggedIn" />
+    <ModalCloseApp
+      :show="closePromptVisible"
+      @cancel="cancelCloseChoice"
+      @choose="resolveCloseChoice"
+    />
     <transition v-if="enablePlayer" name="slide-up">
       <Lyrics
         v-show="showLyrics"
@@ -48,18 +58,22 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import ModalAddTrackToPlaylist from './components/ModalAddTrackToPlaylist.vue';
 import ModalNewPlaylist from './components/ModalNewPlaylist.vue';
+import ModalCloseApp from './components/ModalCloseApp.vue';
 import Scrollbar from './components/Scrollbar.vue';
 import Navbar from './components/Navbar.vue';
 import Player from './components/Player.vue';
 import Toast from './components/Toast.vue';
 import { isAccountLoggedIn, isLooseLoggedIn } from '@/utils/auth';
 import Lyrics from './views/lyrics.vue';
-import { mapState } from 'vuex';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { observeDocumentVisibility } from '@/utils/mediaLifecycle';
 import { connectDesktopEvents } from '@/services/desktopBridge';
+import { sendDesktop } from '@/services/desktopTransport';
 import { isDesktopRuntime } from '@/utils/runtime';
 import {
   COMPACT_RESIZE_SETTLE_MS,
@@ -68,17 +82,37 @@ import {
   rememberCurrentCompactWindowFrame,
   restoreRememberedCompactWindowFrame,
   restoreCompactWindow,
+  signalInitialWindowReady,
 } from '@/services/compactWindow';
 import { isMiniWindowSize } from '@/utils/miniWindow';
+import {
+  findLocalShortcutAction,
+  isEditableShortcutTarget,
+  runLocalShortcutAction,
+} from '@/services/localShortcuts';
+import { checkForAppUpdateInBackground } from '@/services/appUpdater';
+import { isMac } from '@/utils/platform';
+import type { AppShell } from '@/types/appShell';
+import type { RouteLocationRaw } from 'vue-router';
+import { isLastfmCallbackLocation } from '@/services/lastfmAuth';
 
-export default {
+export default defineComponent({
   name: 'App',
   provide() {
-    return {
-      appShell: {
-        restoreScrollPosition: () => this.$refs.scrollbar?.restorePosition(),
-        scrollMainTo: (...args) => this.$refs.main?.scrollTo(...args),
+    const appShell: AppShell = {
+      restoreScrollPosition: () =>
+        (
+          this.$refs['scrollbar'] as InstanceType<typeof Scrollbar> | undefined
+        )?.restorePosition(),
+      scrollMainTo: (optionsOrX?: ScrollToOptions | number, y?: number) => {
+        const main = this.$refs['main'] as HTMLElement | undefined;
+        if (!main) return;
+        if (typeof optionsOrX === 'number') main.scrollTo(optionsOrX, y ?? 0);
+        else main.scrollTo(optionsOrX);
       },
+    };
+    return {
+      appShell,
     };
   },
   components: {
@@ -87,26 +121,36 @@ export default {
     Toast,
     ModalAddTrackToPlaylist,
     ModalNewPlaylist,
+    ModalCloseApp,
     Lyrics,
     Scrollbar,
   },
   data() {
     return {
       isDesktop: isDesktopRuntime,
+      isLastfmCallback: isLastfmCallbackLocation(window.location),
       userSelectNone: false,
-      autoOpenedLyrics: false, // 迷你模式是我们自动打开的，拖回大窗口要还原
+      autoOpenedLyrics: false, // Restore lyrics only when compact mode opened it.
       compactWindowExpanded:
         !isMiniWindowSize({
           width: window.innerWidth,
           height: window.innerHeight,
         }) && hasRememberedBarFrame(),
-      compactResizeTimer: null,
+      compactResizeTimer: null as ReturnType<typeof setTimeout> | null,
       compactWindowMemoryReady: !isDesktopRuntime,
       windowHidden: document.hidden,
+      visibilityCleanup: null as (() => void) | null,
+      desktopEventsCleanup: null as Promise<() => void> | null,
+      closePromptVisible: false,
     };
   },
   computed: {
-    ...mapState(['showLyrics', 'settings', 'player', 'enableScrolling']),
+    ...mapState(useAppStore, [
+      'showLyrics',
+      'settings',
+      'player',
+      'enableScrolling',
+    ]),
     isAccountLoggedIn() {
       return isAccountLoggedIn();
     },
@@ -118,7 +162,7 @@ export default {
           'login',
           'loginAccount',
           'lastfmCallback',
-        ].includes(this.$route.name) === false
+        ].includes(String(this.$route.name ?? '')) === false
       );
     },
     enablePlayer() {
@@ -129,8 +173,20 @@ export default {
     },
   },
   created() {
-    if (this.isDesktop) {
-      this.desktopEventsCleanup = connectDesktopEvents(this);
+    if (this.isLastfmCallback) return;
+    if (this.isDesktop && !this.isLastfmCallback) {
+      this.desktopEventsCleanup = connectDesktopEvents({
+        pushRoute: path => this.$router.push(path as RouteLocationRaw),
+        focusSearch: () =>
+          (this.$refs['navbar'] as InstanceType<typeof Navbar>).focusSearch(),
+        goHistory: where =>
+          (this.$refs['navbar'] as InstanceType<typeof Navbar>).go(where),
+        goToNextTracksPage: () =>
+          (
+            this.$refs['player'] as InstanceType<typeof Player>
+          ).goToNextTracksPage(),
+        requestCloseChoice: () => (this.closePromptVisible = true),
+      });
     }
     window.addEventListener('keydown', this.handleKeydown);
     window.addEventListener('resize', this.handleMiniResize);
@@ -138,34 +194,72 @@ export default {
       document,
       hidden => (this.windowHidden = hidden)
     );
-    if (this.isDesktop) {
+    if (this.isDesktop && !this.isLastfmCallback) {
       void this.initializeCompactWindowMemory();
     } else {
       this.handleMiniResize();
     }
-    this.fetchData();
+    if (!this.isLastfmCallback) this.fetchData();
+    if (this.isDesktop && !this.isLastfmCallback)
+      void this.checkForUpdateOnStartup();
   },
   beforeUnmount() {
     window.removeEventListener('keydown', this.handleKeydown);
     window.removeEventListener('resize', this.handleMiniResize);
-    clearTimeout(this.compactResizeTimer);
+    if (this.compactResizeTimer !== null) clearTimeout(this.compactResizeTimer);
     this.visibilityCleanup?.();
     this.desktopEventsCleanup?.then(cleanup => cleanup());
   },
   methods: {
+    ...mapActions(useAppStore, [
+      'toggleLyrics',
+      'fetchLikedSongs',
+      'fetchLikedSongsWithDetails',
+      'fetchLikedPlaylist',
+      'likeATrack',
+      'showToast',
+    ]),
+    async checkForUpdateOnStartup() {
+      const result = await checkForAppUpdateInBackground();
+      if (result?.status !== 'available') return;
+      this.showToast(
+        String(
+          this.$t('settings.updater.available', {
+            version: result.version,
+          })
+        )
+      );
+    },
     async initializeCompactWindowMemory() {
       try {
         const restored = await restoreRememberedCompactWindowFrame();
         this.compactWindowExpanded =
           restored?.mode === 'browse' && hasRememberedBarFrame();
       } catch (error) {
-        // 单次恢复失败时仍允许用户正常拖动窗口，后续尺寸会覆盖损坏的旧记忆。
-        console.warn('[compact-window] 启动尺寸恢复失败', error);
+        // Keep resizing usable after a one-off restore failure.
+        console.warn('[compact-window] startup restore failed', error);
       } finally {
-        // Tauri 插件的物理像素状态已经被跳过；只有我们的逻辑尺寸落地后才允许写回记忆。
+        // Persist only after restoring logical dimensions.
         this.compactWindowMemoryReady = true;
         this.handleMiniResize();
+        await this.$nextTick();
+        try {
+          await signalInitialWindowReady();
+        } catch (error) {
+          console.warn('[compact-window] readiness signal failed', error);
+        }
       }
+    },
+    async resolveCloseChoice(payload: {
+      action: 'exit' | 'minimizeToTray';
+      remember: boolean;
+    }) {
+      this.closePromptVisible = false;
+      await sendDesktop('resolveCloseChoice', payload);
+    },
+    async cancelCloseChoice() {
+      this.closePromptVisible = false;
+      await sendDesktop('cancelCloseChoice');
     },
     async expandCompactWindow() {
       if (!(await expandCompactWindow())) return;
@@ -178,7 +272,7 @@ export default {
       if (!(await restoreCompactWindow())) return;
       this.compactWindowExpanded = false;
     },
-    // 窗口拖窄时自动切到歌词页（里面是迷你播放器布局），拖回来再收起
+    // Show the compact player when the window becomes narrow.
     handleMiniResize() {
       const isMini = isMiniWindowSize({
         width: window.innerWidth,
@@ -186,18 +280,19 @@ export default {
       });
       this.compactWindowExpanded = !isMini && hasRememberedBarFrame();
       if (isMini && !this.showLyrics) {
-        this.$store.commit('toggleLyrics');
+        this.toggleLyrics();
         this.autoOpenedLyrics = true;
       } else if (!isMini && this.showLyrics && this.autoOpenedLyrics) {
-        this.$store.commit('toggleLyrics');
+        this.toggleLyrics();
         this.autoOpenedLyrics = false;
       }
       this.scheduleCompactWindowMemory();
     },
     scheduleCompactWindowMemory() {
       if (!this.isDesktop || !this.compactWindowMemoryReady) return;
-      clearTimeout(this.compactResizeTimer);
-      // 只记录拖拽结束后的最终档位，避免跨越临界线时污染另一套记忆。
+      if (this.compactResizeTimer !== null)
+        clearTimeout(this.compactResizeTimer);
+      // Persist only the settled layout mode.
       this.compactResizeTimer = setTimeout(async () => {
         const remembered = await rememberCurrentCompactWindowFrame();
         if (!remembered) return;
@@ -205,32 +300,51 @@ export default {
           remembered.mode === 'browse' && hasRememberedBarFrame();
       }, COMPACT_RESIZE_SETTLE_MS);
     },
-    handleKeydown(e) {
+    handleKeydown(e: KeyboardEvent) {
+      if (e.defaultPrevented) return;
       if (e.code === 'Escape' && this.compactWindowExpanded) {
         e.preventDefault();
         void this.restoreCompactWindow();
         return;
       }
-      if (e.code === 'Space') {
-        if (e.target.tagName === 'INPUT') return false;
-        if (this.$route.name === 'mv') return false;
-        e.preventDefault();
-        this.player.playOrPause();
-      }
+      if (isEditableShortcutTarget(e.target)) return;
+      const action = findLocalShortcutAction(this.settings.shortcuts, e, isMac);
+      if (!action) return;
+
+      e.preventDefault();
+      if (action === 'play' && this.$route.name === 'mv') return;
+      const player = this.player;
+      runLocalShortcutAction(action, {
+        isPersonalFM: player.isPersonalFM,
+        get volume() {
+          return player.volume;
+        },
+        set volume(value: number) {
+          player.volume = value;
+        },
+        currentTrackId: player.currentTrack.id,
+        playOrPause: () => player.playOrPause(),
+        playNextFMTrack: () => player.playNextFMTrack(),
+        playNextTrack: () => player.playNextTrack(),
+        playPrevTrack: () => player.playPrevTrack(),
+        likeTrack: id => this.likeATrack(id),
+        minimize: () => sendDesktop('minimize'),
+      });
     },
     fetchData() {
       if (!isLooseLoggedIn()) return;
-      this.$store.dispatch('fetchLikedSongs');
-      this.$store.dispatch('fetchLikedSongsWithDetails');
-      this.$store.dispatch('fetchLikedPlaylist');
-      // 专辑、歌手、MV 和云盘可能各有上千条，只在进入“资料库”时加载。
-      // 这些数据没有被全局播放器或侧栏使用，启动时预取只会常驻占内存。
+      this.fetchLikedSongs();
+      this.fetchLikedSongsWithDetails();
+      this.fetchLikedPlaylist();
+      // Load large library collections only when the library opens.
     },
     handleScroll() {
-      this.$refs.scrollbar.handleScroll();
+      (
+        this.$refs['scrollbar'] as InstanceType<typeof Scrollbar>
+      ).handleScroll();
     },
   },
-};
+});
 </script>
 
 <style lang="scss">
@@ -239,8 +353,7 @@ export default {
   transition: all 0.4s;
 }
 
-// Electron 和 WKWebView 都可能在隐藏窗口后继续合成动画；
-// 后台只暂停视觉效果，播放器和菜单栏歌词仍照常更新。
+// Pause visual effects while the hidden WebView keeps running.
 #app.window-hidden *,
 #app.window-hidden *::before,
 #app.window-hidden *::after {

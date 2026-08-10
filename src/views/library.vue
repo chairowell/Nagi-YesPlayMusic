@@ -33,7 +33,7 @@
       </div>
       <div class="songs">
         <TrackList
-          :id="liked.playlists.length > 0 ? liked.playlists[0].id : 0"
+          :id="liked.playlists[0]?.id ?? 0"
           :tracks="liked.songsWithDetails"
           :column-number="3"
           type="tracklist"
@@ -213,8 +213,10 @@
   </div>
 </template>
 
-<script>
-import { mapActions, mapMutations, mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { randomNum, dailyTask } from '@/utils/common';
 import { isAccountLoggedIn } from '@/utils/auth';
 import { uploadSong } from '@/api/user';
@@ -234,30 +236,37 @@ import MvRow from '@/components/MvRow.vue';
  * @param {string} rawLyric The raw lyric string formed in `[timecode] lyric`
  * @returns {string} The lyric part
  */
-function extractLyricPart(rawLyric) {
-  return rawLyric.split(']').pop().trim();
+function extractLyricPart(rawLyric: string): string {
+  return rawLyric.split(']').pop()?.trim() ?? '';
 }
 
-export default {
+type LibraryTab =
+  | 'playlists'
+  | 'albums'
+  | 'artists'
+  | 'mvs'
+  | 'cloudDisk'
+  | 'playHistory';
+type PlaylistFilter = 'all' | 'mine' | 'liked';
+
+export default defineComponent({
   name: 'Library',
   inject: ['appShell'],
   components: { SvgIcon, CoverRow, TrackList, MvRow, ContextMenu },
   data() {
     return {
       show: false,
-      likedSongs: [],
-      lyric: undefined,
-      currentTab: 'playlists',
-      playHistoryMode: 'week',
+      lyric: null as string | null,
+      currentTab: 'playlists' as LibraryTab,
+      playHistoryMode: 'week' as 'week' | 'all',
     };
   },
   computed: {
-    ...mapState(['data', 'liked']),
+    ...mapState(useAppStore, ['data', 'liked', 'player']),
     /**
      * @returns {string[]}
      */
-    pickedLyric() {
-      /** @type {string?} */
+    pickedLyric(): string[] {
       const lyric = this.lyric;
 
       // Returns [] if we got no lyrics.
@@ -286,9 +295,9 @@ export default {
       const playlists = this.liked.playlists.slice(1);
       const userId = this.data.user.userId;
       if (this.playlistFilter === 'mine') {
-        return playlists.filter(p => p.creator.userId === userId);
+        return playlists.filter(p => p.creator?.userId === userId);
       } else if (this.playlistFilter === 'liked') {
-        return playlists.filter(p => p.creator.userId !== userId);
+        return playlists.filter(p => p.creator?.userId !== userId);
       }
       return playlists;
     },
@@ -314,44 +323,52 @@ export default {
     dailyTask();
   },
   methods: {
-    ...mapActions(['showToast']),
-    ...mapMutations(['updateModal', 'updateData']),
+    ...mapActions(useAppStore, [
+      'showToast',
+      'updateModal',
+      'updateData',
+      'updateLikedXXX',
+      'fetchLikedSongs',
+      'fetchLikedSongsWithDetails',
+      'fetchLikedPlaylist',
+      'fetchLikedAlbums',
+      'fetchLikedArtists',
+      'fetchLikedMVs',
+      'fetchCloudDisk',
+      'fetchPlayHistory',
+    ]),
     loadData() {
       if (this.liked.songsWithDetails.length > 0) {
         NProgress.done();
         this.show = true;
-        this.$store.dispatch('fetchLikedSongsWithDetails');
+        this.fetchLikedSongsWithDetails();
         this.getRandomLyric();
       } else {
-        this.$store.dispatch('fetchLikedSongsWithDetails').then(() => {
+        this.fetchLikedSongsWithDetails().then(() => {
           NProgress.done();
           this.show = true;
           this.getRandomLyric();
         });
       }
-      this.$store.dispatch('fetchLikedSongs');
-      this.$store.dispatch('fetchLikedPlaylist');
-      this.$store.dispatch('fetchLikedAlbums');
-      this.$store.dispatch('fetchLikedArtists');
-      this.$store.dispatch('fetchLikedMVs');
-      this.$store.dispatch('fetchCloudDisk');
-      this.$store.dispatch('fetchPlayHistory');
+      this.fetchLikedSongs();
+      this.fetchLikedPlaylist();
+      this.fetchLikedAlbums();
+      this.fetchLikedArtists();
+      this.fetchLikedMVs();
+      this.fetchCloudDisk();
+      this.fetchPlayHistory();
     },
     playLikedSongs() {
-      this.$store.state.player.playPlaylistByID(
-        this.liked.playlists[0].id,
-        'first',
-        true
-      );
+      const likedPlaylist = this.liked.playlists[0];
+      if (!likedPlaylist) return;
+      this.player.playPlaylistByID(likedPlaylist.id, 'first', true);
     },
     playIntelligenceList() {
-      this.$store.state.player.playIntelligenceListById(
-        this.liked.playlists[0].id,
-        'first',
-        true
-      );
+      const likedPlaylist = this.liked.playlists[0];
+      if (!likedPlaylist) return;
+      this.player.playIntelligenceListById(likedPlaylist.id, 'first', true);
     },
-    updateCurrentTab(tab) {
+    updateCurrentTab(tab: LibraryTab) {
       if (!isAccountLoggedIn() && tab !== 'playlists') {
         this.showToast(locale.t('toast.needToLogin'));
         return;
@@ -364,15 +381,17 @@ export default {
     },
     getRandomLyric() {
       if (this.liked.songs.length === 0) return;
-      getLyric(
-        this.liked.songs[randomNum(0, this.liked.songs.length - 1)]
-      ).then(data => {
-        if (data.lrc !== undefined) {
-          const isInstrumental = data.lrc.lyric
+      const trackId =
+        this.liked.songs[randomNum(0, this.liked.songs.length - 1)];
+      if (trackId === undefined) return;
+      getLyric(trackId).then(data => {
+        const lyric = data.lrc?.lyric;
+        if (lyric !== undefined) {
+          const isInstrumental = lyric
             .split('\n')
             .filter(l => l.includes('纯音乐，请欣赏'));
           if (isInstrumental.length === 0) {
-            this.lyric = data.lrc.lyric;
+            this.lyric = lyric;
           }
         }
       });
@@ -388,34 +407,43 @@ export default {
         value: true,
       });
     },
-    openPlaylistTabMenu(e) {
-      this.$refs.playlistTabMenu.openMenu(e);
+    openPlaylistTabMenu(e: MouseEvent) {
+      (
+        this.$refs['playlistTabMenu'] as InstanceType<typeof ContextMenu>
+      ).openMenu(e);
     },
-    openPlayModeTabMenu(e) {
-      this.$refs.playModeTabMenu.openMenu(e);
+    openPlayModeTabMenu(e: MouseEvent) {
+      (
+        this.$refs['playModeTabMenu'] as InstanceType<typeof ContextMenu>
+      ).openMenu(e);
     },
-    changePlaylistFilter(type) {
+    changePlaylistFilter(type: PlaylistFilter) {
       this.updateData({ key: 'libraryPlaylistFilter', value: type });
       window.scrollTo({ top: 375, behavior: 'smooth' });
     },
     selectUploadFiles() {
-      this.$refs.cloudDiskUploadInput.click();
+      (this.$refs['cloudDiskUploadInput'] as HTMLInputElement).click();
     },
-    uploadSongToCloudDisk(e) {
-      const files = e.target.files;
-      uploadSong(files[0]).then(result => {
-        if (result.code === 200) {
-          let newCloudDisk = this.liked.cloudDisk;
-          newCloudDisk.unshift(result.privateCloud);
-          this.$store.commit('updateLikedXXX', {
-            name: 'cloudDisk',
-            data: newCloudDisk,
-          });
-        }
-      });
+    uploadSongToCloudDisk(e: Event) {
+      const input = e.target;
+      if (!(input instanceof HTMLInputElement)) return;
+      const file = input.files?.[0];
+      if (!file) return;
+      uploadSong(file)
+        .then(result => {
+          if (result.code === 200) {
+            this.updateLikedXXX({
+              name: 'cloudDisk',
+              data: [result.privateCloud, ...this.liked.cloudDisk],
+            });
+          }
+        })
+        .catch((error: unknown) => {
+          this.showToast(`上传失败：${String(error)}`);
+        });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

@@ -42,7 +42,8 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import { mvDetail, mvUrl, simiMv, likeAMV } from '@/api/mv';
 import { isAccountLoggedIn } from '@/utils/auth';
 import NProgress from 'nprogress';
@@ -54,10 +55,29 @@ import { destroyMediaPlayer } from '@/utils/mediaLifecycle';
 import ButtonIcon from '@/components/ButtonIcon.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
 import MvRow from '@/components/MvRow.vue';
-import { mapActions } from 'vuex';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { openExternalUrlSafely } from '@/services/externalLinks';
+import type { MusicVideo } from '@/types/domain';
+import type { MvDetailResponse } from '@/api/mv';
 
-export default {
+function emptyMv(): MvDetailResponse {
+  return {
+    subed: false,
+    data: {
+      id: 0,
+      name: '',
+      artistId: 0,
+      artistName: '',
+      playCount: 0,
+      publishTime: '',
+      cover: '',
+      brs: [],
+    },
+  };
+}
+
+export default defineComponent({
   name: 'mv',
   components: {
     MvRow,
@@ -65,26 +85,21 @@ export default {
     ContextMenu,
   },
   beforeRouteUpdate(to, from, next) {
-    this.getData(to.params.id);
+    this.getData(to.params['id']);
     next();
   },
   data() {
     return {
-      mv: {
-        url: '',
-        data: {
-          name: '',
-          artistName: '',
-          playCount: '',
-          publishTime: '',
-        },
-      },
-      player: null,
-      simiMvs: [],
+      mv: emptyMv(),
+      player: null as Plyr | null,
+      simiMvs: [] as MusicVideo[],
     };
   },
+  computed: {
+    ...mapState(useAppStore, { musicPlayer: 'player' }),
+  },
   mounted() {
-    let videoOptions = {
+    const videoOptions: Plyr.Options = {
       settings: ['quality'],
       autoplay: false,
       quality: {
@@ -92,13 +107,16 @@ export default {
         options: [1080, 720, 480, 240],
       },
     };
-    if (this.$route.query.autoplay === 'true') videoOptions.autoplay = true;
-    this.player = new Plyr(this.$refs.videoPlayer, videoOptions);
-    this.player.volume = this.$store.state.player.volume;
+    if (this.$route.query['autoplay'] === 'true') videoOptions.autoplay = true;
+    this.player = new Plyr(
+      this.$refs['videoPlayer'] as HTMLVideoElement,
+      videoOptions
+    );
+    this.player.volume = this.musicPlayer.volume;
     this.player.on('playing', () => {
-      this.$store.state.player.pause();
+      this.musicPlayer.pause();
     });
-    this.getData(this.$route.params.id);
+    this.getData(this.$route.params['id']);
     console.log('网易云你这mv音频码率也太糊了吧🙄');
   },
   beforeUnmount() {
@@ -107,32 +125,41 @@ export default {
     NProgress.done();
   },
   methods: {
-    ...mapActions(['showToast']),
-    getData(id) {
-      mvDetail(id).then(data => {
+    ...mapActions(useAppStore, ['showToast']),
+    getData(id: unknown) {
+      const mvId = Number(id);
+      if (!Number.isFinite(mvId)) return;
+      mvDetail(mvId).then(data => {
         this.mv = data;
-        let requests = data.data.brs.map(br => {
-          return mvUrl({ id, r: br.br });
+        const requests = data.data.brs.map(br => {
+          return mvUrl({ id: mvId, r: br.br });
         });
         Promise.all(requests).then(results => {
           if (!this.player) return;
-          let sources = results.map(result => {
-            return {
-              src: result.data.url.replace(/^http:/, 'https:'),
-              type: 'video/mp4',
-              size: result.data.r,
-            };
+          const sources = results.flatMap(result => {
+            const url = result.data.url;
+            return url
+              ? [
+                  {
+                    src: url.replace(/^http:/, 'https:'),
+                    type: 'video/mp4',
+                    size: result.data.r,
+                  },
+                ]
+              : [];
           });
           this.player.source = {
             type: 'video',
-            title: this.mv.data.name,
+            ...(this.mv.data.name === undefined
+              ? {}
+              : { title: this.mv.data.name }),
             sources: sources,
             poster: this.mv.data.cover.replace(/^http:/, 'https:'),
           };
           NProgress.done();
         });
       });
-      simiMv(id).then(data => {
+      simiMv(mvId).then(data => {
         this.simiMvs = data.mvs;
       });
     },
@@ -148,25 +175,25 @@ export default {
         if (data.code === 200) this.mv.subed = !this.mv.subed;
       });
     },
-    openMenu(e) {
-      this.$refs.mvMenu.openMenu(e);
+    openMenu(e: MouseEvent) {
+      (this.$refs['mvMenu'] as InstanceType<typeof ContextMenu>).openMenu(e);
     },
-    copyUrl(id) {
-      let showToast = this.showToast;
+    copyUrl(id: number) {
+      const showToast = this.showToast;
       this.$copyText(`https://music.163.com/#/mv?id=${id}`)
         .then(function () {
           showToast(locale.t('toast.copied'));
         })
-        .catch(error => {
-          showToast(`${locale.t('toast.copyFailed')}${error}`);
+        .catch((error: unknown) => {
+          showToast(`${locale.t('toast.copyFailed')}${String(error)}`);
         });
     },
-    openInBrowser(id) {
+    openInBrowser(id: number) {
       const url = `https://music.163.com/#/mv?id=${id}`;
       void openExternalUrlSafely(url);
     },
   },
-};
+});
 </script>
 <style lang="scss" scoped>
 .video {

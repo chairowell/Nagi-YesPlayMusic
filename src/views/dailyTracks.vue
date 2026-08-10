@@ -13,14 +13,16 @@
   </div>
 </template>
 
-<script>
-import { mapMutations, mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import NProgress from 'nprogress';
 import { dailyRecommendTracks } from '@/api/playlist';
 
 import TrackList from '@/components/TrackList.vue';
 
-export default {
+export default defineComponent({
   name: 'DailyTracks',
   inject: ['appShell'],
   components: {
@@ -32,7 +34,7 @@ export default {
     };
   },
   computed: {
-    ...mapState(['player', 'data', 'dailyTracks']),
+    ...mapState(useAppStore, ['player', 'data', 'dailyTracks']),
   },
   created() {
     if (this.dailyTracks.length === 0) {
@@ -46,7 +48,7 @@ export default {
     this.appShell.scrollMainTo(0, 0);
   },
   methods: {
-    ...mapMutations(['updateDailyTracks']),
+    ...mapActions(useAppStore, ['updateDailyTracks']),
     loadDailyTracks() {
       dailyRecommendTracks().then(result => {
         this.updateDailyTracks(result.data.dailySongs);
@@ -55,7 +57,7 @@ export default {
       });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

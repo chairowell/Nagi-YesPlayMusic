@@ -102,22 +102,21 @@
           二维码登录
         </a>
       </div>
-      <div
-        v-show="mode !== 'qrCode'"
-        class="notice"
-      >
+      <div v-show="mode !== 'qrCode'" class="notice">
         {{ loginNotice }}
       </div>
     </div>
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import { isDesktopRuntime } from '@/utils/runtime';
 import QRCode from 'qrcode';
 import md5 from 'crypto-js/md5';
 import NProgress from 'nprogress';
-import { mapMutations } from 'vuex';
+import { mapActions } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { setCookies } from '@/utils/auth';
 import nativeAlert from '@/utils/nativeAlert';
 import { stripMarkupToText } from '@/utils/safeText';
@@ -127,13 +126,23 @@ import {
   loginQrCodeKey,
   loginQrCodeCheck,
 } from '@/api/auth';
+import type { LoginResponse } from '@/api/auth';
 
-export default {
+type LoginMode = 'phone' | 'email' | 'qrCode';
+
+function queryMode(value: unknown): LoginMode | null {
+  const mode = Array.isArray(value) ? value[0] : value;
+  return mode === 'phone' || mode === 'email' || mode === 'qrCode'
+    ? mode
+    : null;
+}
+
+export default defineComponent({
   name: 'Login',
   data() {
     return {
       processing: false,
-      mode: 'qrCode',
+      mode: 'qrCode' as LoginMode,
       countryCode: '+86',
       phoneNumber: '',
       email: '',
@@ -142,37 +151,42 @@ export default {
       inputFocus: '',
       qrCodeKey: '',
       qrCodeSvg: '',
-      qrCodeCheckInterval: null,
+      qrCodeCheckTimer: null as ReturnType<typeof setTimeout> | null,
+      qrCodeGeneration: 0,
       qrCodeInformation: '打开网易云音乐APP扫码登录',
     };
   },
   computed: {
-    isElectron() {
+    isDesktop() {
       return isDesktopRuntime;
     },
     loginNotice() {
       return stripMarkupToText(
-        this.isElectron
-          ? this.$t('login.noticeElectron')
+        this.isDesktop
+          ? this.$t('login.noticeDesktop')
           : this.$t('login.notice')
       );
     },
   },
   created() {
-    if (['phone', 'email', 'qrCode'].includes(this.$route.query.mode)) {
-      this.mode = this.$route.query.mode;
-    }
-    this.getQrCodeKey();
+    const requestedMode = queryMode(this.$route.query['mode']);
+    if (requestedMode) this.mode = requestedMode;
+    if (this.mode === 'qrCode') void this.refreshQrCode();
   },
   beforeUnmount() {
-    clearInterval(this.qrCodeCheckInterval);
+    this.qrCodeGeneration += 1;
+    this.stopQrCodeCheck();
   },
   methods: {
-    ...mapMutations(['updateData']),
+    ...mapActions(useAppStore, [
+      'startUserSession',
+      'fetchUserProfile',
+      'fetchLikedPlaylist',
+    ]),
     validatePhone() {
       if (
         this.countryCode === '' ||
-        this.phone === '' ||
+        this.phoneNumber === '' ||
         this.password === ''
       ) {
         nativeAlert('国家区号或手机号不正确');
@@ -224,16 +238,21 @@ export default {
           });
       }
     },
-    handleLoginResponse(data) {
+    handleLoginResponse(data: LoginResponse) {
       if (!data) {
         this.processing = false;
         return;
       }
       if (data.code === 200) {
+        if (!data.cookie) {
+          this.processing = false;
+          nativeAlert('登录响应缺少 cookie，请稍后重试');
+          return;
+        }
         setCookies(data.cookie);
-        this.updateData({ key: 'loginMode', value: 'account' });
-        this.$store.dispatch('fetchUserProfile').then(() => {
-          this.$store.dispatch('fetchLikedPlaylist').then(() => {
+        this.startUserSession({ mode: 'account' });
+        this.fetchUserProfile().then(() => {
+          this.fetchLikedPlaylist().then(() => {
             this.$router.push({ path: '/library' });
           });
         });
@@ -242,70 +261,98 @@ export default {
         nativeAlert(data.msg ?? data.message ?? '账号或密码错误，请检查');
       }
     },
-    getQrCodeKey() {
-      return loginQrCodeKey().then(result => {
-        if (result.code === 200) {
-          this.qrCodeKey = result.data.unikey;
-          QRCode.toString(
-            `https://music.163.com/login?codekey=${this.qrCodeKey}`,
-            {
-              width: 192,
-              margin: 0,
-              color: {
-                dark: '#335eea',
-                light: '#00000000',
-              },
-              type: 'svg',
-            }
-          )
-            .then(svg => {
-              this.qrCodeSvg = `data:image/svg+xml;utf8,${encodeURIComponent(
-                svg
-              )}`;
-            })
-            .catch(err => {
-              console.error(err);
-            })
-            .finally(() => {
-              NProgress.done();
-            });
-        }
-        this.checkQrCodeLogin();
-      });
+    isCurrentQrCodeGeneration(generation: number) {
+      return this.mode === 'qrCode' && generation === this.qrCodeGeneration;
     },
-    checkQrCodeLogin() {
-      // 清除二维码检测
-      clearInterval(this.qrCodeCheckInterval);
-      this.qrCodeCheckInterval = setInterval(() => {
-        if (this.qrCodeKey === '') return;
-        loginQrCodeCheck(this.qrCodeKey).then(result => {
+    async refreshQrCode() {
+      this.stopQrCodeCheck();
+      const generation = ++this.qrCodeGeneration;
+      try {
+        const result = await loginQrCodeKey();
+        if (
+          result.code !== 200 ||
+          !this.isCurrentQrCodeGeneration(generation)
+        ) {
+          return;
+        }
+        const key = result.data.unikey;
+        const svg = await QRCode.toString(
+          `https://music.163.com/login?codekey=${key}`,
+          {
+            width: 192,
+            margin: 0,
+            color: {
+              dark: '#335eea',
+              light: '#00000000',
+            },
+            type: 'svg',
+          }
+        );
+        if (!this.isCurrentQrCodeGeneration(generation)) return;
+        this.qrCodeKey = key;
+        this.qrCodeSvg = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+        this.scheduleQrCodeCheck(generation);
+      } catch (error) {
+        if (this.isCurrentQrCodeGeneration(generation)) console.error(error);
+      } finally {
+        NProgress.done();
+      }
+    },
+    scheduleQrCodeCheck(generation: number) {
+      if (!this.isCurrentQrCodeGeneration(generation)) return;
+      this.stopQrCodeCheck();
+      this.qrCodeCheckTimer = setTimeout(async () => {
+        if (!this.isCurrentQrCodeGeneration(generation) || !this.qrCodeKey)
+          return;
+        try {
+          const result = await loginQrCodeCheck(this.qrCodeKey);
+          if (!this.isCurrentQrCodeGeneration(generation)) return;
           if (result.code === 800) {
-            this.getQrCodeKey(); // 重新生成QrCode
             this.qrCodeInformation = '二维码已失效，请重新扫码';
-          } else if (result.code === 802) {
+            void this.refreshQrCode();
+            return;
+          }
+          if (result.code === 802) {
             this.qrCodeInformation = '扫描成功，请在手机上确认登录';
           } else if (result.code === 801) {
             this.qrCodeInformation = '打开网易云音乐APP扫码登录';
           } else if (result.code === 803) {
-            clearInterval(this.qrCodeCheckInterval);
+            this.stopQrCodeCheck();
             this.qrCodeInformation = '登录成功，请稍等...';
-            result.code = 200;
-            result.cookie = result.cookie.replaceAll(' HTTPOnly', '');
-            this.handleLoginResponse(result);
+            if (!result.cookie) {
+              this.qrCodeInformation = '登录响应无效，请重新扫码';
+              return;
+            }
+            this.handleLoginResponse({
+              ...result,
+              code: 200,
+              cookie: result.cookie.replaceAll(' HTTPOnly', ''),
+            });
+            return;
           }
-        });
+        } catch (error) {
+          if (this.isCurrentQrCodeGeneration(generation)) console.error(error);
+        }
+        this.scheduleQrCodeCheck(generation);
       }, 1000);
     },
-    changeMode(mode) {
+    changeMode(mode: LoginMode) {
       this.mode = mode;
       if (mode === 'qrCode') {
-        this.checkQrCodeLogin();
+        void this.refreshQrCode();
       } else {
-        clearInterval(this.qrCodeCheckInterval);
+        this.qrCodeGeneration += 1;
+        this.stopQrCodeCheck();
+      }
+    },
+    stopQrCodeCheck() {
+      if (this.qrCodeCheckTimer !== null) {
+        clearTimeout(this.qrCodeCheckTimer);
+        this.qrCodeCheckTimer = null;
       }
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

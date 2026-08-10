@@ -26,33 +26,33 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 // icons by https://github.com/microsoft/vscode-codicons
 import 'vscode-codicons/dist/codicon.css';
 
-import { mapState } from 'vuex';
-import { electronRenderer, sendDesktop } from '@/services/desktopTransport';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
+import { sendDesktop } from '@/services/desktopTransport';
+import { isTauriRuntime } from '@/utils/runtime';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 
-export default {
+export default defineComponent({
   name: 'Win32Titlebar',
   data() {
     return {
       isMaximized: false,
-      stopMaximizeListener: null,
+      stopMaximizeListener: null as UnlistenFn | null,
+      listenerDisposed: false,
     };
   },
   computed: {
-    ...mapState(['title']),
+    ...mapState(useAppStore, ['title']),
   },
   created() {
-    this.maximizeListener = (_, value) => {
-      this.isMaximized = value;
-    };
-    if (electronRenderer) {
-      electronRenderer.on('isMaximized', this.maximizeListener);
-    } else if (process.env.IS_TAURI === true) {
+    if (isTauriRuntime) {
       import('@tauri-apps/api/event').then(async ({ listen }) => {
-        const stop = await listen('desktop://isMaximized', event => {
+        const stop = await listen<boolean>('desktop://isMaximized', event => {
           this.isMaximized = event.payload;
         });
         if (this.listenerDisposed) stop();
@@ -62,9 +62,6 @@ export default {
   },
   beforeUnmount() {
     this.listenerDisposed = true;
-    if (electronRenderer) {
-      electronRenderer.removeListener('isMaximized', this.maximizeListener);
-    }
     if (this.stopMaximizeListener) {
       this.stopMaximizeListener();
     }
@@ -80,7 +77,7 @@ export default {
       void sendDesktop('close');
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
@@ -90,7 +87,6 @@ export default {
   left: 0;
   top: 0;
   right: 0;
-  -webkit-app-region: drag;
   display: flex;
   align-items: center;
   --hover: #e6e6e6;
@@ -113,7 +109,6 @@ export default {
       display: flex;
       justify-content: center;
       align-items: center;
-      -webkit-app-region: no-drag;
       &:hover {
         background: var(--hover);
       }

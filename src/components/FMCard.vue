@@ -34,14 +34,16 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import ButtonIcon from '@/components/ButtonIcon.vue';
 import ArtistsInLine from '@/components/ArtistsInLine.vue';
-import { mapState } from 'vuex';
-import * as Vibrant from 'node-vibrant/dist/vibrant.worker.min.js';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
+import Vibrant from 'node-vibrant/dist/vibrant.worker.min.js';
 import Color from 'color';
 
-export default {
+export default defineComponent({
   name: 'FMCard',
   components: { ButtonIcon, ArtistsInLine },
   data() {
@@ -50,7 +52,7 @@ export default {
     };
   },
   computed: {
-    ...mapState(['player']),
+    ...mapState(useAppStore, ['player']),
     track() {
       return this.player.personalFMTrack;
     },
@@ -61,10 +63,12 @@ export default {
       return this.track.artists || this.track.ar || [];
     },
     nextTrackCover() {
-      return `${this.player._personalFMNextTrack?.album?.picUrl.replace(
-        'http://',
-        'https://'
-      )}?param=512y512`;
+      return `${
+        this.player._personalFMNextTrack?.album?.picUrl?.replace(
+          'http://',
+          'https://'
+        ) ?? ''
+      }?param=512y512`;
     },
   },
   watch: {
@@ -74,7 +78,6 @@ export default {
   },
   created() {
     this.getColor();
-    window.ok = this.getColor;
   },
   methods: {
     play() {
@@ -84,8 +87,9 @@ export default {
       this.player.playNextFMTrack();
     },
     goToAlbum() {
-      if (this.track.album.id === 0) return;
-      this.$router.push({ path: '/album/' + this.track.album.id });
+      const albumId = this.track.album?.id;
+      if (!albumId) return;
+      this.$router.push({ path: '/album/' + albumId });
     },
     moveToFMTrash() {
       this.player.moveToFMTrash();
@@ -96,14 +100,14 @@ export default {
         'http://',
         'https://'
       )}?param=512y512`;
-      Vibrant.from(cover, { colorCount: 1 })
+      Vibrant.from(cover)
+        .maxColorCount(1)
         .getPalette()
         .then(palette => {
-          const color = Color.rgb(palette.Vibrant._rgb)
-            .darken(0.1)
-            .rgb()
-            .string();
-          const color2 = Color.rgb(palette.Vibrant._rgb)
+          const swatch = palette.Vibrant;
+          if (!swatch) return;
+          const color = Color.rgb(swatch.rgb).darken(0.1).rgb().string();
+          const color2 = Color.rgb(swatch.rgb)
             .lighten(0.28)
             .rotate(-30)
             .rgb()
@@ -112,7 +116,7 @@ export default {
         });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

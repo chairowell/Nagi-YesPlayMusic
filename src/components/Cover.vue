@@ -28,11 +28,18 @@
   </div>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent } from 'vue';
+import type { CSSProperties, PropType } from 'vue';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
+export default defineComponent({
   props: {
     id: { type: Number, required: true },
-    type: { type: String, required: true },
+    type: {
+      type: String as PropType<'album' | 'playlist' | 'artist'>,
+      required: true,
+    },
     imageUrl: { type: String, required: true },
     fixedSize: { type: Number, default: 0 },
     playButtonSize: { type: Number, default: 22 },
@@ -49,8 +56,9 @@ export default {
     };
   },
   computed: {
-    imageStyles() {
-      let styles = {};
+    ...mapState(useAppStore, ['player']),
+    imageStyles(): CSSProperties {
+      const styles: CSSProperties = {};
       if (this.fixedSize !== 0) {
         styles.width = this.fixedSize + 'px';
         styles.height = this.fixedSize + 'px';
@@ -58,14 +66,14 @@ export default {
       if (this.type === 'artist') styles.borderRadius = '50%';
       return styles;
     },
-    playButtonStyles() {
-      let styles = {};
+    playButtonStyles(): CSSProperties {
+      const styles: CSSProperties = {};
       styles.width = this.playButtonSize + '%';
       styles.height = this.playButtonSize + '%';
       return styles;
     },
-    shadowStyles() {
-      let styles = {};
+    shadowStyles(): CSSProperties {
+      const styles: CSSProperties = {};
       styles.backgroundImage = `url(${this.imageUrl})`;
       if (this.type === 'artist') styles.borderRadius = '50%';
       return styles;
@@ -73,19 +81,22 @@ export default {
   },
   methods: {
     play() {
-      const player = this.$store.state.player;
-      const playActions = {
-        album: player.playAlbumByID,
-        playlist: player.playPlaylistByID,
-        artist: player.playArtistByID,
+      const player = this.player;
+      const playActions: Record<
+        'album' | 'playlist' | 'artist',
+        (id: number) => void
+      > = {
+        album: id => player.playAlbumByID(id),
+        playlist: id => player.playPlaylistByID(id),
+        artist: id => player.playArtistByID(id),
       };
-      playActions[this.type].bind(player)(this.id);
+      playActions[this.type](this.id);
     },
     goTo() {
       this.$router.push({ name: this.type, params: { id: this.id } });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
@@ -165,7 +176,8 @@ img {
 .fade-leave-active {
   transition: opacity 0.3s;
 }
-.fade-enter-from, .fade-leave-to {
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 </style>

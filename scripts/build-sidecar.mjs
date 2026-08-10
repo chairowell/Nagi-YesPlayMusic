@@ -14,7 +14,7 @@ export const SIDECAR_TARGETS = Object.freeze({
     extension: '',
   },
   'x86_64-pc-windows-msvc': {
-    // baseline 能覆盖没有 AVX2 的旧电脑，代价只是 Sidecar 略慢。
+    // Baseline supports older CPUs without AVX2 at a small performance cost.
     bunTarget: 'bun-windows-x64-baseline',
     extension: '.exe',
   },
@@ -57,7 +57,7 @@ export function sidecarBuildPlan({
   );
   const args = [
     'build',
-    path.join(projectRoot, 'src', 'sidecar.js'),
+    path.join(projectRoot, 'src', 'sidecar.ts'),
     '--compile',
     `--target=${target.bunTarget}`,
     '--outfile',

@@ -7,28 +7,28 @@
     </h1>
 
     <div v-if="type === 'artists'">
-      <CoverRow type="artist" :items="result" :column-number="6" />
+      <CoverRow type="artist" :items="artistResults" :column-number="6" />
     </div>
     <div v-if="type === 'albums'">
       <CoverRow
         type="album"
-        :items="result"
+        :items="albumResults"
         sub-text="artist"
         sub-text-font-size="14px"
       />
     </div>
     <div v-if="type === 'tracks'">
       <TrackList
-        :tracks="result"
+        :tracks="trackResults"
         type="playlist"
         dbclick-track-func="playAList"
       />
     </div>
     <div v-if="type === 'musicVideos'">
-      <MvRow :mvs="result" />
+      <MvRow :mvs="mvResults" />
     </div>
     <div v-if="type === 'playlists'">
-      <CoverRow type="playlist" :items="result" sub-text="title" />
+      <CoverRow type="playlist" :items="playlistResults" sub-text="title" />
     </div>
 
     <div class="load-more">
@@ -39,7 +39,8 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import { getTrackDetail } from '@/api/track';
 import { search } from '@/api/others';
 import locale from '@/locale';
@@ -50,8 +51,32 @@ import TrackList from '@/components/TrackList.vue';
 import MvRow from '@/components/MvRow.vue';
 import CoverRow from '@/components/CoverRow.vue';
 import ButtonTwoTone from '@/components/ButtonTwoTone.vue';
+import type {
+  Album,
+  Artist,
+  MusicVideo,
+  Playlist,
+  Track,
+} from '@/types/domain';
 
-export default {
+type SearchType = 'musicVideos' | 'tracks' | 'albums' | 'artists' | 'playlists';
+
+const searchTypes = new Set<SearchType>([
+  'musicVideos',
+  'tracks',
+  'albums',
+  'artists',
+  'playlists',
+]);
+
+function normalizeSearchType(value: unknown): SearchType {
+  const normalized = camelCase(String(value ?? 'tracks'));
+  return searchTypes.has(normalized as SearchType)
+    ? (normalized as SearchType)
+    : 'tracks';
+}
+
+export default defineComponent({
   name: 'Search',
   components: {
     TrackList,
@@ -60,16 +85,24 @@ export default {
     ButtonTwoTone,
   },
   data() {
-    return { show: false, result: [], hasMore: true };
+    return {
+      show: false,
+      hasMore: true,
+      trackResults: [] as Track[],
+      albumResults: [] as Album[],
+      artistResults: [] as Artist[],
+      playlistResults: [] as Playlist[],
+      mvResults: [] as MusicVideo[],
+    };
   },
   computed: {
     keywords() {
-      return this.$route.params.keywords;
+      return String(this.$route.params['keywords'] ?? '');
     },
     type() {
-      return camelCase(this.$route.params.type);
+      return normalizeSearchType(this.$route.params['type']);
     },
-    typeNameTable() {
+    typeNameTable(): Record<SearchType, string> {
       return {
         musicVideos: locale.t('search.mv'),
         tracks: locale.t('search.song'),
@@ -78,13 +111,23 @@ export default {
         playlists: locale.t('search.playlist'),
       };
     },
+    resultLength(): number {
+      const lengths: Record<SearchType, number> = {
+        musicVideos: this.mvResults.length,
+        tracks: this.trackResults.length,
+        albums: this.albumResults.length,
+        artists: this.artistResults.length,
+        playlists: this.playlistResults.length,
+      };
+      return lengths[this.type];
+    },
   },
   created() {
     this.fetchData();
   },
   methods: {
     fetchData() {
-      const typeTable = {
+      const typeTable: Record<SearchType, number> = {
         musicVideos: 1004,
         tracks: 1,
         albums: 10,
@@ -94,32 +137,39 @@ export default {
       return search({
         keywords: this.keywords,
         type: typeTable[this.type],
-        offset: this.result.length,
-      }).then(result => {
-        result = result.result;
+        offset: this.resultLength,
+      }).then(response => {
+        const result = response.result;
+        if (!result) return;
         this.hasMore = result.hasMore ?? true;
         switch (this.type) {
           case 'musicVideos':
-            this.result.push(...result.mvs);
-            if (result.mvCount <= this.result.length) {
+            this.mvResults.push(...(result.mvs ?? []));
+            if (
+              result.mvCount !== undefined &&
+              result.mvCount <= this.mvResults.length
+            ) {
               this.hasMore = false;
             }
             break;
           case 'artists':
-            this.result.push(...result.artists);
+            this.artistResults.push(...(result.artists ?? []));
             break;
           case 'albums':
-            this.result.push(...result.albums);
-            if (result.albumCount <= this.result.length) {
+            this.albumResults.push(...(result.albums ?? []));
+            if (
+              result.albumCount !== undefined &&
+              result.albumCount <= this.albumResults.length
+            ) {
               this.hasMore = false;
             }
             break;
           case 'tracks':
-            this.result.push(...result.songs);
+            this.trackResults.push(...(result.songs ?? []));
             this.getTracksDetail();
             break;
           case 'playlists':
-            this.result.push(...result.playlists);
+            this.playlistResults.push(...(result.playlists ?? []));
             break;
         }
         NProgress.done();
@@ -127,14 +177,14 @@ export default {
       });
     },
     getTracksDetail() {
-      const trackIDs = this.result.map(t => t.id);
+      const trackIDs = this.trackResults.map(track => track.id);
       if (trackIDs.length === 0) return;
       getTrackDetail(trackIDs.join(',')).then(result => {
-        this.result = result.songs;
+        this.trackResults = result.songs;
       });
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

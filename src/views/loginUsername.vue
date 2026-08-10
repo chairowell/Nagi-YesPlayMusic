@@ -26,7 +26,7 @@
         <div class="user-list">
           <div
             v-for="user in result"
-            :key="user.id"
+            :key="user.userId"
             class="user"
             :class="{ active: user.nickname === activeUser.nickname }"
             @click="activeUser = user"
@@ -52,16 +52,19 @@
   </div>
 </template>
 
-<script>
-import { mapMutations } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import NProgress from 'nprogress';
 import { search } from '@/api/others';
 import { userPlaylist } from '@/api/user';
 import { throttle } from '@/utils/common';
 
 import ButtonTwoTone from '@/components/ButtonTwoTone.vue';
+import type { UserProfile } from '@/types/domain';
 
-export default {
+export default defineComponent({
   name: 'LoginUsername',
   components: {
     ButtonTwoTone,
@@ -69,41 +72,44 @@ export default {
   data() {
     return {
       keyword: '',
-      result: [],
-      activeUser: {},
+      result: [] as UserProfile[],
+      activeUser: {} as UserProfile,
     };
   },
   created() {
     NProgress.done();
   },
   methods: {
-    ...mapMutations(['updateData']),
+    ...mapActions(useAppStore, ['updateData', 'startUserSession']),
     search() {
       if (!this.keyword) return;
       search({ keywords: this.keyword, limit: 9, type: 1002 }).then(data => {
-        this.result = data.result.userprofiles;
-        this.activeUser = this.result[0];
+        this.result = data.result?.userprofiles ?? [];
+        this.activeUser = this.result[0] ?? {};
       });
     },
     confirm() {
-      this.updateData({ key: 'user', value: this.activeUser });
-      this.updateData({ key: 'loginMode', value: 'username' });
+      const userId = this.activeUser.userId;
+      if (userId === undefined) return;
+      this.startUserSession({ mode: 'username', user: this.activeUser });
       userPlaylist({
-        uid: this.activeUser.userId,
+        uid: userId,
         limit: 1,
       }).then(data => {
+        const likedPlaylist = data.playlist?.[0];
+        if (!likedPlaylist) return;
         this.updateData({
           key: 'likedSongPlaylistID',
-          value: data.playlist[0].id,
+          value: likedPlaylist.id,
         });
         this.$router.push({ path: '/library' });
       });
     },
-    throttleSearch: throttle(function () {
+    throttleSearch: throttle(function (this: { search(): void }) {
       this.search();
     }, 500),
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

@@ -1,10 +1,6 @@
 <template>
   <div>
-    <!--
-      Tauri 只看 mousedown 目标自身有没有 data-tauri-drag-region（不像 Electron
-      的 app-region 按几何区域算），而下面三个容器 flex:1 铺满整条顶栏，
-      只标 nav 的话可拖的就剩上下两条细边。空白处要能拖窗，每个容器都得标。
-    -->
+    <!-- Mark each flex child because Tauri checks the mousedown target. -->
     <nav
       data-tauri-drag-region
       :class="{ 'has-custom-titlebar': hasCustomTitlebar }"
@@ -92,10 +88,12 @@
   </div>
 </template>
 
-<script>
-import { mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { isLooseLoggedIn, doLogout } from '@/utils/auth';
-import { isDesktopRuntime, isTauriRuntime } from '@/utils/runtime';
+import { isDesktopRuntime } from '@/utils/runtime';
 
 // import icons for win32 title bar
 // icons by https://github.com/microsoft/vscode-codicons
@@ -105,12 +103,13 @@ import Win32Titlebar from '@/components/Win32Titlebar.vue';
 import LinuxTitlebar from '@/components/LinuxTitlebar.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
 import ButtonIcon from '@/components/ButtonIcon.vue';
-import { isLinux, isWindows } from '@/utils/platform';
+import { platform } from '@/utils/platform';
 import { openExternalUrlSafely } from '@/services/externalLinks';
+import { resolveCustomTitlebar } from '@/services/titlebar';
 
 const PROJECT_REPOSITORY = 'https://github.com/nagi-studio/YesPlayMusic';
 
-export default {
+export default defineComponent({
   name: 'Navbar',
   props: {
     compactWindowExpanded: {
@@ -118,7 +117,9 @@ export default {
       default: false,
     },
   },
-  emits: ['restore-compact-window'],
+  emits: {
+    'restore-compact-window': () => true,
+  },
   components: {
     Win32Titlebar,
     LinuxTitlebar,
@@ -130,12 +131,28 @@ export default {
       inputFocus: false,
       langs: ['zh-CN', 'zh-TW', 'en', 'tr'],
       keywords: '',
-      enableWin32Titlebar: false,
-      enableLinuxTitlebar: false,
     };
   },
   computed: {
-    ...mapState(['settings', 'data']),
+    ...mapState(useAppStore, ['settings', 'data']),
+    enableWin32Titlebar() {
+      return (
+        resolveCustomTitlebar(
+          platform,
+          isDesktopRuntime,
+          this.settings.linuxEnableCustomTitlebar
+        ) === 'windows'
+      );
+    },
+    enableLinuxTitlebar() {
+      return (
+        resolveCustomTitlebar(
+          platform,
+          isDesktopRuntime,
+          this.settings.linuxEnableCustomTitlebar
+        ) === 'linux'
+      );
+    },
     isLooseLoggedIn() {
       return isLooseLoggedIn();
     },
@@ -148,19 +165,12 @@ export default {
       return this.enableWin32Titlebar || this.enableLinuxTitlebar;
     },
   },
-  created() {
-    if (isWindows) {
-      this.enableWin32Titlebar = true;
-    } else if (
-      isLinux &&
-      !isTauriRuntime &&
-      this.settings.linuxEnableCustomTitlebar
-    ) {
-      this.enableLinuxTitlebar = true;
-    }
-  },
   methods: {
-    go(where) {
+    focusSearch() {
+      (this.$refs['searchInput'] as HTMLInputElement).focus();
+      this.inputFocus = true;
+    },
+    go(where: 'back' | 'forward') {
       if (where === 'back') this.$router.go(-1);
       else this.$router.go(1);
     },
@@ -168,7 +178,7 @@ export default {
       if (!this.keywords) return;
       if (
         this.$route.name === 'search' &&
-        this.$route.params.keywords === this.keywords
+        this.$route.params['keywords'] === this.keywords
       ) {
         return;
       }
@@ -177,8 +187,10 @@ export default {
         params: { keywords: this.keywords },
       });
     },
-    showUserProfileMenu(e) {
-      this.$refs.userProfileMenu.openMenu(e);
+    showUserProfileMenu(e: MouseEvent) {
+      (
+        this.$refs['userProfileMenu'] as InstanceType<typeof ContextMenu>
+      ).openMenu(e);
     },
     logout() {
       if (!confirm('确定要退出登录吗？')) return;
@@ -199,7 +211,7 @@ export default {
       }
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node", "bun"]
+  },
+  "include": ["src/sidecar.ts", "src/ncmModDef.d.cts", "src/types/**/*.d.ts"],
+  "exclude": ["dist", "dist-tauri", "out", "node_modules"]
+}

@@ -29,12 +29,12 @@
         </div>
         <div class="date-and-count">
           <span
-            v-if="(album.mark & 1048576) === 1048576"
+            v-if="((album.mark ?? 0) & 1048576) === 1048576"
             class="explicit-symbol"
             ><ExplicitSymbol
           /></span>
           <span :title="$filters.formatDate(album.publishTime)">{{
-            new Date(album.publishTime).getFullYear()
+            new Date(album.publishTime ?? 0).getFullYear()
           }}</span>
           <span> · {{ album.size }} {{ $t('common.songs') }}</span
           >,
@@ -44,10 +44,7 @@
           {{ album.description }}
         </div>
         <div class="buttons" style="margin-top: 32px">
-          <ButtonTwoTone
-            icon-class="play"
-            @click="playAlbumByID(album.id)"
-          >
+          <ButtonTwoTone icon-class="play" @click="playAlbumByID(album.id)">
             {{ $t('common.play') }}
           </ButtonTwoTone>
           <ButtonTwoTone
@@ -144,8 +141,10 @@
   </div>
 </template>
 
-<script>
-import { mapMutations, mapActions, mapState } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { getArtistAlbum } from '@/api/artist';
 import { getTrackDetail } from '@/api/track';
 import { getAlbum, albumDynamicDetail, likeAAlbum } from '@/api/album';
@@ -163,8 +162,18 @@ import CoverRow from '@/components/CoverRow.vue';
 import Cover from '@/components/Cover.vue';
 import Modal from '@/components/Modal.vue';
 import { openExternalUrlSafely } from '@/services/externalLinks';
+import type { Album, Track } from '@/types/domain';
+import type { DetailedAlbum } from '@/api/album';
 
-export default {
+function emptyAlbum(): DetailedAlbum {
+  return {
+    id: 0,
+    picUrl: '',
+    artist: { id: 0 },
+  };
+}
+
+export default defineComponent({
   name: 'Album',
   components: {
     Cover,
@@ -177,41 +186,35 @@ export default {
   },
   beforeRouteUpdate(to, from, next) {
     this.show = false;
-    this.loadData(to.params.id);
+    this.loadData(to.params['id']);
     next();
   },
   data() {
     return {
       show: false,
-      album: {
-        id: 0,
-        picUrl: '',
-        artist: {
-          id: 0,
-        },
-      },
-      tracks: [],
+      album: emptyAlbum(),
+      tracks: [] as Track[],
       showFullDescription: false,
-      moreAlbums: [],
-      dynamicDetail: {},
+      moreAlbums: [] as Album[],
+      dynamicDetail: { isSub: false },
       subtitle: '',
       title: '',
     };
   },
   computed: {
-    ...mapState(['player', 'data']),
+    ...mapState(useAppStore, ['player', 'data']),
     albumTime() {
       let time = 0;
-      this.tracks.map(t => (time = time + t.dt));
+      this.tracks.forEach(track => (time += track.dt ?? 0));
       return time;
     },
     filteredMoreAlbums() {
-      let moreAlbums = this.moreAlbums.filter(a => a.id !== this.album.id);
-      let realAlbums = moreAlbums.filter(a => a.type === '专辑');
-      let eps = moreAlbums.filter(
-        a => a.type === 'EP' || (a.type === 'EP/Single' && a.size > 1)
+      const moreAlbums = this.moreAlbums.filter(a => a.id !== this.album.id);
+      const realAlbums = moreAlbums.filter(a => a.type === '专辑');
+      const eps = moreAlbums.filter(
+        a => a.type === 'EP' || (a.type === 'EP/Single' && (a.size ?? 0) > 1)
       );
-      let restItems = moreAlbums.filter(
+      const restItems = moreAlbums.filter(
         a =>
           realAlbums.find(a1 => a1.id === a.id) === undefined &&
           eps.find(a1 => a1.id === a.id) === undefined
@@ -232,13 +235,12 @@ export default {
     },
   },
   created() {
-    this.loadData(this.$route.params.id);
+    this.loadData(this.$route.params['id']);
   },
   methods: {
-    ...mapMutations(['appendTrackToPlayerList']),
-    ...mapActions(['playFirstTrackOnList', 'playTrackOnListByID', 'showToast']),
-    playAlbumByID(id, trackID = 'first') {
-      this.$store.state.player.playAlbumByID(id, trackID);
+    ...mapActions(useAppStore, ['showToast', 'enableScrollingWith']),
+    playAlbumByID(id: number, trackID: number | 'first' = 'first') {
+      this.player.playAlbumByID(id, trackID);
     },
     likeAlbum(toast = false) {
       if (!isAccountLoggedIn()) {
@@ -258,13 +260,13 @@ export default {
               );
           }
         })
-        .catch(error => {
-          this.showToast(`${error.response.data.message || error}`);
+        .catch((error: unknown) => {
+          this.showToast(String(error));
         });
     },
     formatTitle() {
-      let splitTitle = splitSoundtrackAlbumTitle(this.album.name);
-      let splitTitle2 = splitAlbumTitle(splitTitle.title);
+      const splitTitle = splitSoundtrackAlbumTitle(this.album.name ?? '');
+      const splitTitle2 = splitAlbumTitle(splitTitle.title);
       this.title = splitTitle2.title;
       if (splitTitle.subtitle !== '' && splitTitle2.subtitle !== '') {
         this.subtitle = splitTitle.subtitle + ' · ' + splitTitle2.subtitle;
@@ -275,11 +277,13 @@ export default {
             : splitTitle.subtitle;
       }
     },
-    loadData(id) {
+    loadData(id: unknown) {
+      const albumId = Number(id);
+      if (!Number.isFinite(albumId)) return;
       setTimeout(() => {
         if (!this.show) NProgress.start();
       }, 1000);
-      getAlbum(id).then(data => {
+      getAlbum(albumId).then(data => {
         this.album = data.album;
         this.tracks = data.songs;
         this.formatTitle();
@@ -287,7 +291,7 @@ export default {
         this.show = true;
 
         // to get explicit mark
-        let trackIDs = this.tracks.map(t => t.id);
+        const trackIDs = this.tracks.map(t => t.id);
         getTrackDetail(trackIDs.join(',')).then(data => {
           this.tracks = data.songs;
         });
@@ -297,37 +301,37 @@ export default {
           this.moreAlbums = data.hotAlbums;
         });
       });
-      albumDynamicDetail(id).then(data => {
+      albumDynamicDetail(albumId).then(data => {
         this.dynamicDetail = data;
       });
     },
     toggleFullDescription() {
       this.showFullDescription = !this.showFullDescription;
       if (this.showFullDescription) {
-        this.$store.commit('enableScrolling', false);
+        this.enableScrollingWith(false);
       } else {
-        this.$store.commit('enableScrolling', true);
+        this.enableScrollingWith(true);
       }
     },
-    openMenu(e) {
-      this.$refs.albumMenu.openMenu(e);
+    openMenu(e: MouseEvent) {
+      (this.$refs['albumMenu'] as InstanceType<typeof ContextMenu>).openMenu(e);
     },
-    copyUrl(id) {
-      let showToast = this.showToast;
+    copyUrl(id: number) {
+      const showToast = this.showToast;
       this.$copyText(`https://music.163.com/#/album?id=${id}`)
         .then(function () {
           showToast(locale.t('toast.copied'));
         })
-        .catch(error => {
-          showToast(`${locale.t('toast.copyFailed')}${error}`);
+        .catch((error: unknown) => {
+          showToast(`${locale.t('toast.copyFailed')}${String(error)}`);
         });
     },
-    openInBrowser(id) {
+    openInBrowser(id: number) {
       const url = `https://music.163.com/#/album?id=${id}`;
       void openExternalUrlSafely(url);
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

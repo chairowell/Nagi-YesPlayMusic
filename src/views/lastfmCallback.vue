@@ -10,39 +10,60 @@
   </div>
 </template>
 
-<script>
-import { authGetSession } from '@/api/lastfm';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { authGetSession, readLastfmCallbackToken } from '@/api/lastfm';
+import { mapActions } from 'pinia';
+import { useAppStore } from '@/stores/app';
+import {
+  closeLastfmAuthorizationWindow,
+  persistAuthorizedLastfmSession,
+  publishDesktopLastfmAuthorization,
+} from '@/services/lastfmAuth';
 
-export default {
+export default defineComponent({
   name: 'LastfmCallback',
   data() {
     return { message: '请稍等...', done: false };
   },
-  created() {
-    const token = new URLSearchParams(window.location.search).get('token');
+  async created() {
+    const token = readLastfmCallbackToken(window.location);
     if (!token) {
       this.message = '连接失败，请重试或联系开发者（无Token）';
       this.done = true;
       return;
     }
-    authGetSession(token).then(result => {
+    try {
+      const result = await authGetSession(token);
       if (!result.data.session) {
         this.message = '连接失败，请重试或联系开发者（无Session）';
         this.done = true;
         return;
       }
-      localStorage.setItem('lastfm', JSON.stringify(result.data.session));
-      this.$store.commit('updateLastfm', result.data.session);
+      const session = persistAuthorizedLastfmSession(
+        result.data.session,
+        localStorage
+      );
+      this.updateLastfm(session);
+      await publishDesktopLastfmAuthorization(session);
       this.message = '已成功连接到 Last.fm';
       this.done = true;
-    });
+    } catch (error) {
+      console.error(
+        '[lastfm] failed to exchange the authorization token',
+        error
+      );
+      this.message = '连接失败，请重试或联系开发者';
+      this.done = true;
+    }
   },
   methods: {
-    close() {
-      window.close();
+    ...mapActions(useAppStore, ['updateLastfm']),
+    async close() {
+      if (!(await closeLastfmAuthorizationWindow())) window.close();
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

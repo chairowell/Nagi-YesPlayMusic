@@ -29,12 +29,15 @@
   </div>
 </template>
 
-<script>
-import { mapState, mapActions } from 'vuex';
+<script lang="ts">
+import { defineComponent } from 'vue';
+import { mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { getTrackDetail } from '@/api/track';
 import TrackList from '@/components/TrackList.vue';
+import type { Track } from '@/types/domain';
 
-export default {
+export default defineComponent({
   name: 'Next',
   inject: ['appShell'],
   components: {
@@ -42,33 +45,33 @@ export default {
   },
   data() {
     return {
-      tracks: [],
+      tracks: [] as Track[],
     };
   },
   computed: {
-    ...mapState(['player']),
+    ...mapState(useAppStore, ['player']),
     currentTrack() {
       return this.player.currentTrack;
     },
     playerShuffle() {
       return this.player.shuffle;
     },
-    filteredTracks() {
-      let trackIDs = this.player.list.slice(
+    filteredTracks(): Track[] {
+      const trackIDs = this.player.list.slice(
         this.player.current + 1,
         this.player.current + 100
       );
       return trackIDs
         .map(tid => this.tracks.find(t => t.id === tid))
-        .filter(t => t);
+        .filter((track): track is Track => track !== undefined);
     },
     playNextList() {
       return this.player.playNextList;
     },
-    playNextTracks() {
-      return this.playNextList.map(tid => {
-        return this.tracks.find(t => t.id === tid);
-      });
+    playNextTracks(): Track[] {
+      return this.playNextList
+        .map(trackId => this.tracks.find(track => track.id === trackId))
+        .filter((track): track is Track => track !== undefined);
     },
   },
   watch: {
@@ -87,23 +90,22 @@ export default {
     this.appShell.restoreScrollPosition();
   },
   methods: {
-    ...mapActions(['playTrackOnListByID']),
     loadTracks() {
-      // 获取播放列表当前歌曲后100首歌
-      let trackIDs = this.player.list.slice(
+      // Queue the next 100 tracks.
+      const trackIDs = this.player.list.slice(
         this.player.current + 1,
         this.player.current + 100
       );
 
-      // 将playNextList的歌曲加进trackIDs
+      // Place priority tracks ahead of the regular queue.
       trackIDs.push(...this.playNextList);
 
-      // 获取已经加载了的歌曲
-      let loadedTrackIDs = this.tracks.map(t => t.id);
+      // Skip tracks already loaded.
+      const loadedTrackIDs = this.tracks.map(t => t.id);
 
       if (trackIDs.length > 0) {
         getTrackDetail(trackIDs.join(',')).then(data => {
-          let newTracks = data.songs.filter(
+          const newTracks = data.songs.filter(
             t => !loadedTrackIDs.includes(t.id)
           );
           this.tracks.push(...newTracks);
@@ -111,7 +113,7 @@ export default {
       }
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

@@ -2,10 +2,11 @@
   <button class="button-icon"><slot></slot></button>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent } from 'vue';
+export default defineComponent({
   name: 'ButtonIcon',
-};
+});
 </script>
 
 <style lang="scss" scoped>

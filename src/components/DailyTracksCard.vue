@@ -17,9 +17,11 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
 import locale from '@/locale';
-import { mapMutations, mapState, mapActions } from 'vuex';
+import { mapActions, mapState } from 'pinia';
+import { useAppStore } from '@/stores/app';
 import { dailyRecommendTracks } from '@/api/playlist';
 import { isAccountLoggedIn } from '@/utils/auth';
 import sample from 'lodash/sample';
@@ -29,17 +31,20 @@ const defaultCovers = [
   'https://p2.music.126.net/QxJA2mr4hhb9DZyucIOIQw==/109951165422200291.jpg',
   'https://p1.music.126.net/AhYP9TET8l-VSGOpWAKZXw==/109951165134386387.jpg',
 ];
+const fallbackCover = defaultCovers[0] ?? '';
 
-export default {
+export default defineComponent({
   name: 'DailyTracksCard',
   data() {
     return { useAnimation: false };
   },
   computed: {
-    ...mapState(['dailyTracks']),
+    ...mapState(useAppStore, ['dailyTracks', 'player']),
     coverUrl() {
       return `${
-        this.dailyTracks[0]?.al.picUrl || sample(defaultCovers)
+        this.dailyTracks[0]?.al?.picUrl ||
+        sample(defaultCovers) ||
+        fallbackCover
       }?param=1024y1024`;
     },
   },
@@ -47,8 +52,7 @@ export default {
     if (this.dailyTracks.length === 0) this.loadDailyTracks();
   },
   methods: {
-    ...mapActions(['showToast']),
-    ...mapMutations(['updateDailyTracks']),
+    ...mapActions(useAppStore, ['showToast', 'updateDailyTracks']),
     loadDailyTracks() {
       if (!isAccountLoggedIn()) return;
       dailyRecommendTracks()
@@ -65,16 +69,18 @@ export default {
         this.showToast(locale.t('toast.needToLogin'));
         return;
       }
-      let trackIDs = this.dailyTracks.map(t => t.id);
-      this.$store.state.player.replacePlaylist(
+      const firstTrack = this.dailyTracks[0];
+      if (!firstTrack) return;
+      const trackIDs = this.dailyTracks.map(track => track.id);
+      this.player.replacePlaylist(
         trackIDs,
         '/daily/songs',
         'url',
-        this.dailyTracks[0].id
+        firstTrack.id
       );
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

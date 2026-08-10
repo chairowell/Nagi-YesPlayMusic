@@ -9,8 +9,10 @@
   </button>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent } from 'vue';
+import type { CSSProperties } from 'vue';
+export default defineComponent({
   name: 'ButtonTwoTone',
   props: {
     iconClass: {
@@ -43,8 +45,8 @@ export default {
     },
   },
   computed: {
-    buttonStyle() {
-      let styles = {
+    buttonStyle(): CSSProperties {
+      const styles: CSSProperties = {
         borderRadius: this.shape === 'round' ? '50%' : '8px',
         padding: `8px ${this.horizontalPadding}px`,
         // height: "38px",
@@ -56,7 +58,7 @@ export default {
       return styles;
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>

@@ -32,9 +32,9 @@
         <div v-if="type !== 'artist' && subText !== 'none'" class="info">
           <router-link
             v-if="getSubTextArtist(item)"
-            :to="`/artist/${getSubTextArtist(item).id}`"
+            :to="`/artist/${getSubTextArtist(item)?.id ?? 0}`"
           >
-            {{ getSubTextArtist(item).name }}
+            {{ getSubTextArtist(item)?.name ?? '' }}
           </router-link>
           <span v-else>{{ getSubText(item) }}</span>
         </div>
@@ -43,19 +43,45 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent } from 'vue';
+import type { PropType } from 'vue';
 import Cover from '@/components/Cover.vue';
 import ExplicitSymbol from '@/components/ExplicitSymbol.vue';
+import type { Artist } from '@/types/domain';
 
-export default {
+interface CoverRowItem {
+  id: number;
+  copywriter?: string;
+  description?: string;
+  updateFrequency?: string;
+  creator?: { nickname?: string };
+  publishTime?: number;
+  type?: string;
+  size?: number;
+  artist?: Artist;
+  artists?: Artist[];
+  privacy?: number;
+  mark?: number;
+  img1v1Url?: string;
+  picUrl?: string;
+  coverImgUrl?: string;
+  playCount?: number;
+  name?: string;
+}
+
+export default defineComponent({
   name: 'CoverRow',
   components: {
     Cover,
     ExplicitSymbol,
   },
   props: {
-    items: { type: Array, required: true },
-    type: { type: String, required: true },
+    items: { type: Array as PropType<CoverRowItem[]>, required: true },
+    type: {
+      type: String as PropType<'album' | 'playlist' | 'artist'>,
+      required: true,
+    },
     subText: { type: String, default: 'none' },
     subTextFontSize: { type: String, default: '16px' },
     showPlayCount: { type: Boolean, default: false },
@@ -72,13 +98,14 @@ export default {
     },
   },
   methods: {
-    getSubText(item) {
-      if (this.subText === 'copywriter') return item.copywriter;
-      if (this.subText === 'description') return item.description;
-      if (this.subText === 'updateFrequency') return item.updateFrequency;
-      if (this.subText === 'creator') return 'by ' + item.creator.nickname;
+    getSubText(item: CoverRowItem): string | number {
+      if (this.subText === 'copywriter') return item.copywriter ?? '';
+      if (this.subText === 'description') return item.description ?? '';
+      if (this.subText === 'updateFrequency') return item.updateFrequency ?? '';
+      if (this.subText === 'creator')
+        return `by ${item.creator?.nickname ?? ''}`;
       if (this.subText === 'releaseYear')
-        return new Date(item.publishTime).getFullYear();
+        return new Date(item.publishTime ?? 0).getFullYear();
       if (this.subText === 'albumType+releaseYear') {
         let albumType = item.type;
         if (item.type === 'EP/Single') {
@@ -88,37 +115,39 @@ export default {
         } else if (item.type === '专辑') {
           albumType = 'Album';
         }
-        return `${albumType} · ${new Date(item.publishTime).getFullYear()}`;
+        return `${albumType} · ${new Date(
+          item.publishTime ?? 0
+        ).getFullYear()}`;
       }
       if (this.subText === 'appleMusic') return 'by Apple Music';
+      return '';
     },
-    getSubTextArtist(item) {
+    getSubTextArtist(item: CoverRowItem): Artist | null {
       if (this.subText !== 'artist') return null;
       return item.artist ?? item.artists?.[0] ?? null;
     },
-    isPrivacy(item) {
+    isPrivacy(item: CoverRowItem): boolean {
       return this.type === 'playlist' && item.privacy === 10;
     },
-    isExplicit(item) {
-      return this.type === 'album' && (item.mark & 1048576) === 1048576;
+    isExplicit(item: CoverRowItem): boolean {
+      return this.type === 'album' && ((item.mark ?? 0) & 1048576) === 1048576;
     },
-    getTitleLink(item) {
+    getTitleLink(item: CoverRowItem): string {
       return `/${this.type}/${item.id}`;
     },
-    getImageUrl(item) {
+    getImageUrl(item: CoverRowItem): string {
       if (item.img1v1Url) {
-        let img1v1ID = item.img1v1Url.split('/');
-        img1v1ID = img1v1ID[img1v1ID.length - 1];
+        const img1v1ID = item.img1v1Url.split('/').at(-1);
         if (img1v1ID === '5639395138885805.jpg') {
-          // 没有头像的歌手，网易云返回的img1v1Url并不是正方形的 😅😅😅
+          // Replace NetEase's non-square default artist image.
           return 'https://p2.music.126.net/VnZiScyynLG7atLIZ2YPkw==/18686200114669622.jpg?param=512y512';
         }
       }
-      let img = item.img1v1Url || item.picUrl || item.coverImgUrl;
-      return `${img?.replace('http://', 'https://')}?param=512y512`;
+      const img = item.img1v1Url || item.picUrl || item.coverImgUrl || '';
+      return `${img.replace('http://', 'https://')}?param=512y512`;
     },
   },
-};
+});
 </script>
 
 <style lang="scss" scoped>
