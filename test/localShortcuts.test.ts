@@ -4,6 +4,7 @@ import {
   isEditableShortcutTarget,
   matchesLocalShortcut,
   parseLocalShortcut,
+  resolveLocalShortcutAction,
   runLocalShortcutAction,
 } from '../src/services/localShortcuts';
 import type { LocalShortcutTarget } from '../src/services/localShortcuts';
@@ -45,6 +46,23 @@ const shortcuts: Shortcut[] = [
 ];
 
 describe('local shortcut parsing', () => {
+  test('keeps bare Space as the built-in play shortcut', () => {
+    expect(
+      resolveLocalShortcutAction(
+        [],
+        keyboardEvent({ code: 'Space', key: ' ' }),
+        true
+      )
+    ).toBe('play');
+    expect(
+      resolveLocalShortcutAction(
+        [],
+        keyboardEvent({ code: 'Space', key: ' ', metaKey: true }),
+        true
+      )
+    ).toBeNull();
+  });
+
   test('maps CommandOrControl to the current platform', () => {
     expect(parseLocalShortcut('CommandOrControl+Shift+P', true)).toEqual({
       alt: false,

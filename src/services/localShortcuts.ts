@@ -181,6 +181,23 @@ export function findLocalShortcutAction(
   return match && isLocalShortcutAction(match.id) ? match.id : null;
 }
 
+export function resolveLocalShortcutAction(
+  shortcuts: readonly Shortcut[],
+  event: KeyboardShortcutEvent,
+  isMac: boolean
+): LocalShortcutAction | null {
+  if (
+    event.code === 'Space' &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey
+  ) {
+    return 'play';
+  }
+  return findLocalShortcutAction(shortcuts, event, isMac);
+}
+
 export function runLocalShortcutAction(
   action: LocalShortcutAction,
   target: LocalShortcutTarget

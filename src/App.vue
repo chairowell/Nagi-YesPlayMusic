@@ -86,8 +86,8 @@ import {
 } from '@/services/compactWindow';
 import { isMiniWindowSize } from '@/utils/miniWindow';
 import {
-  findLocalShortcutAction,
   isEditableShortcutTarget,
+  resolveLocalShortcutAction,
   runLocalShortcutAction,
 } from '@/services/localShortcuts';
 import { checkForAppUpdateInBackground } from '@/services/appUpdater';
@@ -308,7 +308,11 @@ export default defineComponent({
         return;
       }
       if (isEditableShortcutTarget(e.target)) return;
-      const action = findLocalShortcutAction(this.settings.shortcuts, e, isMac);
+      const action = resolveLocalShortcutAction(
+        this.settings.shortcuts,
+        e,
+        isMac
+      );
       if (!action) return;
 
       e.preventDefault();
