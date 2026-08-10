@@ -186,12 +186,33 @@ test('core smoke launches each platform from its packaged runtime layout', async
   try {
     expect(
       resolveTauriSmokeExecutable({ platform: 'darwin', arch: 'arm64', root })
-    ).toEndWith(
-      'bundle/macos/YesPlayMusic.app/Contents/MacOS/yesplaymusic-tauri'
+    ).toBe(
+      path.join(
+        root,
+        'src-tauri',
+        'target',
+        'aarch64-apple-darwin',
+        'release',
+        'bundle',
+        'macos',
+        'YesPlayMusic.app',
+        'Contents',
+        'MacOS',
+        'yesplaymusic-tauri'
+      )
     );
     expect(
       resolveTauriSmokeExecutable({ platform: 'win32', arch: 'x64', root })
-    ).toEndWith('release/yesplaymusic-tauri.exe');
+    ).toBe(
+      path.join(
+        root,
+        'src-tauri',
+        'target',
+        'x86_64-pc-windows-msvc',
+        'release',
+        'yesplaymusic-tauri.exe'
+      )
+    );
 
     const appImageDirectory = path.join(
       root,
@@ -204,7 +225,12 @@ test('core smoke launches each platform from its packaged runtime layout', async
     );
     expect(
       resolveTauriSmokeExecutable({ platform: 'linux', arch: 'x64', root })
-    ).toEndWith('bundle/appimage/YesPlayMusic_0.7.0_amd64.AppImage');
+    ).toBe(
+      path.join(
+        appImageDirectory,
+        'YesPlayMusic_0.7.0_amd64.AppImage'
+      )
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
