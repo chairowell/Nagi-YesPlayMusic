@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { PassThrough } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import express from 'express';
 import type { Request, Response } from 'express';
@@ -6,6 +7,9 @@ import {
   SIDECAR_HEALTH_BODY,
   SIDECAR_HEALTH_PATH,
   installSidecarHealthRoute,
+  monitorParentProcess,
+  monitorSidecarParent,
+  readSidecarHealthToken,
 } from '../src/services/sidecarIdentity';
 
 interface TestRouteLayer {
@@ -73,6 +77,7 @@ describe('sidecar 身份握手', () => {
     expect(rustSource).toContain(
       'response_has_sidecar_identity(response: &str, expected_token: &str)'
     );
+    expect(rustSource).toContain('"--parent-pid".to_string()');
   });
 
   test('API-only 健康检查晚于可选代理 relay 启动', () => {
@@ -88,5 +93,49 @@ describe('sidecar 身份握手', () => {
     );
     expect(relayReady).toBeGreaterThan(-1);
     expect(healthReady).toBeGreaterThan(relayReady);
+  });
+
+  test('父进程管道关闭后只触发一次 Sidecar 自清理', async () => {
+    const input = new PassThrough();
+    input.write(`${'a'.repeat(64)}\n`);
+    expect(await readSidecarHealthToken(input)).toBe('a'.repeat(64));
+    let disconnects = 0;
+    const stopMonitoring = monitorSidecarParent(input, () => {
+      disconnects += 1;
+    });
+
+    input.end();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    stopMonitoring();
+
+    expect(disconnects).toBe(1);
+  });
+
+  test('Sidecar 启动后始终监视父进程管道', () => {
+    const sidecarSource = readFileSync(
+      new URL('../src/sidecar.ts', import.meta.url),
+      'utf8'
+    );
+    expect(sidecarSource).toContain('monitorSidecarParent(input');
+  });
+
+  test('管道 EOF 失效时通过父 PID 自清理', async () => {
+    let alive = true;
+    let disconnects = 0;
+    const stopMonitoring = monitorParentProcess(
+      123,
+      () => {
+        disconnects += 1;
+      },
+      { isAlive: () => alive, intervalMs: 1 }
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 2));
+    expect(disconnects).toBe(0);
+    alive = false;
+    await new Promise(resolve => setTimeout(resolve, 5));
+    stopMonitoring();
+
+    expect(disconnects).toBe(1);
   });
 });

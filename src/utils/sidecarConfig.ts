@@ -11,6 +11,7 @@ export interface SidecarConfig {
   apiOnly: boolean;
   proxyRelayPort: number;
   upstreamProxy: string | null;
+  parentPid: number | null;
 }
 
 function parsePort(value: string, flag: string): number {
@@ -29,6 +30,14 @@ function readValue(args: string[], index: number, flag: string): string {
   return value;
 }
 
+function parseParentPid(value: string): number {
+  const pid = Number(value);
+  if (!Number.isSafeInteger(pid) || pid < 1) {
+    throw new Error('--parent-pid 必须是正整数');
+  }
+  return pid;
+}
+
 export function parseSidecarArgs(args: string[]): SidecarConfig {
   const config: SidecarConfig = {
     apiPort: DEFAULT_API_PORT,
@@ -37,6 +46,7 @@ export function parseSidecarArgs(args: string[]): SidecarConfig {
     apiOnly: false,
     proxyRelayPort: DEFAULT_PROXY_RELAY_PORT,
     upstreamProxy: null,
+    parentPid: null,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -72,6 +82,12 @@ export function parseSidecarArgs(args: string[]): SidecarConfig {
           args,
           index,
           flag ?? '--upstream-proxy'
+        );
+        index += 1;
+        break;
+      case '--parent-pid':
+        config.parentPid = parseParentPid(
+          readValue(args, index, flag ?? '--parent-pid')
         );
         index += 1;
         break;

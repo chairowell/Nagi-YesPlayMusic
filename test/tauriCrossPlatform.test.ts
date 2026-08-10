@@ -102,4 +102,17 @@ describe('Tauri 本机安装包', () => {
       'deliver_osd_lyrics(&lyrics, osd_started).await'
     );
   });
+
+  test('macOS 托盘封面只在主线程更新 AppKit 状态', () => {
+    const start = rustMain.indexOf('fn update_tray_cover(');
+    const end = rustMain.indexOf('\nfn update_tray_menu(', start);
+    const updateTrayCover = rustMain.slice(start, end);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(updateTrayCover).toContain('run_on_main_thread');
+    expect(updateTrayCover).toMatch(
+      /run_on_main_thread\([\s\S]*tray_by_id\("main-tray"\)[\s\S]*tray\.set_icon/
+    );
+  });
 });

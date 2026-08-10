@@ -39,6 +39,70 @@ export async function readSidecarHealthToken(
   }
 }
 
+export function monitorSidecarParent(
+  input: Readable,
+  onDisconnect: () => void
+): () => void {
+  let active = true;
+  const disconnect = (): void => {
+    if (!active) return;
+    active = false;
+    onDisconnect();
+  };
+  const stop = (): void => {
+    active = false;
+    input.off('end', disconnect);
+    input.off('close', disconnect);
+    input.pause?.();
+  };
+
+  input.once('end', disconnect);
+  input.once('close', disconnect);
+  input.resume();
+  if (input.readableEnded || input.destroyed) queueMicrotask(disconnect);
+
+  return stop;
+}
+
+interface ParentProcessMonitorOptions {
+  intervalMs?: number;
+  isAlive?: (pid: number) => boolean;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
+}
+
+export function monitorParentProcess(
+  parentPid: number,
+  onDisconnect: () => void,
+  {
+    intervalMs = 1_000,
+    isAlive = isProcessAlive,
+  }: ParentProcessMonitorOptions = {}
+): () => void {
+  let active = true;
+  const check = (): void => {
+    if (!active || isAlive(parentPid)) return;
+    active = false;
+    clearInterval(timer);
+    onDisconnect();
+  };
+  const timer = setInterval(check, intervalMs);
+  timer.unref();
+  queueMicrotask(check);
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
+}
+
 export function desktopSessionExpiryCookies(): string[] {
   const attributes = [
     'Path=/',

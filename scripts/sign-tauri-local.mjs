@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
-import {
-  defaultTauriAppPath,
-  signLocalTauriBundle,
-} from './tauriSigning.mjs';
+import { defaultTauriAppPath, signLocalTauriBundle } from './tauriSigning.mjs';
 
 const appPath = process.argv[2] || defaultTauriAppPath;
 

@@ -13,6 +13,8 @@ import { applyRendererSecurityHeaders } from './services/contentSecurityPolicy';
 import { installPreciseWavRoutes } from './services/preciseWav';
 import {
   installSidecarHealthRoute,
+  monitorParentProcess,
+  monitorSidecarParent,
   readSidecarHealthToken,
 } from './services/sidecarIdentity';
 import { installDesktopLogoutRoute } from './services/sidecarSession';
@@ -293,18 +295,42 @@ export async function runSidecar(
   );
 
   let stopping = false;
-  const stop = async (signal: NodeJS.Signals): Promise<void> => {
+  const parentMonitors: Array<() => void> = [];
+  const stopParentMonitoring = (): void => {
+    for (const stopMonitoring of parentMonitors.splice(0)) stopMonitoring();
+  };
+  const stop = async (
+    reason: NodeJS.Signals | 'parent pipe closed' | 'parent process exited'
+  ): Promise<void> => {
     if (stopping) return;
     stopping = true;
-    console.log(`[sidecar] ${signal} received, shutting down`);
-    await Promise.all([
-      closeServer(rendererServer),
-      closeServer(playerServer),
-      closeServer(apiApp.server),
-      proxyRelay?.close(),
-    ]);
-    process.exit(0);
+    stopParentMonitoring();
+    console.log(`[sidecar] ${reason}, shutting down`);
+    try {
+      await Promise.all([
+        closeServer(rendererServer),
+        closeServer(playerServer),
+        closeServer(apiApp.server),
+        proxyRelay?.close(),
+      ]);
+    } catch (error) {
+      console.error(`[sidecar] shutdown failed: ${String(error)}`);
+    } finally {
+      process.exit(0);
+    }
   };
+  parentMonitors.push(
+    monitorSidecarParent(input, () => {
+      void stop('parent pipe closed');
+    })
+  );
+  if (config.parentPid !== null) {
+    parentMonitors.push(
+      monitorParentProcess(config.parentPid, () => {
+        void stop('parent process exited');
+      })
+    );
+  }
 
   process.once('SIGINT', () => void stop('SIGINT'));
   process.once('SIGTERM', () => void stop('SIGTERM'));

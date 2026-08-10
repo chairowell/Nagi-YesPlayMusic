@@ -509,18 +509,23 @@ fn update_tray_cover(app: &AppHandle, payload: &serde_json::Value) {
     tauri::async_runtime::spawn(async move {
         match download_tray_cover(&cover_url).await {
             Ok(icon) => {
-                let is_current = app
-                    .state::<TrayCoverState>()
-                    .0
-                    .lock()
-                    .map(|current| current.as_deref() == Some(cover_url.as_str()))
-                    .unwrap_or(false);
-                if is_current {
-                    if let Some(tray) = app.tray_by_id("main-tray") {
-                        if let Err(error) = tray.set_icon(Some(icon)) {
-                            eprintln!("[tauri] 无法更新菜单栏封面：{error}");
+                let main_app = app.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    let is_current = main_app
+                        .state::<TrayCoverState>()
+                        .0
+                        .lock()
+                        .map(|current| current.as_deref() == Some(cover_url.as_str()))
+                        .unwrap_or(false);
+                    if is_current {
+                        if let Some(tray) = main_app.tray_by_id("main-tray") {
+                            if let Err(error) = tray.set_icon(Some(icon)) {
+                                eprintln!("[tauri] 无法更新菜单栏封面：{error}");
+                            }
                         }
                     }
+                }) {
+                    eprintln!("[tauri] 无法调度菜单栏封面更新：{error}");
                 }
             }
             Err(error) => {
@@ -533,10 +538,15 @@ fn update_tray_cover(app: &AppHandle, payload: &serde_json::Value) {
                     }
                 }
                 if cleared {
-                    if let Some(window) = app.get_webview_window("main") {
-                        if let Ok(theme) = window.theme() {
-                            let _ = update_tray_icon(&app, theme);
+                    let main_app = app.clone();
+                    if let Err(error) = app.run_on_main_thread(move || {
+                        if let Some(window) = main_app.get_webview_window("main") {
+                            if let Ok(theme) = window.theme() {
+                                let _ = update_tray_icon(&main_app, theme);
+                            }
                         }
+                    }) {
+                        eprintln!("[tauri] 无法调度菜单栏图标恢复：{error}");
                     }
                 }
                 eprintln!("[tauri] 无法下载菜单栏封面：{error}");
@@ -1636,6 +1646,8 @@ fn start_sidecar(
             "--api-only".to_string(),
             "--api-port".to_string(),
             API_PORT.to_string(),
+            "--parent-pid".to_string(),
+            std::process::id().to_string(),
         ];
         if let Some(proxy) = upstream_proxy {
             args.extend([
@@ -1661,6 +1673,8 @@ fn start_sidecar(
             RELEASE_WEB_PORT.to_string(),
             "--renderer-dir".to_string(),
             renderer_dir.to_string_lossy().into_owned(),
+            "--parent-pid".to_string(),
+            std::process::id().to_string(),
         ];
         if let Some(proxy) = upstream_proxy {
             args.extend([

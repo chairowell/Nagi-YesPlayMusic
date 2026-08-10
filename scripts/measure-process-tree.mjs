@@ -20,23 +20,15 @@ function takeSample(options) {
   }
 
   const processes = parseProcessTable(new TextDecoder().decode(result.stdout));
-  const tree = collectProcessTree(
-    processes,
-    options.pid,
-    options.includePids
-  );
+  const tree = collectProcessTree(processes, options.pid, options.includePids);
   if (!tree.some(process => process.pid === options.pid)) {
     throw new Error(`根进程 ${options.pid} 不存在`);
   }
 
   return {
     at: new Date().toISOString(),
-    rssMiB:
-      tree.reduce((total, process) => total + process.rssKiB, 0) / 1024,
-    cpuPercent: tree.reduce(
-      (total, process) => total + process.cpuPercent,
-      0
-    ),
+    rssMiB: tree.reduce((total, process) => total + process.rssKiB, 0) / 1024,
+    cpuPercent: tree.reduce((total, process) => total + process.cpuPercent, 0),
     processes: tree,
   };
 }

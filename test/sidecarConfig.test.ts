@@ -19,6 +19,7 @@ describe('sidecar 参数', () => {
       apiOnly: true,
       proxyRelayPort: DEFAULT_PROXY_RELAY_PORT,
       upstreamProxy: null,
+      parentPid: null,
     });
   });
 
@@ -31,6 +32,8 @@ describe('sidecar 参数', () => {
         '28232',
         '--renderer-dir',
         '/tmp/renderer',
+        '--parent-pid',
+        '1234',
       ])
     ).toEqual({
       apiPort: 11754,
@@ -39,7 +42,14 @@ describe('sidecar 参数', () => {
       apiOnly: false,
       proxyRelayPort: DEFAULT_PROXY_RELAY_PORT,
       upstreamProxy: null,
+      parentPid: 1234,
     });
+  });
+
+  test('拒绝非法父进程 PID', () => {
+    expect(() => parseSidecarArgs(['--api-only', '--parent-pid', '0'])).toThrow(
+      '--parent-pid 必须是正整数'
+    );
   });
 
   test('拒绝无效端口，避免意外绑定随机端口', () => {

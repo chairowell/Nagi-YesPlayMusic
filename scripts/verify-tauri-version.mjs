@@ -6,7 +6,12 @@ const projectRoot = path.resolve(
   '..'
 );
 
-export function validateTauriVersions({ packageVersion, tauriVersion, cargoVersion, tag }) {
+export function validateTauriVersions({
+  packageVersion,
+  tauriVersion,
+  cargoVersion,
+  tag,
+}) {
   const versions = new Set([packageVersion, tauriVersion, cargoVersion]);
   if (versions.size !== 1) {
     throw new Error(
