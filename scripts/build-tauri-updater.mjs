@@ -1,0 +1,109 @@
+#!/usr/bin/env bun
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { verifyUpdaterReleaseEnvironment } from './verify-updater-release-env.mjs';
+
+const projectRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..'
+);
+
+export const UPDATER_BUILD_PLANS = Object.freeze({
+  'darwin-aarch64': {
+    targetTriple: 'aarch64-apple-darwin',
+    args: [],
+    afterBuild: [
+      ['run', 'sign:tauri:local'],
+      ['scripts/refresh-macos-updater.mjs'],
+    ],
+  },
+  'windows-x86_64': {
+    targetTriple: 'x86_64-pc-windows-msvc',
+    args: ['--bundles', 'nsis', '--ci'],
+    afterBuild: [],
+  },
+  'linux-x86_64': {
+    targetTriple: 'x86_64-unknown-linux-gnu',
+    args: ['--verbose', '--bundles', 'deb,appimage', '--ci'],
+    afterBuild: [],
+  },
+});
+
+export async function createUpdaterBuildConfig(publicKey) {
+  const base = JSON.parse(
+    await readFile(
+      path.join(projectRoot, 'src-tauri/tauri.updater.conf.json'),
+      'utf8'
+    )
+  );
+  return {
+    ...base,
+    plugins: {
+      updater: {
+        pubkey: publicKey,
+      },
+    },
+  };
+}
+
+function run(args) {
+  const result = Bun.spawnSync([process.execPath, ...args], {
+    cwd: projectRoot,
+    env: process.env,
+    stdout: 'inherit',
+    stderr: 'inherit',
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `bun ${args.join(' ')} failed with exit code ${result.exitCode}`
+    );
+  }
+}
+
+export async function buildTauriUpdater(target, { developerId = false } = {}) {
+  verifyUpdaterReleaseEnvironment();
+  const plan = UPDATER_BUILD_PLANS[target];
+  if (!plan) throw new Error(`Unsupported updater target: ${target}`);
+  const temporaryDirectory = await mkdtemp(
+    path.join(tmpdir(), 'yesplaymusic-updater-config-')
+  );
+  const configPath = path.join(temporaryDirectory, 'updater.json');
+  try {
+    const config = await createUpdaterBuildConfig(
+      process.env.TAURI_UPDATER_PUBKEY
+    );
+    await writeFile(configPath, JSON.stringify(config), 'utf8');
+    const buildArgs =
+      target === 'darwin-aarch64' && developerId
+        ? ['--bundles', 'dmg', '--ci']
+        : plan.args;
+    run([
+      'tauri',
+      'build',
+      '--target',
+      plan.targetTriple,
+      ...buildArgs,
+      '--config',
+      configPath,
+    ]);
+    if (!developerId) {
+      for (const command of plan.afterBuild) run(command);
+    }
+    return plan;
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+if (import.meta.main) {
+  try {
+    await buildTauriUpdater(process.argv[2], {
+      developerId: process.argv.includes('--developer-id'),
+    });
+  } catch (error) {
+    console.error(`[tauri-updater] ${error.message}`);
+    process.exit(1);
+  }
+}

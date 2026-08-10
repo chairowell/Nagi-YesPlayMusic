@@ -3,49 +3,95 @@
     windows_subsystem = "windows"
 )]
 
-// Windows release 必须使用 GUI subsystem，否则正常启动也会附带一个命令行窗口。
+mod desktop_preferences;
+mod discord_presence;
+#[cfg(target_os = "linux")]
+mod linux_media;
+#[cfg(target_os = "macos")]
+mod macos_media_controls;
+mod window_preferences;
+
 use std::{
     collections::HashMap,
-    env,
-    io::{Cursor, ErrorKind, Read, Write},
+    env, fs,
+    io::{Cursor, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
-    sync::Mutex,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
 
+use desktop_preferences::{
+    close_decision, load_webview_proxy, parse_close_choice, parse_desktop_preferences,
+    parse_player_state_from_media_state, remove_webview_proxy, save_webview_proxy, tray_icon_asset,
+    tray_menu_text, CloseAppOption, CloseChoiceAction, CloseDecision, DesktopPreferences,
+    PlayerStatePayload, TrayIconTheme,
+};
+use discord_presence::{DiscordPresenceHandle, DiscordPresencePayload};
+#[cfg(target_os = "linux")]
+use linux_media::{LinuxMedia, MediaControl, MediaMetadata, MediaState, RepeatMode};
+use window_preferences::{
+    load as load_window_preferences, load_legacy_position, read_legacy_electron_config,
+    save as save_window_preferences, with_legacy_fallback, WindowPosition, WindowPreferences,
+};
+
 use tauri::{
     image::Image as TauriImage,
-    menu::{AboutMetadata, AboutMetadataBuilder, Menu, MenuItem},
+    menu::{AboutMetadata, AboutMetadataBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
 };
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSWindow, NSWindowButton};
-#[cfg(target_os = "macos")]
-use std::fs;
-#[cfg(target_os = "macos")]
-use tauri::menu::{MenuItemKind, PredefinedMenuItem};
+use objc2_app_kit::{NSWindow, NSWindowButton, NSWindowCollectionBehavior};
 
 const API_PORT: u16 = 12_754;
 const DEV_WEB_PORT: u16 = 1_420;
 const RELEASE_WEB_PORT: u16 = 28_232;
+const WEBVIEW_PROXY_RELAY_PORT: u16 = 27_233;
 const SIDECAR_HEALTH_PATH: &str = "/__yesplaymusic/health";
 const SIDECAR_HEALTH_BODY: &str = r#"{"service":"yesplaymusic-sidecar","protocol":1}"#;
 const SIDECAR_HEALTH_TOKEN_HEADER: &str = "X-YesPlayMusic-Health-Token";
+const WINDOW_MOVE_SETTLE_TIME: Duration = Duration::from_millis(250);
+const STARTUP_SHOW_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn updater_public_key() -> Option<&'static str> {
+    option_env!("TAURI_UPDATER_PUBKEY").filter(|key| !key.trim().is_empty())
+}
+
+fn updater_target() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "darwin-aarch64"
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "windows-x86_64"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "linux-x86_64"
+    } else {
+        "unsupported"
+    }
+}
+
+#[tauri::command]
+fn updater_configured() -> bool {
+    updater_public_key().is_some()
+}
 
 fn app_about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadataBuilder::new()
         .name(Some("YesPlayMusic"))
-        // macOS 会从 Info.plist 读取 build number；这里只提供短版本，避免显示成 0.6.0 (0.6.0)。
+        // macOS reads the build number from Info.plist, so provide only the short version.
         .short_version(Some(version.to_string()))
         .credits(Some("Tauri 2 跨平台版\n由 Nagi Studio 独立维护"))
         .copyright(Some("基于 qier222/YesPlayMusic 的开源工作重构"))
@@ -53,30 +99,235 @@ fn app_about_metadata(version: &str) -> AboutMetadata<'static> {
 }
 
 fn create_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let menu = Menu::default(app)?;
+    let preferences = MenuItem::with_id(
+        app,
+        "app.preferences",
+        "Preferences…",
+        true,
+        Some("CmdOrCtrl+,"),
+    )?;
+    let search = MenuItem::with_id(app, "app.search", "Search", true, Some("CmdOrCtrl+F"))?;
+    #[cfg(target_os = "macos")]
+    let speech = Submenu::with_items(
+        app,
+        "Speech",
+        true,
+        &[
+            &MenuItem::with_id(
+                app,
+                "app.startSpeaking",
+                "Start Speaking",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(app, "app.stopSpeaking", "Stop Speaking", true, None::<&str>)?,
+        ],
+    )?;
+    let controls = Submenu::with_items(
+        app,
+        "Controls",
+        true,
+        &[
+            &MenuItem::with_id(app, "app.play", "Play / Pause", true, None::<&str>)?,
+            &MenuItem::with_id(app, "app.next", "Next", true, None::<&str>)?,
+            &MenuItem::with_id(app, "app.previous", "Previous", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "app.increaseVolume",
+                "Increase Volume",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(
+                app,
+                "app.decreaseVolume",
+                "Decrease Volume",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(app, "app.like", "Like", true, None::<&str>)?,
+            &MenuItem::with_id(app, "app.repeat", "Repeat", true, None::<&str>)?,
+            &MenuItem::with_id(app, "app.shuffle", "Shuffle", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "app.minimizeToTray",
+                "Minimize to Tray",
+                true,
+                None::<&str>,
+            )?,
+        ],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            #[cfg(target_os = "macos")]
+            &MenuItem::with_id(app, "app.delete", "Delete", true, None::<&str>)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+            #[cfg(target_os = "macos")]
+            &speech,
+            &PredefinedMenuItem::separator(app)?,
+            &search,
+        ],
+    )?;
+    let window = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+            &MenuItem::with_id(
+                app,
+                "app.toggleFullscreen",
+                "Toggle Full Screen",
+                true,
+                None::<&str>,
+            )?,
+            #[cfg(debug_assertions)]
+            &PredefinedMenuItem::separator(app)?,
+            #[cfg(debug_assertions)]
+            &MenuItem::with_id(app, "app.reload", "Reload", true, Some("CmdOrCtrl+R"))?,
+            #[cfg(debug_assertions)]
+            &MenuItem::with_id(
+                app,
+                "app.forceReload",
+                "Force Reload",
+                true,
+                Some("CmdOrCtrl+Shift+R"),
+            )?,
+            #[cfg(debug_assertions)]
+            &MenuItem::with_id(
+                app,
+                "app.toggleDevtools",
+                "Toggle Developer Tools",
+                true,
+                Some("F12"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
+    )?;
+    let help = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[
+            #[cfg(not(target_os = "macos"))]
+            &PredefinedMenuItem::about(
+                app,
+                Some("About YesPlayMusic"),
+                Some(app_about_metadata(&app.package_info().version.to_string())),
+            )?,
+            &MenuItem::with_id(app, "app.github", "GitHub", true, None::<&str>)?,
+            &MenuItem::with_id(app, "app.tauri", "Tauri", true, None::<&str>)?,
+        ],
+    )?;
 
     #[cfg(target_os = "macos")]
-    if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
-        // 默认 About 只带名称和版本；替换首项即可保留完整的原生 File/Edit/View 菜单。
-        app_menu.remove_at(0)?;
-        let about = PredefinedMenuItem::about(
-            app,
-            Some("关于 YesPlayMusic"),
-            Some(app_about_metadata(&app.package_info().version.to_string())),
-        )?;
-        app_menu.insert(&about, 0)?;
-    }
+    let app_submenu = Submenu::with_items(
+        app,
+        "YesPlayMusic",
+        true,
+        &[
+            &PredefinedMenuItem::about(
+                app,
+                Some("About YesPlayMusic"),
+                Some(app_about_metadata(&app.package_info().version.to_string())),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &preferences,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::show_all(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
 
-    Ok(menu)
+    #[cfg(not(target_os = "macos"))]
+    let file = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &preferences,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
+
+    Menu::with_items(
+        app,
+        &[
+            #[cfg(target_os = "macos")]
+            &app_submenu,
+            #[cfg(not(target_os = "macos"))]
+            &file,
+            &edit,
+            &controls,
+            &window,
+            &help,
+        ],
+    )
 }
 
 struct SidecarState(Mutex<Option<CommandChild>>);
+
+struct DesktopPreferencesState(Mutex<DesktopPreferences>);
+
+struct ClosePromptState(AtomicBool);
+
+struct WindowPreferencesState {
+    preferences: Mutex<WindowPreferences>,
+    movement: Mutex<PendingWindowMovement>,
+}
+
+struct StartupWindowState(AtomicBool);
+
+#[derive(Default)]
+struct PendingWindowMovement {
+    position: Option<WindowPosition>,
+    generation: u64,
+    worker_running: bool,
+}
+
+#[derive(Default)]
+struct TrayMenuRegistration {
+    player_state: PlayerStatePayload,
+    play: Option<MenuItem<tauri::Wry>>,
+    like: Option<MenuItem<tauri::Wry>>,
+}
+
+struct TrayMenuState(Mutex<TrayMenuRegistration>);
+
+#[cfg(target_os = "linux")]
+struct LinuxMediaState(Option<LinuxMedia>);
 
 #[derive(Default)]
 struct TrayCoverState(Mutex<Option<String>>);
 
 #[derive(Default)]
-struct TrayTitleState(Mutex<String>);
+struct TrayTitleRegistration {
+    title: String,
+    rendered: Option<String>,
+}
+
+#[derive(Default)]
+struct TrayTitleState(Mutex<TrayTitleRegistration>);
 
 #[derive(Default)]
 struct GlobalShortcutRegistration {
@@ -97,11 +348,39 @@ fn tray_cover_url(payload: &serde_json::Value) -> Option<&str> {
         .filter(|url| !url.is_empty())
 }
 
-fn tray_title_for_visibility(title: &str, window_visible: bool) -> &str {
-    if window_visible {
-        ""
+fn character_display_width(character: char) -> usize {
+    if matches!(
+        character,
+        '\u{1100}'..='\u{115f}'
+            | '\u{2e80}'..='\u{a4cf}'
+            | '\u{ac00}'..='\u{d7a3}'
+            | '\u{f900}'..='\u{faff}'
+            | '\u{fe30}'..='\u{fe6f}'
+            | '\u{ff00}'..='\u{ffa0}'
+            | '\u{ffe0}'..='\u{ffe6}'
+    ) {
+        2
     } else {
-        title.trim()
+        1
+    }
+}
+
+fn truncate_by_display_width(title: &str, max_width: usize) -> String {
+    let mut width = 0;
+    for (index, character) in title.char_indices() {
+        width += character_display_width(character);
+        if width > max_width {
+            return format!("{}…", &title[..index]);
+        }
+    }
+    title.to_string()
+}
+
+fn tray_title_for_visibility(title: &str, window_visible: bool) -> String {
+    if window_visible {
+        String::new()
+    } else {
+        truncate_by_display_width(title.trim(), 44)
     }
 }
 
@@ -112,25 +391,51 @@ fn render_tray_title(app: &AppHandle) -> Result<(), String> {
         .0
         .lock()
         .map_err(|_| "菜单栏标题状态锁已损坏".to_string())?
+        .title
         .clone();
     let window_visible = app
         .get_webview_window("main")
         .and_then(|window| window.is_visible().ok())
         .unwrap_or(false);
     if let Some(tray) = app.tray_by_id("main-tray") {
-        tray.set_title(Some(tray_title_for_visibility(&title, window_visible)))
+        let title = tray_title_for_visibility(&title, window_visible);
+        let already_rendered = app
+            .state::<TrayTitleState>()
+            .0
+            .lock()
+            .map_err(|_| "菜单栏标题状态锁已损坏".to_string())?
+            .rendered
+            .as_deref()
+            == Some(title.as_str());
+        if already_rendered {
+            return Ok(());
+        }
+        tray.set_title(Some(&title))
             .map_err(|error| error.to_string())?;
+        app.state::<TrayTitleState>()
+            .0
+            .lock()
+            .map_err(|_| "菜单栏标题状态锁已损坏".to_string())?
+            .rendered = Some(title);
     }
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
 fn render_tray_title(_app: &AppHandle) -> Result<(), String> {
-    // Tray title 只有 macOS 菜单栏有一致语义；其他平台使用 tooltip 和菜单。
+    // Tray titles are meaningful only in the macOS menu bar.
     Ok(())
 }
 
 fn decode_tray_cover(bytes: &[u8]) -> Result<TauriImage<'static>, String> {
+    decode_tray_image(bytes, 64)
+}
+
+fn decode_tray_icon(bytes: &[u8]) -> Result<TauriImage<'static>, String> {
+    decode_tray_image(bytes, 20)
+}
+
+fn decode_tray_image(bytes: &[u8], size: u32) -> Result<TauriImage<'static>, String> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| error.to_string())?;
@@ -142,9 +447,9 @@ fn decode_tray_cover(bytes: &[u8]) -> Result<TauriImage<'static>, String> {
     let cover = reader
         .decode()
         .map_err(|error| error.to_string())?
-        .resize_exact(64, 64, image::imageops::FilterType::Lanczos3)
+        .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
         .to_rgba8();
-    Ok(TauriImage::new_owned(cover.into_raw(), 64, 64))
+    Ok(TauriImage::new_owned(cover.into_raw(), size, size))
 }
 
 async fn download_tray_cover(url: &str) -> Result<TauriImage<'static>, String> {
@@ -219,10 +524,19 @@ fn update_tray_cover(app: &AppHandle, payload: &serde_json::Value) {
                 }
             }
             Err(error) => {
-                // 下载失败后清掉去重状态；下一次歌词更新会自然重试。
+                // Clear deduplication state so the next lyrics update retries.
+                let mut cleared = false;
                 if let Ok(mut current) = app.state::<TrayCoverState>().0.lock() {
                     if current.as_deref() == Some(cover_url.as_str()) {
                         *current = None;
+                        cleared = true;
+                    }
+                }
+                if cleared {
+                    if let Some(window) = app.get_webview_window("main") {
+                        if let Ok(theme) = window.theme() {
+                            let _ = update_tray_icon(&app, theme);
+                        }
                     }
                 }
                 eprintln!("[tauri] 无法下载菜单栏封面：{error}");
@@ -231,8 +545,314 @@ fn update_tray_cover(app: &AppHandle, payload: &serde_json::Value) {
     });
 }
 
+fn update_tray_menu(app: &AppHandle, player_state: PlayerStatePayload) -> Result<(), String> {
+    let state = app.state::<TrayMenuState>();
+    let mut registration = state.0.lock().map_err(|error| error.to_string())?;
+    registration.player_state = player_state;
+    let text = tray_menu_text(player_state);
+    if let Some(play) = &registration.play {
+        play.set_text(text.playback)
+            .map_err(|error| error.to_string())?;
+    }
+    if let Some(like) = &registration.like {
+        like.set_text(text.like)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn tray_icon_path(
+    app: &AppHandle,
+    theme: TrayIconTheme,
+    system_theme: tauri::Theme,
+) -> Result<PathBuf, String> {
+    let relative = tray_icon_asset(theme, system_theme).relative_path();
+    let bundled = app
+        .path()
+        .resource_dir()
+        .map_err(|error| error.to_string())?
+        .join("renderer")
+        .join(relative);
+    if bundled.is_file() {
+        return Ok(bundled);
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../public")
+            .join(relative);
+        if source.is_file() {
+            return Ok(source);
+        }
+    }
+
+    Err(format!("tray icon asset is missing: {relative}"))
+}
+
+fn update_tray_icon(app: &AppHandle, system_theme: tauri::Theme) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if app
+        .state::<TrayCoverState>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let preference = app
+        .state::<DesktopPreferencesState>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .tray_icon_theme;
+    let path = tray_icon_path(app, preference, system_theme)?;
+    let icon = decode_tray_icon(&fs::read(path).map_err(|error| error.to_string())?)?;
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        tray.set_icon(Some(icon))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn update_desktop_preferences(app: &AppHandle, payload: &serde_json::Value) -> Result<(), String> {
+    let preferences = parse_desktop_preferences(payload).map_err(|error| error.to_string())?;
+    *app.state::<DesktopPreferencesState>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())? = preferences;
+
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "linux")]
+        window
+            .set_decorations(!preferences.linux_enable_custom_titlebar)
+            .map_err(|error| error.to_string())?;
+        let system_theme = window.theme().map_err(|error| error.to_string())?;
+        update_tray_icon(app, system_theme)?;
+    }
+    Ok(())
+}
+
+fn hide_main_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.hide().map_err(|error| error.to_string())?;
+        render_tray_title(app)?;
+    }
+    Ok(())
+}
+
+fn show_main_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_minimized().map_err(|error| error.to_string())? {
+            window.unminimize().map_err(|error| error.to_string())?;
+        }
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        render_tray_title(app)?;
+    }
+    Ok(())
+}
+
+fn show_pending_startup_window(app: &AppHandle) -> Result<bool, String> {
+    let pending = &app.state::<StartupWindowState>().0;
+    if !claim_startup_show(pending) {
+        return Ok(false);
+    }
+    if let Err(error) = show_main_window(app) {
+        pending.store(true, Ordering::Release);
+        return Err(error);
+    }
+    Ok(true)
+}
+
+fn claim_startup_show(pending: &AtomicBool) -> bool {
+    pending.swap(false, Ordering::AcqRel)
+}
+
+fn schedule_startup_show_fallback(app: &AppHandle) {
+    let handle = app.clone();
+    thread::spawn(move || {
+        thread::sleep(STARTUP_SHOW_TIMEOUT);
+        match show_pending_startup_window(&handle) {
+            Ok(true) => eprintln!("[tauri] renderer readiness timed out; showing the window"),
+            Ok(false) => {}
+            Err(error) => eprintln!("[tauri] failed to show the startup window: {error}"),
+        }
+    });
+}
+
+fn resolve_close_choice(app: &AppHandle, payload: serde_json::Value) -> Result<(), String> {
+    if !app
+        .state::<ClosePromptState>()
+        .0
+        .swap(false, Ordering::AcqRel)
+    {
+        return Err("no close choice is pending".to_string());
+    }
+    let choice = parse_close_choice(payload).map_err(|error| error.to_string())?;
+    if choice.remember {
+        let option = match choice.action {
+            CloseChoiceAction::Exit => CloseAppOption::Exit,
+            CloseChoiceAction::MinimizeToTray => CloseAppOption::MinimizeToTray,
+        };
+        app.state::<DesktopPreferencesState>()
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .close_app_option = option;
+        let value = match option {
+            CloseAppOption::Exit => "exit",
+            CloseAppOption::MinimizeToTray => "minimizeToTray",
+            CloseAppOption::Ask => unreachable!(),
+        };
+        if let Err(error) = app.emit("desktop://rememberCloseAppOption", value) {
+            eprintln!("[tauri] failed to persist the close choice in the renderer: {error}");
+        }
+    }
+
+    match choice.action {
+        CloseChoiceAction::Exit => app.exit(0),
+        CloseChoiceAction::MinimizeToTray => hide_main_window(app)?,
+    }
+    Ok(())
+}
+
 fn emit_desktop_event(app: &AppHandle, event: &str) {
     let _ = app.emit(&format!("desktop://{event}"), ());
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppMenuAction {
+    Emit(&'static str),
+    Navigate(&'static str),
+    Hide,
+    OpenUrl(&'static str),
+    DeleteSelection,
+    StartSpeaking,
+    StopSpeaking,
+    Reload,
+    ToggleFullscreen,
+    ToggleDevtools,
+}
+
+fn app_menu_action(id: &str) -> Option<AppMenuAction> {
+    match id.strip_prefix("app.")? {
+        "preferences" => Some(AppMenuAction::Navigate("/settings")),
+        "search" => Some(AppMenuAction::Emit("search")),
+        "play" => Some(AppMenuAction::Emit("play")),
+        "next" => Some(AppMenuAction::Emit("next")),
+        "previous" => Some(AppMenuAction::Emit("previous")),
+        "increaseVolume" => Some(AppMenuAction::Emit("increaseVolume")),
+        "decreaseVolume" => Some(AppMenuAction::Emit("decreaseVolume")),
+        "like" => Some(AppMenuAction::Emit("like")),
+        "repeat" => Some(AppMenuAction::Emit("repeat")),
+        "shuffle" => Some(AppMenuAction::Emit("shuffle")),
+        "minimizeToTray" => Some(AppMenuAction::Hide),
+        "github" => Some(AppMenuAction::OpenUrl(
+            "https://github.com/nagi-studio/YesPlayMusic",
+        )),
+        "tauri" => Some(AppMenuAction::OpenUrl("https://tauri.app")),
+        "delete" => Some(AppMenuAction::DeleteSelection),
+        "startSpeaking" => Some(AppMenuAction::StartSpeaking),
+        "stopSpeaking" => Some(AppMenuAction::StopSpeaking),
+        "reload" | "forceReload" => Some(AppMenuAction::Reload),
+        "toggleFullscreen" => Some(AppMenuAction::ToggleFullscreen),
+        "toggleDevtools" => Some(AppMenuAction::ToggleDevtools),
+        _ => None,
+    }
+}
+
+fn handle_app_menu_event(app: &AppHandle, id: &str) {
+    let Some(action) = app_menu_action(id) else {
+        return;
+    };
+    match action {
+        AppMenuAction::Emit(event) => emit_desktop_event(app, event),
+        AppMenuAction::Navigate(path) => {
+            let _ = app.emit("desktop://changeRouteTo", path);
+        }
+        AppMenuAction::Hide => {
+            if let Err(error) = hide_main_window(app) {
+                eprintln!("[tauri] failed to hide the main window: {error}");
+            }
+        }
+        AppMenuAction::OpenUrl(url) => {
+            if let Err(error) = app.opener().open_url(url, None::<&str>) {
+                eprintln!("[tauri] failed to open menu URL: {error}");
+            }
+        }
+        AppMenuAction::DeleteSelection => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.eval("document.execCommand('delete');");
+            }
+        }
+        AppMenuAction::StartSpeaking => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.eval(
+                    "(() => { const text = String(window.getSelection?.() ?? '').trim(); if (text) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } })();",
+                );
+            }
+        }
+        AppMenuAction::StopSpeaking => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.eval("speechSynthesis.cancel();");
+            }
+        }
+        AppMenuAction::Reload => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.reload();
+            }
+        }
+        AppMenuAction::ToggleFullscreen => {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(fullscreen) = window.is_fullscreen() {
+                    let _ = window.set_fullscreen(!fullscreen);
+                }
+            }
+        }
+        AppMenuAction::ToggleDevtools =>
+        {
+            #[cfg(debug_assertions)]
+            if let Some(window) = app.get_webview_window("main") {
+                if window.is_devtools_open() {
+                    window.close_devtools();
+                } else {
+                    window.open_devtools();
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn handle_linux_media_control(app: &AppHandle, control: MediaControl) {
+    match control {
+        MediaControl::Quit => app.exit(0),
+        MediaControl::Next => emit_desktop_event(app, "next"),
+        MediaControl::Previous => emit_desktop_event(app, "previous"),
+        MediaControl::Play => emit_desktop_event(app, "resume"),
+        MediaControl::Pause => emit_desktop_event(app, "pause"),
+        MediaControl::PlayPause => emit_desktop_event(app, "play"),
+        MediaControl::SeekBy(seconds) => {
+            let _ = app.emit("desktop://seekBy", seconds);
+        }
+        MediaControl::SeekTo(seconds) => {
+            let _ = app.emit("desktop://setPosition", seconds);
+        }
+        MediaControl::SetRepeat(mode) => {
+            let mode = match mode {
+                RepeatMode::Off => "off",
+                RepeatMode::Track => "one",
+                RepeatMode::Playlist => "on",
+            };
+            let _ = app.emit("desktop://setRepeat", mode);
+        }
+        MediaControl::SetShuffle(enabled) => {
+            let _ = app.emit("desktop://setShuffle", enabled);
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -262,7 +882,7 @@ fn set_window_button_visibility(_window: WebviewWindow, _visible: bool) -> Resul
     Ok(())
 }
 
-fn normalize_electron_shortcut(shortcut: &str) -> String {
+fn normalize_global_shortcut(shortcut: &str) -> String {
     shortcut
         .split('+')
         .map(|part| match part {
@@ -318,13 +938,13 @@ fn register_global_shortcuts(app: &AppHandle) -> Result<(), String> {
         else {
             continue;
         };
-        let Ok(shortcut) = normalize_electron_shortcut(accelerator).parse::<Shortcut>() else {
+        let Ok(shortcut) = normalize_global_shortcut(accelerator).parse::<Shortcut>() else {
             eprintln!("[tauri] 忽略无法解析的快捷键：{accelerator}");
             continue;
         };
         let shortcut_id = shortcut.id();
         if let Err(error) = app.global_shortcut().register(shortcut) {
-            // 单个组合被系统或其他应用占用时，其余快捷键仍应可用。
+            // One unavailable shortcut must not block the remaining bindings.
             eprintln!("[tauri] 无法注册快捷键 {accelerator}: {error}");
             continue;
         }
@@ -384,35 +1004,23 @@ fn update_shortcut_settings(
 fn parse_legacy_settings(config: &str) -> Result<Option<serde_json::Value>, String> {
     let value: serde_json::Value =
         serde_json::from_str(config).map_err(|error| error.to_string())?;
-    Ok(value.get("settings").cloned())
+    let root = value
+        .as_object()
+        .ok_or_else(|| "旧版配置根节点必须是对象".to_string())?;
+    match root.get("settings") {
+        None => Ok(None),
+        Some(settings) if settings.is_object() => Ok(Some(settings.clone())),
+        Some(_) => Err("旧版 settings 必须是对象".to_string()),
+    }
 }
 
 #[tauri::command]
 fn read_legacy_settings(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = app;
+    let Some(bytes) = read_legacy_electron_config(&app)? else {
         return Ok(None);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let config_path = app
-            .path()
-            .home_dir()
-            .map_err(|error| error.to_string())?
-            .join("Library/Application Support/yesplaymusic/config.json");
-        let metadata = match fs::metadata(&config_path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        if metadata.len() > 1_048_576 {
-            return Err("旧版设置文件异常大，已拒绝读取".to_string());
-        }
-        let config = fs::read_to_string(config_path).map_err(|error| error.to_string())?;
-        parse_legacy_settings(&config)
-    }
+    };
+    let config = String::from_utf8(bytes).map_err(|error| error.to_string())?;
+    parse_legacy_settings(&config)
 }
 
 #[tauri::command]
@@ -426,7 +1034,67 @@ fn desktop_event(
         | "switchGlobalShortcutStatusTemporary"
         | "updateShortcut"
         | "restoreDefaultShortcuts" => {
+            if channel == "settings" {
+                let enabled = payload
+                    .get("enableDiscordRichPresence")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                app.state::<DiscordPresenceHandle>().configure(enabled)?;
+                update_desktop_preferences(&app, &payload)?;
+            }
             update_shortcut_settings(&app, &channel, payload)?;
+        }
+        "discordPresence" => {
+            let presence: DiscordPresencePayload =
+                serde_json::from_value(payload).map_err(|error| error.to_string())?;
+            app.state::<DiscordPresenceHandle>().update(presence)?;
+        }
+        "mediaState" => {
+            let tray_state =
+                parse_player_state_from_media_state(&payload).map_err(|error| error.to_string())?;
+            update_tray_menu(&app, tray_state)?;
+
+            #[cfg(target_os = "macos")]
+            macos_media_controls::update_player_state(&app, payload)?;
+
+            #[cfg(target_os = "linux")]
+            {
+                let state: MediaState =
+                    serde_json::from_value(payload).map_err(|error| error.to_string())?;
+                if let Some(media) = &app.state::<LinuxMediaState>().0 {
+                    media.update_state(state);
+                }
+            }
+
+            #[cfg(target_os = "windows")]
+            let _ = payload;
+        }
+        "mediaMetadata" => {
+            #[cfg(target_os = "linux")]
+            {
+                let metadata: MediaMetadata =
+                    serde_json::from_value(payload).map_err(|error| error.to_string())?;
+                if let Some(media) = &app.state::<LinuxMediaState>().0 {
+                    media.set_metadata(metadata);
+                }
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            let _ = payload;
+        }
+        "mediaSeeked" => {
+            #[cfg(target_os = "linux")]
+            {
+                let seconds = payload
+                    .as_f64()
+                    .ok_or_else(|| "media seek position must be numeric".to_string())?;
+                if let Some(media) = &app.state::<LinuxMediaState>().0 {
+                    media.set_position(seconds, true);
+                }
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            let _ = payload;
         }
         "updateTrayTooltip" => {
             if let (Some(tray), Some(title)) = (app.tray_by_id("main-tray"), payload.as_str()) {
@@ -435,14 +1103,36 @@ fn desktop_event(
             }
         }
         "updateTrayNowPlaying" => {
-            if let Some(title) = payload.get("title").and_then(serde_json::Value::as_str) {
-                *app.state::<TrayTitleState>()
-                    .0
-                    .lock()
-                    .map_err(|_| "菜单栏标题状态锁已损坏".to_string())? = title.to_string();
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(title) = payload.get("title").and_then(serde_json::Value::as_str) {
+                    app.state::<TrayTitleState>()
+                        .0
+                        .lock()
+                        .map_err(|_| "菜单栏标题状态锁已损坏".to_string())?
+                        .title = title.to_string();
+                }
+                render_tray_title(&app)?;
+                update_tray_cover(&app, &payload);
             }
-            render_tray_title(&app)?;
-            update_tray_cover(&app, &payload);
+
+            #[cfg(not(target_os = "macos"))]
+            let _ = payload;
+        }
+        "setProxy" => {
+            save_webview_proxy(&app, payload).map_err(|error| error.to_string())?;
+        }
+        "removeProxy" => {
+            remove_webview_proxy(&app, &payload).map_err(|error| error.to_string())?;
+        }
+        "resolveCloseChoice" => resolve_close_choice(&app, payload)?,
+        "cancelCloseChoice" => {
+            if !payload.is_null() {
+                return Err("cancelCloseChoice payload must be null".to_string());
+            }
+            app.state::<ClosePromptState>()
+                .0
+                .store(false, Ordering::Release);
         }
         "setWindowButtonVisibility" => {
             let visible = payload
@@ -474,18 +1164,6 @@ fn desktop_event(
                 window.close().map_err(|error| error.to_string())?;
             }
         }
-        // 这些事件在 Electron 里由 MPRIS、Discord、代理或动态图标消费；
-        // Tauri 迁移期先明确接收为 no-op，避免 renderer 出现未处理拒绝。
-        "updateTrayPlayState"
-        | "updateTrayLikeState"
-        | "updateTrayIcon"
-        | "player"
-        | "setProxy"
-        | "removeProxy"
-        | "seeked"
-        | "playerCurrentTrackTime"
-        | "switchRepeatMode"
-        | "switchShuffle" => {}
         _ => return Err(format!("不允许的桌面事件：{channel}")),
     }
     Ok(())
@@ -496,15 +1174,176 @@ fn is_always_on_top(window: WebviewWindow) -> Result<bool, String> {
     window.is_always_on_top().map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn set_macos_fullscreen_workspace_visibility(
+    window: &WebviewWindow,
+    visible: bool,
+) -> Result<(), String> {
+    let window_on_main = window.clone();
+    window
+        .run_on_main_thread(move || match window_on_main.ns_window() {
+            Ok(pointer) => {
+                let ns_window = unsafe { &*(pointer.cast::<NSWindow>()) };
+                let flags = NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary;
+                let mut behavior = ns_window.collectionBehavior();
+                if visible {
+                    behavior |= flags;
+                } else {
+                    behavior &= !flags;
+                }
+                ns_window.setCollectionBehavior(behavior);
+            }
+            Err(error) => eprintln!("[tauri] failed to access the macOS window: {error}"),
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_macos_fullscreen_workspace_visibility(
+    _window: &WebviewWindow,
+    _visible: bool,
+) -> Result<(), String> {
+    Ok(())
+}
+
+fn apply_always_on_top(window: &WebviewWindow, enabled: bool) -> Result<(), String> {
+    window
+        .set_always_on_top(enabled)
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    window
+        .set_visible_on_all_workspaces(enabled)
+        .map_err(|error| error.to_string())?;
+    set_macos_fullscreen_workspace_visibility(window, enabled)
+}
+
 #[tauri::command]
 fn toggle_always_on_top(window: WebviewWindow) -> Result<bool, String> {
-    let next = !window
-        .is_always_on_top()
+    let state = window.app_handle().state::<WindowPreferencesState>();
+    let mut preferences = state
+        .preferences
+        .lock()
         .map_err(|error| error.to_string())?;
-    window
-        .set_always_on_top(next)
-        .map_err(|error| error.to_string())?;
+    let previous = preferences.always_on_top;
+    let next = !preferences.always_on_top;
+    apply_always_on_top(&window, next)?;
+    preferences.always_on_top = next;
+    if let Err(error) = save_window_preferences(window.app_handle(), &preferences) {
+        preferences.always_on_top = previous;
+        let _ = apply_always_on_top(&window, previous);
+        return Err(error);
+    }
     Ok(next)
+}
+
+fn load_initial_window_preferences(app: &AppHandle) -> WindowPreferences {
+    match load_window_preferences(app) {
+        Ok(Some(preferences)) => preferences,
+        Ok(None) => {
+            let legacy = match load_legacy_position(app) {
+                Ok(position) => position,
+                Err(error) => {
+                    eprintln!("[tauri] ignored an invalid legacy window position: {error}");
+                    None
+                }
+            };
+            with_legacy_fallback(None, legacy)
+        }
+        Err(error) => {
+            eprintln!("[tauri] ignored an invalid window preference: {error}");
+            WindowPreferences::default()
+        }
+    }
+}
+
+fn persist_window_position(app: &AppHandle, position: WindowPosition) -> Result<(), String> {
+    let state = app.state::<WindowPreferencesState>();
+    let mut preferences = state
+        .preferences
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if preferences.position == Some(position) {
+        return Ok(());
+    }
+    let previous = preferences.position;
+    preferences.position = Some(position);
+    if let Err(error) = save_window_preferences(app, &preferences) {
+        preferences.position = previous;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn persist_current_window_position(app: &AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    if window.is_minimized().map_err(|error| error.to_string())?
+        || window.is_maximized().map_err(|error| error.to_string())?
+        || window.is_fullscreen().map_err(|error| error.to_string())?
+    {
+        return Ok(());
+    }
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    persist_window_position(
+        app,
+        WindowPosition {
+            x: position.x,
+            y: position.y,
+        },
+    )
+}
+
+fn schedule_window_position_save(app: &AppHandle, position: WindowPosition) {
+    let state = app.state::<WindowPreferencesState>();
+    let mut movement = match state.movement.lock() {
+        Ok(movement) => movement,
+        Err(error) => {
+            eprintln!("[tauri] failed to queue the window position: {error}");
+            return;
+        }
+    };
+    movement.position = Some(position);
+    movement.generation = movement.generation.wrapping_add(1);
+    if movement.worker_running {
+        return;
+    }
+    movement.worker_running = true;
+    drop(movement);
+
+    let handle = app.clone();
+    thread::spawn(move || loop {
+        let generation = match handle.state::<WindowPreferencesState>().movement.lock() {
+            Ok(movement) => movement.generation,
+            Err(error) => {
+                eprintln!("[tauri] failed to inspect the window position queue: {error}");
+                return;
+            }
+        };
+        thread::sleep(WINDOW_MOVE_SETTLE_TIME);
+        let position = {
+            let state = handle.state::<WindowPreferencesState>();
+            let mut movement = match state.movement.lock() {
+                Ok(movement) => movement,
+                Err(error) => {
+                    eprintln!("[tauri] failed to inspect the window position queue: {error}");
+                    return;
+                }
+            };
+            if movement.generation != generation {
+                continue;
+            }
+            movement.worker_running = false;
+            movement.position.take()
+        };
+        if let Some(position) = position {
+            if let Err(error) = persist_window_position(&handle, position) {
+                eprintln!("[tauri] failed to persist the window position: {error}");
+            }
+        }
+        return;
+    });
 }
 
 fn window_frame_has_reachable_area(
@@ -515,7 +1354,7 @@ fn window_frame_has_reachable_area(
     if window_width == 0 || window_height == 0 {
         return false;
     }
-    // 48px 的边角虽然数学上仍在屏幕内，实际很难发现和拖回；播放条至少保留一段可识别区域。
+    // Keep enough of the player visible to discover and drag it back onscreen.
     let minimum_width = i64::from(window_width.min(160));
     let minimum_height = i64::from(window_height.min(80));
     monitors.iter().any(|&(x, y, width, height)| {
@@ -557,6 +1396,14 @@ fn ensure_main_window_reachable(window: &WebviewWindow) -> Result<(), String> {
         window.center().map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn renderer_ready(window: WebviewWindow) -> Result<bool, String> {
+    if window.label() != "main" {
+        return Err("renderer_ready is restricted to the main window".to_string());
+    }
+    show_pending_startup_window(window.app_handle())
 }
 
 #[tauri::command]
@@ -604,16 +1451,35 @@ fn restore_compact_window(
 }
 
 fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let play = MenuItem::with_id(app, "play", "播放/暂停", true, None::<&str>)?;
+    let player_state = app
+        .state::<TrayMenuState>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .player_state;
+    let text = tray_menu_text(player_state);
+    let play = MenuItem::with_id(app, "play", text.playback, true, None::<&str>)?;
     let previous = MenuItem::with_id(app, "previous", "上一首", true, None::<&str>)?;
     let next = MenuItem::with_id(app, "next", "下一首", true, None::<&str>)?;
-    let like = MenuItem::with_id(app, "like", "喜欢/取消喜欢", true, None::<&str>)?;
+    let like = MenuItem::with_id(app, "like", text.like, true, None::<&str>)?;
     let repeat = MenuItem::with_id(app, "repeat", "切换循环", true, None::<&str>)?;
     let shuffle = MenuItem::with_id(app, "shuffle", "切换随机播放", true, None::<&str>)?;
+    #[cfg(target_os = "linux")]
+    let show_main = MenuItem::with_id(app, "show-main", "显示主面板", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&play, &previous, &next, &like, &repeat, &shuffle, &quit],
+        &[
+            #[cfg(target_os = "linux")]
+            &show_main,
+            &play,
+            &previous,
+            &next,
+            &like,
+            &repeat,
+            &shuffle,
+            &quit,
+        ],
     )?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
@@ -622,6 +1488,11 @@ fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("YesPlayMusic")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quit" => app.exit(0),
+            "show-main" => {
+                if let Err(error) = show_main_window(app) {
+                    eprintln!("[tauri] failed to show the main window: {error}");
+                }
+            }
             "play" | "previous" | "next" | "like" | "repeat" | "shuffle" => {
                 emit_desktop_event(app, event.id.as_ref());
             }
@@ -636,12 +1507,13 @@ fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             {
                 let app = tray.app_handle();
                 if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false)
+                    if cfg!(target_os = "macos")
+                        && window.is_visible().unwrap_or(false)
+                        && window.is_focused().unwrap_or(false)
                     {
                         let _ = window.hide();
                     } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                        let _ = show_main_window(app);
                     }
                     let _ = render_tray_title(app);
                 }
@@ -651,6 +1523,18 @@ fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.icon(icon.clone());
     }
     builder.build(app)?;
+    {
+        let state = app.state::<TrayMenuState>();
+        let mut registration = state.0.lock().map_err(|error| error.to_string())?;
+        registration.play = Some(play);
+        registration.like = Some(like);
+    }
+    let system_theme = app
+        .get_webview_window("main")
+        .map(|window| window.theme())
+        .transpose()?
+        .unwrap_or(tauri::Theme::Light);
+    update_tray_icon(app.handle(), system_theme)?;
     Ok(())
 }
 
@@ -729,12 +1613,8 @@ fn wait_for_sidecar(port: u16, expected_token: &str, timeout: Duration) -> Resul
 
 fn generate_sidecar_health_token() -> Result<String, Box<dyn std::error::Error>> {
     let mut bytes = [0_u8; 32];
-    getrandom::getrandom(&mut bytes).map_err(|error| {
-        std::io::Error::new(
-            ErrorKind::Other,
-            format!("无法生成 Sidecar 健康令牌：{error}"),
-        )
-    })?;
+    getrandom::getrandom(&mut bytes)
+        .map_err(|error| std::io::Error::other(format!("无法生成 Sidecar 健康令牌：{error}")))?;
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut token = String::with_capacity(64);
     for byte in bytes {
@@ -747,34 +1627,54 @@ fn generate_sidecar_health_token() -> Result<String, Box<dyn std::error::Error>>
 fn start_sidecar(
     app: &tauri::App,
     health_token: &str,
+    upstream_proxy: Option<&tauri::Url>,
 ) -> Result<CommandChild, Box<dyn std::error::Error>> {
     #[cfg(debug_assertions)]
-    let command = app
-        .shell()
-        .command("bun")
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args([
-            "../src/sidecar.js",
-            "--api-only",
-            "--api-port",
-            &API_PORT.to_string(),
-        ]);
+    let command = {
+        let mut args = vec![
+            "../src/sidecar.ts".to_string(),
+            "--api-only".to_string(),
+            "--api-port".to_string(),
+            API_PORT.to_string(),
+        ];
+        if let Some(proxy) = upstream_proxy {
+            args.extend([
+                "--upstream-proxy".to_string(),
+                proxy.to_string(),
+                "--proxy-relay-port".to_string(),
+                WEBVIEW_PROXY_RELAY_PORT.to_string(),
+            ]);
+        }
+        app.shell()
+            .command("bun")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args(args)
+    };
 
     #[cfg(not(debug_assertions))]
     let command = {
         let renderer_dir = app.path().resource_dir()?.join("renderer");
-        app.shell().sidecar("yesplaymusic-sidecar")?.args([
+        let mut args = vec![
             "--api-port".to_string(),
             API_PORT.to_string(),
             "--web-port".to_string(),
             RELEASE_WEB_PORT.to_string(),
             "--renderer-dir".to_string(),
             renderer_dir.to_string_lossy().into_owned(),
-        ])
+        ];
+        if let Some(proxy) = upstream_proxy {
+            args.extend([
+                "--upstream-proxy".to_string(),
+                proxy.to_string(),
+                "--proxy-relay-port".to_string(),
+                WEBVIEW_PROXY_RELAY_PORT.to_string(),
+            ]);
+        }
+        app.shell().sidecar("yesplaymusic-sidecar")?.args(args)
     };
 
     let (mut events, mut child) = command.spawn()?;
-    // 匿名 stdin 管道不会像参数或环境变量那样出现在进程列表里。
+    // An anonymous stdin pipe keeps the token out of process listings.
     if let Err(error) = child.write(format!("{health_token}\n").as_bytes()) {
         let _ = child.kill();
         return Err(error.into());
@@ -801,7 +1701,7 @@ fn start_sidecar(
 
 fn create_main_window(
     app: &tauri::App,
-    show_after_creation: bool,
+    proxy_relay_enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let port = if cfg!(debug_assertions) {
         DEV_WEB_PORT
@@ -809,11 +1709,15 @@ fn create_main_window(
         RELEASE_WEB_PORT
     };
     let url = format!("http://127.0.0.1:{port}").parse()?;
-    let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
         .title("YesPlayMusic")
         .inner_size(1_440.0, 840.0)
         .min_inner_size(300.0, 48.0)
         .visible(false);
+    if proxy_relay_enabled {
+        let proxy = format!("http://127.0.0.1:{WEBVIEW_PROXY_RELAY_PORT}").parse()?;
+        builder = builder.proxy_url(proxy);
+    }
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -827,32 +1731,98 @@ fn create_main_window(
             }
         })
         .build()?;
+    let preferences = app
+        .state::<WindowPreferencesState>()
+        .preferences
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    if let Some(position) = preferences.position {
+        window.set_position(PhysicalPosition::new(position.x, position.y))?;
+    }
     ensure_main_window_reachable(&window)?;
+    persist_current_window_position(app.handle())?;
+    apply_always_on_top(&window, preferences.always_on_top)?;
 
-    let window_for_close = window.clone();
+    let window_for_events = window.clone();
     window.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            let _ = window_for_close.hide();
-            let _ = render_tray_title(window_for_close.app_handle());
+        let app = window_for_events.app_handle();
+        match event {
+            WindowEvent::Moved(position) => {
+                let normal = !window_for_events.is_minimized().unwrap_or(true)
+                    && !window_for_events.is_maximized().unwrap_or(true)
+                    && !window_for_events.is_fullscreen().unwrap_or(true);
+                if normal {
+                    schedule_window_position_save(
+                        app,
+                        WindowPosition {
+                            x: position.x,
+                            y: position.y,
+                        },
+                    );
+                }
+            }
+            WindowEvent::CloseRequested { api, .. } => {
+                let option = app
+                    .state::<DesktopPreferencesState>()
+                    .0
+                    .lock()
+                    .map(|preferences| preferences.close_app_option)
+                    .unwrap_or(CloseAppOption::MinimizeToTray);
+                match close_decision(cfg!(target_os = "macos"), option) {
+                    CloseDecision::Exit => app.exit(0),
+                    CloseDecision::Hide | CloseDecision::MinimizeToTray => {
+                        api.prevent_close();
+                        if let Err(error) = hide_main_window(app) {
+                            eprintln!("[tauri] failed to hide the main window: {error}");
+                        }
+                    }
+                    CloseDecision::Ask => {
+                        api.prevent_close();
+                        app.state::<ClosePromptState>()
+                            .0
+                            .store(true, Ordering::Release);
+                        if let Err(error) = app.emit("desktop://requestCloseChoice", ()) {
+                            app.state::<ClosePromptState>()
+                                .0
+                                .store(false, Ordering::Release);
+                            eprintln!("[tauri] failed to request a close choice: {error}");
+                        }
+                    }
+                }
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                let is_auto = app
+                    .state::<DesktopPreferencesState>()
+                    .0
+                    .lock()
+                    .map(|preferences| preferences.tray_icon_theme == TrayIconTheme::Auto)
+                    .unwrap_or(false);
+                if is_auto {
+                    if let Err(error) = update_tray_icon(app, *theme) {
+                        eprintln!("[tauri] failed to update the tray theme: {error}");
+                    }
+                }
+            }
+            _ => {}
         }
     });
-
-    if show_after_creation {
-        window.show()?;
-    }
     Ok(())
 }
 
 fn main() {
+    let mut updater = tauri_plugin_updater::Builder::new().target(updater_target());
+    if let Some(public_key) = updater_public_key() {
+        updater = updater.pubkey(public_key);
+    }
+
     let app = tauri::Builder::default()
         .menu(create_app_menu)
-        // 单实例必须最先注册，避免第二个实例先启动 sidecar 抢占端口。
+        .on_menu_event(|app, event| handle_app_menu_event(app, event.id().as_ref()))
+        // Register single-instance handling before a second process can bind sidecar ports.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = render_tray_title(app);
+            if let Err(error) = show_main_window(app) {
+                eprintln!("[tauri] failed to restore the main window: {error}");
             }
         }))
         .plugin(
@@ -873,8 +1843,7 @@ fn main() {
                                 if window.is_visible().unwrap_or(false) {
                                     let _ = window.hide();
                                 } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                                    let _ = show_main_window(app);
                                 }
                                 let _ = render_tray_title(app);
                             }
@@ -887,21 +1856,55 @@ fn main() {
         )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        // 插件按物理像素保存尺寸，混合 Retina/普通屏时会把 1060×720 当成 2120×1440 恢复。
-        // 双档逻辑尺寸由渲染进程接管；这里只保留插件的退出写盘，跳过有歧义的启动恢复。
+        .plugin(tauri_plugin_process::init())
+        .plugin(updater.build())
+        // Skip ambiguous physical-pixel restore across mixed-DPI displays.
+        // The renderer restores logical size while the plugin still persists on exit.
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .skip_initial_state("main")
                 .build(),
         )
         .setup(|app| {
+            let window_preferences = load_initial_window_preferences(app.handle());
+            app.manage(WindowPreferencesState {
+                preferences: Mutex::new(window_preferences),
+                movement: Mutex::new(PendingWindowMovement::default()),
+            });
+            app.manage(StartupWindowState(AtomicBool::new(false)));
             app.manage(GlobalShortcutRegistrationState(Mutex::new(
                 GlobalShortcutRegistration::default(),
             )));
+            app.manage(DesktopPreferencesState(Mutex::new(
+                DesktopPreferences::default(),
+            )));
+            app.manage(ClosePromptState(AtomicBool::new(false)));
+            app.manage(TrayMenuState(Mutex::new(TrayMenuRegistration::default())));
             app.manage(TrayCoverState::default());
             app.manage(TrayTitleState::default());
+            app.manage(DiscordPresenceHandle::default());
+            #[cfg(target_os = "linux")]
+            {
+                let handle = app.handle().clone();
+                let media =
+                    LinuxMedia::start(move |control| handle_linux_media_control(&handle, control))
+                        .map_err(|error| {
+                            eprintln!("[tauri] Linux media integration unavailable: {error}");
+                            error
+                        })
+                        .ok();
+                app.manage(LinuxMediaState(media));
+            }
+            let upstream_proxy = match load_webview_proxy(app.handle()) {
+                Ok(proxy) => proxy,
+                Err(error) => {
+                    eprintln!("[tauri] ignored an invalid saved proxy: {error}");
+                    None
+                }
+            };
+            let proxy_relay_enabled = upstream_proxy.is_some();
             let health_token = generate_sidecar_health_token()?;
-            let child = start_sidecar(app, &health_token)?;
+            let child = start_sidecar(app, &health_token, upstream_proxy.as_ref())?;
             app.manage(SidecarState(Mutex::new(Some(child))));
 
             let ready_port = if cfg!(debug_assertions) {
@@ -918,7 +1921,7 @@ fn main() {
             let core_smoke_test = is_smoke_test(env::args());
             let webview_smoke_test = is_webview_smoke_test(env::args());
             if core_smoke_test || webview_smoke_test {
-                // 隐藏验收不进入 Dock、不抢焦点；正式启动仍保持普通音乐应用行为。
+                // Hidden smoke checks avoid the Dock and focus without affecting normal launches.
                 #[cfg(target_os = "macos")]
                 let _ = app
                     .handle()
@@ -926,22 +1929,28 @@ fn main() {
             }
 
             if core_smoke_test {
-                // CI/性能验收只验证后台核心，不创建窗口，也不会抢用户焦点。
+                // Headless checks validate the backend without creating or focusing a window.
                 let handle = app.handle().clone();
                 thread::spawn(move || {
                     thread::sleep(Duration::from_secs(12));
                     handle.exit(0);
                 });
             } else if webview_smoke_test {
-                create_main_window(app, false)?;
+                create_main_window(app, proxy_relay_enabled)?;
                 let handle = app.handle().clone();
                 thread::spawn(move || {
                     thread::sleep(Duration::from_secs(25));
                     handle.exit(0);
                 });
             } else {
-                create_main_window(app, true)?;
                 create_tray(app)?;
+                app.state::<StartupWindowState>()
+                    .0
+                    .store(true, Ordering::Release);
+                create_main_window(app, proxy_relay_enabled)?;
+                schedule_startup_show_fallback(app.handle());
+                #[cfg(target_os = "macos")]
+                macos_media_controls::install(app.handle()).map_err(std::io::Error::other)?;
             }
             Ok(())
         })
@@ -949,14 +1958,26 @@ fn main() {
             desktop_event,
             is_always_on_top,
             toggle_always_on_top,
+            renderer_ready,
             restore_compact_window,
-            read_legacy_settings
+            read_legacy_settings,
+            updater_configured
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application");
 
     app.run(|app, event| match event {
         RunEvent::Exit => {
+            if let Err(error) = persist_current_window_position(app) {
+                eprintln!("[tauri] failed to flush the window position: {error}");
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(media) = app
+                .try_state::<LinuxMediaState>()
+                .and_then(|state| state.0.clone())
+            {
+                media.shutdown();
+            }
             if let Some(state) = app.try_state::<SidecarState>() {
                 if let Some(child) = state.0.lock().ok().and_then(|mut guard| guard.take()) {
                     let _ = child.kill();
@@ -965,10 +1986,14 @@ fn main() {
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = render_tray_title(app);
+            if let Err(error) = show_main_window(app) {
+                eprintln!("[tauri] failed to reopen the main window: {error}");
+            }
+        }
+        #[cfg(target_os = "macos")]
+        RunEvent::MainEventsCleared => {
+            if let Err(error) = render_tray_title(app) {
+                eprintln!("[tauri] failed to refresh the tray title: {error}");
             }
         }
         _ => {}
@@ -978,10 +2003,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        app_about_metadata, decode_tray_cover, is_smoke_test, is_webview_smoke_test,
-        normalize_electron_shortcut, parse_legacy_settings, response_has_sidecar_identity,
-        tray_cover_url, tray_title_for_visibility, window_frame_has_reachable_area,
+        app_about_metadata, app_menu_action, claim_startup_show, decode_tray_cover, is_smoke_test,
+        is_webview_smoke_test, normalize_global_shortcut, parse_legacy_settings,
+        response_has_sidecar_identity, tray_cover_url, tray_title_for_visibility,
+        window_frame_has_reachable_area, AppMenuAction,
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tauri_plugin_global_shortcut::Shortcut;
 
     #[test]
@@ -1003,6 +2030,15 @@ mod tests {
     }
 
     #[test]
+    fn startup_window_is_claimed_exactly_once() {
+        let pending = AtomicBool::new(false);
+        assert!(!claim_startup_show(&pending));
+        pending.store(true, Ordering::Release);
+        assert!(claim_startup_show(&pending));
+        assert!(!claim_startup_show(&pending));
+    }
+
+    #[test]
     fn app_about_identifies_the_tauri_rebuild() {
         let version = env!("CARGO_PKG_VERSION");
         let metadata = app_about_metadata(version);
@@ -1018,6 +2054,38 @@ mod tests {
             metadata.copyright.as_deref(),
             Some("基于 qier222/YesPlayMusic 的开源工作重构")
         );
+    }
+
+    #[test]
+    fn application_menu_routes_every_custom_action() {
+        for (id, action) in [
+            ("app.preferences", AppMenuAction::Navigate("/settings")),
+            ("app.search", AppMenuAction::Emit("search")),
+            ("app.play", AppMenuAction::Emit("play")),
+            ("app.next", AppMenuAction::Emit("next")),
+            ("app.previous", AppMenuAction::Emit("previous")),
+            ("app.increaseVolume", AppMenuAction::Emit("increaseVolume")),
+            ("app.decreaseVolume", AppMenuAction::Emit("decreaseVolume")),
+            ("app.like", AppMenuAction::Emit("like")),
+            ("app.repeat", AppMenuAction::Emit("repeat")),
+            ("app.shuffle", AppMenuAction::Emit("shuffle")),
+            ("app.minimizeToTray", AppMenuAction::Hide),
+            (
+                "app.github",
+                AppMenuAction::OpenUrl("https://github.com/nagi-studio/YesPlayMusic"),
+            ),
+            ("app.tauri", AppMenuAction::OpenUrl("https://tauri.app")),
+            ("app.delete", AppMenuAction::DeleteSelection),
+            ("app.startSpeaking", AppMenuAction::StartSpeaking),
+            ("app.stopSpeaking", AppMenuAction::StopSpeaking),
+            ("app.reload", AppMenuAction::Reload),
+            ("app.forceReload", AppMenuAction::Reload),
+            ("app.toggleFullscreen", AppMenuAction::ToggleFullscreen),
+            ("app.toggleDevtools", AppMenuAction::ToggleDevtools),
+        ] {
+            assert_eq!(app_menu_action(id), Some(action), "unmapped menu ID: {id}");
+        }
+        assert_eq!(app_menu_action("unexpected"), None);
     }
 
     #[test]
@@ -1063,7 +2131,7 @@ mod tests {
     }
 
     #[test]
-    fn electron_default_shortcuts_can_be_parsed_by_tauri() {
+    fn default_shortcuts_can_be_parsed_by_tauri() {
         for accelerator in [
             "Alt+CommandOrControl+P",
             "Alt+CommandOrControl+Right",
@@ -1073,7 +2141,7 @@ mod tests {
             "Alt+CommandOrControl+L",
             "Alt+CommandOrControl+M",
         ] {
-            let normalized = normalize_electron_shortcut(accelerator);
+            let normalized = normalize_global_shortcut(accelerator);
             assert!(
                 normalized.parse::<Shortcut>().is_ok(),
                 "Tauri 无法解析 {accelerator}（转换后为 {normalized}）"
@@ -1089,6 +2157,13 @@ mod tests {
                 .unwrap();
         assert_eq!(settings["lang"], "zh-CN");
         assert!(settings.get("window").is_none());
+    }
+
+    #[test]
+    fn legacy_config_rejects_non_object_schemas() {
+        assert!(parse_legacy_settings("[]").is_err());
+        assert!(parse_legacy_settings(r#"{"settings":[]}"#).is_err());
+        assert!(parse_legacy_settings(r#"{"settings":null}"#).is_err());
     }
 
     #[test]
@@ -1109,6 +2184,14 @@ mod tests {
     fn tray_title_only_appears_while_player_window_is_hidden() {
         assert_eq!(tray_title_for_visibility(" 正在播放 ", true), "");
         assert_eq!(tray_title_for_visibility(" 正在播放 ", false), "正在播放");
+        assert_eq!(
+            tray_title_for_visibility(&"a".repeat(45), false),
+            format!("{}…", "a".repeat(44))
+        );
+        assert_eq!(
+            tray_title_for_visibility(&"歌".repeat(23), false),
+            format!("{}…", "歌".repeat(22))
+        );
     }
 
     #[test]

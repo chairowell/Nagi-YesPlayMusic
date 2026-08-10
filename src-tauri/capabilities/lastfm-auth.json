@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "lastfm-auth",
+  "description": "Allow the fixed Last.fm callback window to return its session",
+  "windows": ["lastfm-auth"],
+  "remote": {
+    "urls": ["http://127.0.0.1:1420/*", "http://127.0.0.1:28232/*"]
+  },
+  "permissions": ["core:event:allow-emit-to", "core:window:allow-close"]
+}

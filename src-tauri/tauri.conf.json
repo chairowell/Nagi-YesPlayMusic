@@ -17,8 +17,20 @@
       "capabilities": ["default"]
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/nagi-studio/YesPlayMusic/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": ["app"],
     "category": "Music",
     "externalBin": ["binaries/yesplaymusic-sidecar"],

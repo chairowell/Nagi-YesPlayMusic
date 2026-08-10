@@ -12,6 +12,7 @@ const executable = path.join(
   'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app/Contents/MacOS/yesplaymusic-tauri'
 );
 const baseUrl = 'http://127.0.0.1:28232';
+const legacyPlayerUrl = 'http://127.0.0.1:27232/player';
 const sleep = milliseconds =>
   new Promise(resolve => setTimeout(resolve, milliseconds));
 const includeWebview = !process.argv.includes('--core-only');
@@ -49,23 +50,23 @@ async function waitForReady(timeoutMs = 8_000) {
       const response = await fetch(`${baseUrl}/api/login/status`);
       if (response.ok) return response.json();
     } catch (_) {
-      // sidecar 会先加载 1,077 个模块，ready 前的连接失败属于预期状态。
+      // Connection failures are expected while the sidecar loads its modules.
     }
     await sleep(100);
   }
   throw new Error('Tauri sidecar 未在 8 秒内进入 ready');
 }
 
-async function assertStopped() {
+async function assertUrlStopped(url, label) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
-      await fetch(baseUrl);
+      await fetch(url);
     } catch (_) {
       return;
     }
     await sleep(100);
   }
-  throw new Error('Tauri 退出后 28232 端口仍可访问');
+  throw new Error(`Tauri 退出后 ${label} 仍可访问`);
 }
 
 async function main() {
@@ -76,10 +77,7 @@ async function main() {
     resolveWebviewReady = resolve;
   });
   const tauriProcess = Bun.spawn(
-    [
-      executable,
-      includeWebview ? '--webview-smoke-test' : '--smoke-test',
-    ],
+    [executable, includeWebview ? '--webview-smoke-test' : '--smoke-test'],
     {
       cwd: projectRoot,
       stdout: 'pipe',
@@ -101,11 +99,26 @@ async function main() {
 
   const loginStatus = await waitForReady();
   const home = await fetch(baseUrl).then(response => response.text());
+  const [playerInfo, playerInfoAlias] = await Promise.all([
+    fetch(legacyPlayerUrl).then(response => response.json()),
+    fetch(`${baseUrl}/player`).then(response => response.json()),
+  ]);
   if (!home.includes('<div id="app"></div>')) {
     throw new Error('Tauri 首页没有返回 Vue 挂载点');
   }
   if (loginStatus?.data?.code !== 200) {
     throw new Error('Tauri 同源 API 没有返回 200');
+  }
+  if (
+    typeof playerInfo !== 'object' ||
+    playerInfo === null ||
+    typeof playerInfo.progress !== 'number' ||
+    !('currentTrack' in playerInfo)
+  ) {
+    throw new Error('Tauri 本地播放器状态 API 返回无效');
+  }
+  if (JSON.stringify(playerInfoAlias) !== JSON.stringify(playerInfo)) {
+    throw new Error('28232 /player 别名与 27232 兼容 API 不一致');
   }
 
   let webkitPids = [];
@@ -143,10 +156,11 @@ async function main() {
   if (webkitPids.length) {
     metricsArgs.push('--include-pids', webkitPids.join(','));
   }
-  const metricsProcess = Bun.spawn(
-    metricsArgs,
-    { cwd: projectRoot, stdout: 'pipe', stderr: 'pipe' }
-  );
+  const metricsProcess = Bun.spawn(metricsArgs, {
+    cwd: projectRoot,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
   const [metricsOutput, metricsError, metricsExitCode] = await Promise.all([
     new Response(metricsProcess.stdout).text(),
     new Response(metricsProcess.stderr).text(),
@@ -166,7 +180,10 @@ async function main() {
   activeTauriProcess = null;
 
   await Promise.all([stdoutTask, stderrTask]);
-  await assertStopped();
+  await Promise.all([
+    assertUrlStopped(baseUrl, '28232 UI 端口'),
+    assertUrlStopped(legacyPlayerUrl, '27232 兼容 API 端口'),
+  ]);
   console.log(metricsOutput.trim());
   console.log(
     `[tauri-smoke] UI、API、${

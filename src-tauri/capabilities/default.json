@@ -4,10 +4,7 @@
   "description": "仅允许本机 Tauri 页面使用基础窗口能力",
   "windows": ["main"],
   "remote": {
-    "urls": [
-      "http://127.0.0.1:1420/*",
-      "http://127.0.0.1:28232/*"
-    ]
+    "urls": ["http://127.0.0.1:1420/*", "http://127.0.0.1:28232/*"]
   },
   "permissions": [
     "core:default",
@@ -16,12 +13,13 @@
     "core:window:allow-set-size",
     "core:window:allow-set-fullscreen",
     "core:window:allow-start-dragging",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-close",
+    "updater:default",
+    "process:allow-restart",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [
-        { "url": "https://*" },
-        { "url": "http://*" }
-      ]
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
     }
   ]
 }
