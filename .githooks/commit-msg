@@ -1,0 +1,13 @@
+#!/bin/sh
+# 标题格式：<emoji> <类型>: <描述>，例如「🐛 fix: 迷你播放条双击不再最大化」。
+# 规则和可用类型都在 scripts/verify-commit-message.mjs 里，那边有测试锁住。
+#
+# rebase / merge 进行中时跳过：改写历史时旧标题不符合规范，拦下来只会卡住 rebase。
+set -e
+
+git_dir=$(git rev-parse --git-dir)
+if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
+  exit 0
+fi
+
+bun scripts/verify-commit-message.mjs "$1"

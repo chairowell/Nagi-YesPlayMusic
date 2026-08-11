@@ -108,5 +108,8 @@ WebView 按 origin 隔离存储，而 dev 和正式版端口不同：
 ## 约定
 
 - 代码注释使用精简英文，只解释必要的“为什么”
-- 提交信息用中文，正文说清动机和影响
+- 提交信息标题是 `<emoji> <类型>: <中文描述>`，例如 `🐛 fix: 迷你播放条双击不再最大化`。
+  类型与 emoji 一一对应，白名单和规则在 `scripts/verify-commit-message.mjs`，
+  `.githooks/commit-msg` 会拦下不合规的标题（rebase / merge 进行中自动放行）。
+  正文用中文说清动机和影响
 - 上游仓库是 `upstream` remote，同步用 `git fetch upstream`
