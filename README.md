@@ -83,6 +83,11 @@ run。完整进程树内存受 WebKit 和媒体缓存影响，尚无同场景 Bu
 
 ## 安装
 
+> **尝鲜版 [v0.8.0-canary.1](https://github.com/nagi-studio/YesPlayMusic/releases/tag/v0.8.0-canary.1) 已发布** —— 后台服务改用
+> Rust 重写，常驻内存约 82 MB 降到约 9 MB，macOS 安装包 36.5 MiB 缩到 11.9 MiB。
+> canary 走独立更新通道，装了它不会收到 stable 更新，装 stable 也不会被升到 canary。
+> 稳定版请继续用下面的 Releases 页面。
+
 到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 DMG。
 macOS 正式支持包只提供 Apple Silicon（`arm64`）DMG，要求 macOS 14 或更高版本；
 同一 Release 还可能包含下面说明的 Windows 和 Linux 实验包。
