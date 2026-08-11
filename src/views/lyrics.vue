@@ -1090,7 +1090,6 @@ export default defineComponent({
   align-items: center;
   gap: 12px;
   padding: 0 16px 0 76px; // Reserve space for window controls.
-  -webkit-app-region: drag;
   user-select: none;
   overflow: hidden;
 
@@ -1101,7 +1100,6 @@ export default defineComponent({
 
   // Keep blank container space draggable.
   .mini-copyable {
-    -webkit-app-region: no-drag;
     user-select: text;
     cursor: text;
     // Keep selectable text above the progress hit area.
@@ -1178,7 +1176,6 @@ export default defineComponent({
     align-items: center;
     gap: 2px;
     flex-shrink: 0;
-    -webkit-app-region: no-drag;
     // Keep controls above the progress hit area.
     position: relative;
     z-index: 2;
@@ -1234,7 +1231,6 @@ export default defineComponent({
     height: var(--mini-progress-hit-height);
     cursor: pointer;
     touch-action: none;
-    -webkit-app-region: no-drag;
 
     &:focus-visible {
       outline: 2px solid var(--color-primary);
