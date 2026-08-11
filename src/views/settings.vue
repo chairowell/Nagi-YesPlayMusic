@@ -834,8 +834,12 @@
 
       <div class="footer">
         <p class="author"
-          >MADE BY
-          <a href="http://github.com/qier222" target="_blank">QIER222</a></p
+          >MAINTAINED BY
+          <a href="https://github.com/nagi-studio" target="_blank"
+            >NAGI STUDIO</a
+          >
+          · THANKS TO
+          <a href="https://github.com/qier222" target="_blank">QIER222</a></p
         >
         <p class="version">v{{ version }}</p>
 
