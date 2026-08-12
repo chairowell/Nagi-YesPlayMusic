@@ -22,6 +22,7 @@ use crate::ui;
 pub struct Effects {
     pub player: PlayerHandle,
     pub ncm: Arc<Ncm>,
+    pub store: Arc<crate::store::LibraryStore>,
     pub actions: mpsc::UnboundedSender<Action>,
 }
 
@@ -97,6 +98,7 @@ pub struct AppState {
     prefetched: Option<(usize, api::ResolvedTrack)>,
     enter_replaces_queue: bool,
     pub nickname: Option<String>,
+    uid: Option<i64>,
     pub search_query: String,
     pub search_results: Vec<SongRow>,
     pub search_input: bool,
@@ -169,6 +171,7 @@ impl AppState {
             prefetched: None,
             enter_replaces_queue: config.enter_replaces_queue,
             nickname: None,
+            uid: None,
             search_query: String::new(),
             search_results: Vec::new(),
             search_input: true,
@@ -364,9 +367,14 @@ impl AppState {
         self.library_source = source;
         self.sidebar_selected = index;
         self.sidebar_focus = false;
-        self.library.clear();
         self.selected = 0;
         self.library_synced = false;
+        self.library = self
+            .uid
+            .zip(cache_name(source))
+            .and_then(|(uid, name)| fx.store.load(uid, name))
+            .map(|rows| rows.into_iter().map(|row| row.into_song_row()).collect())
+            .unwrap_or_default();
         spawn_fetch_source(fx, source);
     }
 
@@ -626,6 +634,7 @@ impl AppState {
                 }
             }
             Action::LoggedIn { uid, nickname } => {
+                self.uid = Some(uid);
                 self.nickname = Some(nickname.clone());
                 self.status = Some(i18n::t_welcome(&nickname));
                 if self.view == View::Login {
@@ -634,12 +643,21 @@ impl AppState {
                 self.login_qr = None;
                 // Demo rows are a logged-out affordance; a real library is
                 // on its way now.
-                self.library.clear();
                 self.selected = 0;
                 self.library_synced = false;
+                // Snapshot first: the last known list paints instantly,
+                // the fresh fetch swaps it in when it lands.
+                self.library = fx
+                    .store
+                    .load(uid, "liked")
+                    .map(|rows| rows.into_iter().map(|row| row.into_song_row()).collect())
+                    .unwrap_or_default();
                 spawn_fetch_library(fx, uid);
             }
             Action::LibraryLoaded { source, rows } => {
+                if let (Some(uid), Some(name)) = (self.uid, cache_name(source)) {
+                    spawn_save_snapshot(fx, uid, name, rows.clone());
+                }
                 if source == self.library_source {
                     if source == Source::Liked {
                         self.status = Some(i18n::t_liked_songs_count(rows.len()));
@@ -969,6 +987,25 @@ fn spawn_prefetch(fx: &Effects, index: usize, row: SongRow) {
     });
 }
 
+/// FM is a live stream and search is transient; the rest snapshot to disk.
+fn cache_name(source: Source) -> Option<&'static str> {
+    match source {
+        Source::Liked => Some("liked"),
+        Source::Daily => Some("daily"),
+        Source::Cloud => Some("cloud"),
+        Source::Fm | Source::Search => None,
+    }
+}
+
+fn spawn_save_snapshot(fx: &Effects, uid: i64, source: &'static str, rows: Vec<SongRow>) {
+    let store = fx.store.clone();
+    tokio::spawn(async move {
+        let stored: Vec<crate::store::StoredSong> =
+            rows.iter().map(crate::store::StoredSong::from).collect();
+        let _ = tokio::task::spawn_blocking(move || store.save(uid, source, &stored)).await;
+    });
+}
+
 fn spawn_fm_more(fx: &Effects) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
@@ -1131,6 +1168,9 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
     let fx = Effects {
         player,
         ncm: Arc::new(Ncm::new(config::session_path(), config.quality.clone())),
+        store: Arc::new(crate::store::LibraryStore::new(
+            config::cache_dir().join("library"),
+        )),
         actions: actions_tx,
     };
     // Restore a persisted session: greet + load 我喜欢的音乐.

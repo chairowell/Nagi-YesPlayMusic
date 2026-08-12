@@ -10,6 +10,7 @@ mod i18n;
 mod lyrics;
 pub mod pixel;
 mod player;
+mod store;
 mod theme;
 mod ui;
 
