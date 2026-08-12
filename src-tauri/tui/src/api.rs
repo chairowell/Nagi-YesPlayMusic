@@ -18,6 +18,7 @@ pub struct ResolvedTrack {
     pub url: String,
     pub kind: String,
     pub duration_ms: i64,
+    pub pic_url: Option<String>,
 }
 
 pub struct Ncm {
@@ -103,25 +104,39 @@ impl Ncm {
         Ok((url.to_owned(), kind))
     }
 
-    /// Search by "title artist" and resolve the best match to a playable
-    /// URL — the bridge that lets the UI play before playlists land.
+    /// Search by "title artist" and resolve the first *playable* match —
+    /// top hits can be VIP-gated with a null URL, so walk the candidates.
     pub async fn resolve_for_play(&self, title: &str, artist: &str) -> Result<ResolvedTrack> {
         let keywords = format!("{title} {artist}");
         let songs = self.search_songs(&keywords, 8).await?;
-        let song = songs
-            .first()
-            .ok_or_else(|| anyhow!("搜索不到「{keywords}」"))?;
-        let id = song["id"].as_i64().ok_or_else(|| anyhow!("搜索结果缺少 id"))?;
-        let (url, kind) = self.song_url(id).await?;
-        Ok(ResolvedTrack {
-            id,
-            title: song["name"].as_str().unwrap_or(title).to_owned(),
-            artist: song["ar"][0]["name"].as_str().unwrap_or(artist).to_owned(),
-            url,
-            kind,
-            duration_ms: song["dt"].as_i64().unwrap_or(0),
-        })
+        if songs.is_empty() {
+            return Err(anyhow!("搜索不到「{keywords}」"));
+        }
+        for song in &songs {
+            let Some(id) = song["id"].as_i64() else { continue };
+            let Ok((url, kind)) = self.song_url(id).await else {
+                continue;
+            };
+            return Ok(ResolvedTrack {
+                id,
+                title: song["name"].as_str().unwrap_or(title).to_owned(),
+                artist: song["ar"][0]["name"].as_str().unwrap_or(artist).to_owned(),
+                url,
+                kind,
+                duration_ms: song["dt"].as_i64().unwrap_or(0),
+                pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
+            });
+        }
+        Err(anyhow!("「{keywords}」的候选都拿不到播放地址（可能需要登录）"))
     }
+}
+
+/// Small square cover JPEG from the NCM CDN (`?param=WxH` server-side crop).
+pub async fn fetch_cover(pic_url: &str, edge: u32) -> Result<Vec<u8>> {
+    let url = format!("{pic_url}?param={edge}y{edge}");
+    let response = reqwest::get(&url).await.context("fetch cover")?;
+    let bytes = response.bytes().await.context("read cover body")?;
+    Ok(bytes.to_vec())
 }
 
 #[cfg(test)]

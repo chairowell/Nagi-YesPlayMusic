@@ -8990,6 +8990,7 @@ dependencies = [
  "image",
  "ncm-api-rs",
  "ratatui",
+ "reqwest 0.12.23",
  "rodio",
  "serde",
  "serde_json",

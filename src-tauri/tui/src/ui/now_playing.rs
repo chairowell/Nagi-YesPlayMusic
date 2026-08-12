@@ -34,16 +34,21 @@ fn draw_cover(frame: &mut Frame, state: &AppState, area: Rect) {
         .border_style(Style::new().fg(theme.faint));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let tag = Line::from(Span::styled("▚ 封面", Style::new().fg(theme.faint)));
-    if inner.height > 0 {
-        let [_, middle, _] = Layout::vertical([
-            Constraint::Percentage(45),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .areas(inner);
-        frame.render_widget(Paragraph::new(tag).centered(), middle);
+    if inner.height == 0 {
+        return;
     }
+    if let Some(cover) = &state.cover {
+        frame.render_widget(cover, inner);
+        return;
+    }
+    let tag = Line::from(Span::styled("▚ 封面", Style::new().fg(theme.faint)));
+    let [_, middle, _] = Layout::vertical([
+        Constraint::Percentage(45),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
+    frame.render_widget(Paragraph::new(tag).centered(), middle);
 }
 
 fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect) {

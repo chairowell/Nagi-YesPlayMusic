@@ -1,6 +1,7 @@
 //! ypm — YesPlayMusic in the terminal.
 
 mod action;
+mod api;
 mod app;
 mod config;
 mod event;

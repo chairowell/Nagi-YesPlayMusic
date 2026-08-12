@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::api::ResolvedTrack;
+use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +27,18 @@ pub enum Action {
     Activate,
     Resize,
     Player(PlayerEvent),
+    TrackResolved {
+        generation: u64,
+        track: ResolvedTrack,
+    },
+    ResolveFailed {
+        generation: u64,
+        message: String,
+    },
+    CoverLoaded {
+        generation: u64,
+        cover: PixelCover,
+    },
 }
 
 pub const SEEK_STEP: Duration = Duration::from_secs(5);
