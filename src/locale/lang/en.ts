@@ -313,6 +313,8 @@ export default {
     copyLyricWithTranslation: 'Copy Lyric With Translation',
   },
   toast: {
+    dailyTracksLoadFailed:
+      'Daily recommendations could not be loaded. Try again later.',
     savedToPlaylist: 'Saved to playlist',
     removedFromPlaylist: 'Removed from playlist',
     copied: 'Copied',

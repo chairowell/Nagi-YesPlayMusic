@@ -12,6 +12,7 @@ import {
   decodeArray,
   decodeBoolean,
   decodeCodeResponse,
+  decodeDailyTracksResponse,
   decodeNumber,
   decodeOptionalArray,
   decodeOptionalString,
@@ -190,33 +191,6 @@ const decodePlaylistMutationResponse: Decoder<PlaylistMutationResponse> = (
   };
 };
 
-const decodeDailyTracksResponse: Decoder<
-  ApiResponse & {
-    data: { dailySongs: Track[]; privileges: TrackPrivilege[] };
-  }
-> = (input, context) => {
-  const response = decodeRecord(input, context);
-  const data = decodeRecord(response['data'], context, '$.data');
-  return {
-    ...response,
-    data: {
-      ...data,
-      dailySongs: decodeArray(
-        data['dailySongs'],
-        context,
-        '$.data.dailySongs',
-        decodeTrack
-      ),
-      privileges: decodeArray(
-        data['privileges'],
-        context,
-        '$.data.privileges',
-        decodeTrackPrivilege
-      ),
-    },
-  };
-};
-
 const decodeTrackDataResponse: Decoder<ApiResponse & { data: Track[] }> = (
   input,
   context
@@ -391,7 +365,7 @@ export function addOrRemoveTrackFromPlaylist(params: {
 export function dailyRecommendTracks() {
   return request<
     ApiResponse & {
-      data: { dailySongs: Track[]; privileges: TrackPrivilege[] };
+      data: { dailySongs: Track[]; privileges?: TrackPrivilege[] };
     }
   >(
     {

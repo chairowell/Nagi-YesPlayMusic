@@ -19,6 +19,7 @@ import { mapActions, mapState } from 'pinia';
 import { useAppStore } from '@/stores/app';
 import NProgress from 'nprogress';
 import { dailyRecommendTracks } from '@/api/playlist';
+import locale from '@/locale';
 
 import TrackList from '@/components/TrackList.vue';
 
@@ -48,13 +49,20 @@ export default defineComponent({
     this.appShell.scrollMainTo(0, 0);
   },
   methods: {
-    ...mapActions(useAppStore, ['updateDailyTracks']),
+    ...mapActions(useAppStore, ['showToast', 'updateDailyTracks']),
     loadDailyTracks() {
-      dailyRecommendTracks().then(result => {
-        this.updateDailyTracks(result.data.dailySongs);
-        NProgress.done();
-        this.show = true;
-      });
+      dailyRecommendTracks()
+        .then(result => {
+          this.updateDailyTracks(result.data.dailySongs);
+        })
+        .catch((error: unknown) => {
+          console.warn('[daily-tracks] load failed', error);
+          this.showToast(locale.t('toast.dailyTracksLoadFailed'));
+        })
+        .finally(() => {
+          NProgress.done();
+          this.show = true;
+        });
     },
   },
 });

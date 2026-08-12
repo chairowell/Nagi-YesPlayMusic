@@ -433,7 +433,7 @@
     "requestBuilder": "src/api/playlist.ts#dailyRecommendTracks",
     "nodeAdapter": "@neteaseapireborn/api/module/recommend_songs",
     "rustAdapter": "ncm::recommend_songs",
-    "decoder": "src/api/playlist.ts#decodeDailyTracksResponse",
+    "decoder": "src/api/decoders.ts#decodeDailyTracksResponse",
     "comparator": ["code", "data.dailySongs[].id", "data.privileges[].id"],
     "idempotent": true
   },
