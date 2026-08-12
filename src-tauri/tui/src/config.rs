@@ -28,6 +28,8 @@ pub struct Config {
     /// Progress bar look: "dot" = thin line with a playhead dot,
     /// "bar" = thick block line, no dot.
     pub progress_style: String,
+    /// Pixel density multiplier for cover/idle art (0.5 chunky … 2.0 fine).
+    pub pixel_scale: f32,
 }
 
 impl Default for Config {
@@ -41,6 +43,7 @@ impl Default for Config {
             layout: "side".into(),
             idle_art: None,
             progress_style: "dot".into(),
+            pixel_scale: 1.0,
         }
     }
 }
@@ -71,6 +74,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都�
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 2048
+# pixel_scale = 1.0            # 像素细腻度：0.5 更复古块状，2.0 更细腻
 "#;
 
 fn deserialize_language<'de, D>(deserializer: D) -> Result<String, D::Error>

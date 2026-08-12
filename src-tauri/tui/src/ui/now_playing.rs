@@ -158,10 +158,12 @@ fn draw_cover(frame: &mut Frame, state: &AppState, area: Rect) {
     if area.height == 0 {
         return;
     }
-    match &state.cover {
-        Some(cover) => frame.render_widget(cover, area),
-        // Cover still loading: the idle art stands in, no chrome.
-        None => frame.render_widget(&state.idle_art, area),
+    match (&state.cover, &state.placeholder) {
+        (Some(cover), _) => frame.render_widget(cover, area),
+        // Cover still loading: idle art pre-rendered at cover size, so
+        // the swap keeps position and scale.
+        (None, Some(placeholder)) => frame.render_widget(placeholder, area),
+        (None, None) => frame.render_widget(&state.idle_art, area),
     }
 }
 
@@ -227,9 +229,9 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
         } else {
             Style::new().fg(theme.dim)
         };
-        let marker = if is_current { "▸ " } else { "  " };
+        let marker = if is_current { "> " } else { "  " };
         lines.push(Line::from(Span::styled(
-            format!("  {marker}{}", lyric.text),
+            format!("{marker}{}", lyric.text),
             style,
         )));
         used += 1;
@@ -242,7 +244,7 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
                     Style::new().fg(theme.faint)
                 };
                 lines.push(Line::from(Span::styled(
-                    format!("    {translation}"),
+                    format!("  {translation}"),
                     translation_style,
                 )));
                 used += 1;

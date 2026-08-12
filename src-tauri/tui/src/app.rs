@@ -66,8 +66,12 @@ pub struct AppState {
     pub cover: Option<PixelCover>,
     pub layout: PlayLayout,
     pub thick_progress: bool,
+    pixel_scale: f32,
     pub idle_art: PixelCover,
     pub library_synced: bool,
+    /// Idle art pre-rendered at the playing-cover size, so the loading
+    /// placeholder swaps to the real cover without a size jump.
+    pub placeholder: Option<PixelCover>,
     /// Source image for the idle art; None = procedural vinyl.
     idle_bytes: Option<Vec<u8>>,
     cover_bytes: Option<Vec<u8>>,
@@ -119,12 +123,14 @@ impl AppState {
             cover: None,
             layout: PlayLayout::from_config(&config.layout),
             thick_progress: config.progress_style == "bar",
+            pixel_scale: config.pixel_scale.clamp(0.5, 2.0),
             idle_art: render_idle_art(
                 idle_art_bytes(config).as_deref(),
                 Theme::by_name(&config.theme).palette,
-                desired_idle_cells(),
+                scale_cells(desired_idle_cells(), config.pixel_scale.clamp(0.5, 2.0)),
             ),
             library_synced: false,
+            placeholder: None,
             idle_bytes: idle_art_bytes(config),
             cover_bytes: None,
             lyrics: Vec::new(),
@@ -155,18 +161,32 @@ impl AppState {
             PlayLayout::Side => cols.saturating_sub(30).max(16),
             PlayLayout::Stacked => cols.saturating_sub(4).max(16),
         });
-        (width, width / 2)
+        scale_cells((width, width / 2), self.pixel_scale)
+    }
+
+    fn ensure_placeholder(&mut self) {
+        let desired = self.desired_cover_cells();
+        let current = self.placeholder.as_ref().map(|art| (art.width, art.height));
+        if current != Some(desired) {
+            self.placeholder = Some(render_idle_art(
+                self.idle_bytes.as_deref(),
+                self.theme.palette,
+                desired,
+            ));
+        }
     }
 
     /// Reset the now-playing surface and kick off resolution for a row.
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
+        self.ensure_placeholder();
         self.generation += 1;
         self.now = Some(NowPlaying {
             title: row.title.clone(),
             artist: row.artist.clone(),
             album: String::new(),
         });
-        self.cover = None;
+        // Keep the previous cover on screen until the new one lands —
+        // no placeholder flash between tracks.
         self.lyrics.clear();
         self.position = Duration::ZERO;
         self.duration = None;
@@ -409,10 +429,13 @@ impl AppState {
                         );
                     }
                 }
-                let desired = desired_idle_cells();
+                let desired = scale_cells(desired_idle_cells(), self.pixel_scale);
                 if (self.idle_art.width, self.idle_art.height) != desired {
                     self.idle_art =
                         render_idle_art(self.idle_bytes.as_deref(), self.theme.palette, desired);
+                }
+                if self.now.is_some() {
+                    self.ensure_placeholder();
                 }
             }
         }
@@ -637,6 +660,13 @@ fn desired_idle_cells() -> (u16, u16) {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let height = (rows * 2 / 5).clamp(10, 32);
     let width = (height * 2).min(cols.saturating_sub(4).max(16));
+    (width, width / 2)
+}
+
+/// Cell-grid scaling for the pixel-density setting; the widget itself
+/// still clips to the drawing area, so scale only changes granularity.
+fn scale_cells(cells: (u16, u16), factor: f32) -> (u16, u16) {
+    let width = ((cells.0 as f32 * factor).round() as u16).clamp(8, 120);
     (width, width / 2)
 }
 

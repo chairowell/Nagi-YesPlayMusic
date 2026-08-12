@@ -168,6 +168,7 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
     let hints: &[(&str, Key)] = match state.view {
         View::Library => &[
             ("l/Enter", Key::Play),
+            ("f", Key::Search),
             ("j/k", Key::Select),
             ("gg/G", Key::TopBottom),
             ("h", Key::Back),
@@ -188,6 +189,7 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
             ("Space", Key::Pause),
             ("←/→", Key::Seek),
             ("-/+", Key::Volume),
+            ("f", Key::Search),
             ("n/p", Key::ChangeTrack),
             ("z", Key::Zen),
             ("q", Key::Quit),
