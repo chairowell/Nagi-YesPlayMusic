@@ -40,6 +40,9 @@ pub struct AppState {
     pub theme: Theme,
     pub library: Vec<SongRow>,
     pub selected: usize,
+    pub queue: Vec<SongRow>,
+    pub queue_pos: Option<usize>,
+    enter_replaces_queue: bool,
     pub nickname: Option<String>,
     pub login_qr: Option<String>,
     pub login_message: Option<String>,
@@ -51,6 +54,7 @@ pub struct AppState {
     pub volume: f32,
     pub status: Option<String>,
     pub generation: u64,
+    pending_auto_next: bool,
     should_quit: bool,
 }
 
@@ -79,6 +83,9 @@ impl AppState {
                 },
             ],
             selected: 0,
+            queue: Vec::new(),
+            queue_pos: None,
+            enter_replaces_queue: config.enter_replaces_queue,
             nickname: None,
             login_qr: None,
             login_message: None,
@@ -90,7 +97,41 @@ impl AppState {
             volume: 1.0,
             status: None,
             generation: 0,
+            pending_auto_next: false,
             should_quit: false,
+        }
+    }
+
+    /// Reset the now-playing surface and kick off resolution for a row.
+    fn play_row(&mut self, fx: &Effects, row: SongRow) {
+        self.generation += 1;
+        self.now = Some(NowPlaying {
+            title: row.title.clone(),
+            artist: row.artist.clone(),
+            album: String::new(),
+        });
+        self.cover = None;
+        self.position = Duration::ZERO;
+        self.duration = None;
+        self.status = Some("解析中…".into());
+        spawn_resolve(fx, self.generation, row);
+    }
+
+    /// Move within the queue (manual n/p and end-of-track auto-advance).
+    fn step_queue(&mut self, fx: &Effects, delta: i32) {
+        let Some(position) = self.queue_pos else {
+            return;
+        };
+        let next = position as i32 + delta;
+        if next < 0 {
+            return;
+        }
+        match self.queue.get(next as usize).cloned() {
+            Some(row) => {
+                self.queue_pos = Some(next as usize);
+                self.play_row(fx, row);
+            }
+            None => self.status = Some("队列播完了".into()),
         }
     }
 
@@ -119,30 +160,44 @@ impl AppState {
                 fx.player.send(PlayerCommand::SetVolume(self.volume));
             }
             Action::MoveSelection(delta) => {
-                if self.view == View::Library && !self.library.is_empty() {
-                    let last = self.library.len() as i32 - 1;
+                let len = match self.view {
+                    View::Library => self.library.len(),
+                    View::Queue => self.queue.len(),
+                    _ => 0,
+                };
+                if len > 0 {
+                    let last = len as i32 - 1;
                     let next = (self.selected as i32 + delta).clamp(0, last);
                     self.selected = next as usize;
                 }
             }
-            Action::Activate => {
-                if self.view == View::Library {
-                    if let Some(row) = self.library.get(self.selected) {
-                        self.generation += 1;
-                        self.now = Some(NowPlaying {
-                            title: row.title.clone(),
-                            artist: row.artist.clone(),
-                            album: String::new(),
-                        });
-                        self.cover = None;
-                        self.position = Duration::ZERO;
-                        self.duration = None;
-                        self.status = Some("解析中…".into());
+            Action::Activate => match self.view {
+                View::Library => {
+                    if let Some(row) = self.library.get(self.selected).cloned() {
+                        if self.enter_replaces_queue {
+                            // Desktop/NCM semantics: the list becomes the
+                            // listening context from this song onward.
+                            self.queue = self.library.clone();
+                            self.queue_pos = Some(self.selected);
+                        } else {
+                            self.queue = vec![row.clone()];
+                            self.queue_pos = Some(0);
+                        }
+                        self.play_row(fx, row);
                         self.view = View::NowPlaying;
-                        spawn_resolve(fx, self.generation, row.clone());
                     }
                 }
-            }
+                View::Queue => {
+                    if let Some(row) = self.queue.get(self.selected).cloned() {
+                        self.queue_pos = Some(self.selected);
+                        self.play_row(fx, row);
+                        self.view = View::NowPlaying;
+                    }
+                }
+                _ => {}
+            },
+            Action::NextTrack => self.step_queue(fx, 1),
+            Action::PrevTrack => self.step_queue(fx, -1),
             Action::StartLogin => {
                 if self.nickname.is_some() {
                     self.status = Some("已经登录了".into());
@@ -208,7 +263,13 @@ impl AppState {
                     self.cover = Some(cover);
                 }
             }
-            Action::Player(event) => self.apply_player_event(event),
+            Action::Player(event) => {
+                self.apply_player_event(event);
+                if self.pending_auto_next {
+                    self.pending_auto_next = false;
+                    self.step_queue(fx, 1);
+                }
+            }
             Action::Resize => {}
         }
     }
@@ -230,7 +291,7 @@ impl AppState {
             PlayerEvent::Paused(paused) => self.paused = paused,
             PlayerEvent::Ended { generation } => {
                 if generation == self.generation {
-                    self.status = Some("播放结束".into());
+                    self.pending_auto_next = true;
                 }
             }
             PlayerEvent::Failed { generation, message } => {

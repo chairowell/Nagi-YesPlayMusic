@@ -3,6 +3,7 @@
 mod library;
 mod login;
 mod now_playing;
+mod queue;
 mod text;
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -36,7 +37,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         View::NowPlaying => now_playing::draw(frame, state, body),
         View::Library => library::draw(frame, state, body),
         View::Search => placeholder(frame, state, body, "搜索（下一阶段接入）"),
-        View::Queue => placeholder(frame, state, body, "播放队列（下一阶段接入）"),
+        View::Queue => queue::draw(frame, state, body),
         View::Login => login::draw(frame, state, body),
     }
     draw_hints(frame, state, hints_area);
@@ -70,6 +71,12 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
             ("g", "登录"),
             ("z", "纯净"),
             ("q", "退出"),
+        ],
+        View::Queue => &[
+            ("Enter", "跳到这首"),
+            ("j/k", "选择"),
+            ("n/p", "切歌"),
+            ("Esc", "返回"),
         ],
         View::Login => &[("Esc", "返回"), ("g", "刷新二维码"), ("q", "退出")],
         _ => &[

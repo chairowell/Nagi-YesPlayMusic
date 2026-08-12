@@ -22,6 +22,8 @@ pub enum Action {
     Back,
     ToggleZen,
     TogglePlay,
+    NextTrack,
+    PrevTrack,
     SeekBy(i64),
     VolumeBy(f32),
     MoveSelection(i32),

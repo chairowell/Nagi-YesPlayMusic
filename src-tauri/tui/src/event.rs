@@ -27,6 +27,8 @@ fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('g') => Some(Action::StartLogin),
         KeyCode::Char('z') => Some(Action::ToggleZen),
         KeyCode::Char(' ') => Some(Action::TogglePlay),
+        KeyCode::Char('n') => Some(Action::NextTrack),
+        KeyCode::Char('p') => Some(Action::PrevTrack),
         KeyCode::Right => Some(Action::SeekBy(1)),
         KeyCode::Left => Some(Action::SeekBy(-1)),
         KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::VolumeBy(0.05)),

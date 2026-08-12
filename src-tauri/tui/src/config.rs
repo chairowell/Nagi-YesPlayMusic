@@ -13,6 +13,9 @@ pub struct Config {
     pub theme: String,
     /// Song cache cap in MiB.
     pub cache_limit_mib: u64,
+    /// Enter on a list: true = the list becomes the queue from that song
+    /// (desktop/NCM semantics), false = play just that one song.
+    pub enter_replaces_queue: bool,
 }
 
 impl Default for Config {
@@ -21,6 +24,7 @@ impl Default for Config {
             quality: "exhigh".into(),
             theme: "db16".into(),
             cache_limit_mib: 2048,
+            enter_replaces_queue: true,
         }
     }
 }
