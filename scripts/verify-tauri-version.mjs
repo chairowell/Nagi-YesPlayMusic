@@ -31,8 +31,10 @@ export function validateTauriVersions({
   packageVersion,
   tauriVersion,
   cargoVersion,
+  coreVersion,
   sidecarVersion,
   lockCargoVersion,
+  lockCoreVersion,
   lockSidecarVersion,
   tag,
 }) {
@@ -40,13 +42,15 @@ export function validateTauriVersions({
     packageVersion,
     tauriVersion,
     cargoVersion,
+    coreVersion,
     sidecarVersion,
     lockCargoVersion,
+    lockCoreVersion,
     lockSidecarVersion,
   ]);
   if (versions.size !== 1) {
     throw new Error(
-      `版本号不一致：package=${packageVersion}, tauri=${tauriVersion}, cargo=${cargoVersion}, sidecar=${sidecarVersion}, lock-cargo=${lockCargoVersion}, lock-sidecar=${lockSidecarVersion}`
+      `版本号不一致：package=${packageVersion}, tauri=${tauriVersion}, cargo=${cargoVersion}, core=${coreVersion}, sidecar=${sidecarVersion}, lock-cargo=${lockCargoVersion}, lock-core=${lockCoreVersion}, lock-sidecar=${lockSidecarVersion}`
     );
   }
   if (tag && tag !== `v${packageVersion}`) {
@@ -63,6 +67,9 @@ export async function verifyTauriVersions(tag = '') {
   const cargo = await Bun.file(
     path.join(projectRoot, 'src-tauri/Cargo.toml')
   ).text();
+  const coreCargo = await Bun.file(
+    path.join(projectRoot, 'src-tauri/core/Cargo.toml')
+  ).text();
   const sidecarCargo = await Bun.file(
     path.join(projectRoot, 'src-tauri/sidecar/Cargo.toml')
   ).text();
@@ -70,10 +77,15 @@ export async function verifyTauriVersions(tag = '') {
     path.join(projectRoot, 'src-tauri/Cargo.lock')
   ).text();
   const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+  const coreVersion = coreCargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
   const sidecarVersion = sidecarCargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
   const lockCargoVersion = readUniqueCargoLockPackageVersion(
     cargoLock,
     'yesplaymusic-tauri'
+  );
+  const lockCoreVersion = readUniqueCargoLockPackageVersion(
+    cargoLock,
+    'yesplaymusic-core'
   );
   const lockSidecarVersion = readUniqueCargoLockPackageVersion(
     cargoLock,
@@ -83,8 +95,10 @@ export async function verifyTauriVersions(tag = '') {
     packageVersion: pkg.version,
     tauriVersion: tauri.version,
     cargoVersion,
+    coreVersion,
     sidecarVersion,
     lockCargoVersion,
+    lockCoreVersion,
     lockSidecarVersion,
     tag,
   });
