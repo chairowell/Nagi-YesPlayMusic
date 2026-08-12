@@ -18,9 +18,7 @@ export function readUniqueCargoLockPackageVersion(cargoLock, packageName) {
       `Cargo.lock 中 ${packageName} 必须且只能出现一次，实际 ${packageBlocks.length} 次`
     );
   }
-  const version = packageBlocks[0].match(
-    /^version\s*=\s*"([^"]+)"\s*$/m
-  )?.[1];
+  const version = packageBlocks[0].match(/^version\s*=\s*"([^"]+)"\s*$/m)?.[1];
   if (!version) {
     throw new Error(`Cargo.lock 中 ${packageName} 缺少 version`);
   }
@@ -33,9 +31,11 @@ export function validateTauriVersions({
   cargoVersion,
   coreVersion,
   sidecarVersion,
+  tuiVersion,
   lockCargoVersion,
   lockCoreVersion,
   lockSidecarVersion,
+  lockTuiVersion,
   tag,
 }) {
   const versions = new Set([
@@ -44,13 +44,15 @@ export function validateTauriVersions({
     cargoVersion,
     coreVersion,
     sidecarVersion,
+    tuiVersion,
     lockCargoVersion,
     lockCoreVersion,
     lockSidecarVersion,
+    lockTuiVersion,
   ]);
   if (versions.size !== 1) {
     throw new Error(
-      `版本号不一致：package=${packageVersion}, tauri=${tauriVersion}, cargo=${cargoVersion}, core=${coreVersion}, sidecar=${sidecarVersion}, lock-cargo=${lockCargoVersion}, lock-core=${lockCoreVersion}, lock-sidecar=${lockSidecarVersion}`
+      `版本号不一致：package=${packageVersion}, tauri=${tauriVersion}, cargo=${cargoVersion}, core=${coreVersion}, sidecar=${sidecarVersion}, tui=${tuiVersion}, lock-cargo=${lockCargoVersion}, lock-core=${lockCoreVersion}, lock-sidecar=${lockSidecarVersion}, lock-tui=${lockTuiVersion}`
     );
   }
   if (tag && tag !== `v${packageVersion}`) {
@@ -73,12 +75,16 @@ export async function verifyTauriVersions(tag = '') {
   const sidecarCargo = await Bun.file(
     path.join(projectRoot, 'src-tauri/sidecar/Cargo.toml')
   ).text();
+  const tuiCargo = await Bun.file(
+    path.join(projectRoot, 'src-tauri/tui/Cargo.toml')
+  ).text();
   const cargoLock = await Bun.file(
     path.join(projectRoot, 'src-tauri/Cargo.lock')
   ).text();
   const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
   const coreVersion = coreCargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
   const sidecarVersion = sidecarCargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+  const tuiVersion = tuiCargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
   const lockCargoVersion = readUniqueCargoLockPackageVersion(
     cargoLock,
     'yesplaymusic-tauri'
@@ -91,15 +97,21 @@ export async function verifyTauriVersions(tag = '') {
     cargoLock,
     'yesplaymusic-sidecar'
   );
+  const lockTuiVersion = readUniqueCargoLockPackageVersion(
+    cargoLock,
+    'yesplaymusic-tui'
+  );
   return validateTauriVersions({
     packageVersion: pkg.version,
     tauriVersion: tauri.version,
     cargoVersion,
     coreVersion,
     sidecarVersion,
+    tuiVersion,
     lockCargoVersion,
     lockCoreVersion,
     lockSidecarVersion,
+    lockTuiVersion,
     tag,
   });
 }

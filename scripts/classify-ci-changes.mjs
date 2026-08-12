@@ -6,7 +6,9 @@
 // costs minutes.
 import { spawnSync } from 'node:child_process';
 
-// Touching these can change Rust behaviour, so cargo test/clippy/fmt must run.
+const TUI_PATTERN = /^src-tauri\/tui(?:\/|$)/;
+
+// Touching these outside the standalone TUI can change desktop Rust behaviour.
 const RUST_PATTERNS = [
   /^src-tauri\//,
   /^src\/sidecar-route-manifest\.json$/,
@@ -47,13 +49,19 @@ function matches(file, patterns) {
 }
 
 export function classifyChangedFiles(files) {
-  if (files.length === 0) return { docsOnly: false, rust: true };
+  if (files.length === 0) {
+    return { docsOnly: false, rust: true, tuiOnly: false };
+  }
   const docsOnly = files.every(file => matches(file, DOCS_PATTERNS));
+  const tuiOnly =
+    files.some(file => TUI_PATTERN.test(file)) &&
+    files.every(file => TUI_PATTERN.test(file) || matches(file, DOCS_PATTERNS));
   const rust = files.some(
     file =>
-      matches(file, RUST_PATTERNS) || !matches(file, KNOWN_NON_RUST_PATTERNS)
+      !TUI_PATTERN.test(file) &&
+      (matches(file, RUST_PATTERNS) || !matches(file, KNOWN_NON_RUST_PATTERNS))
   );
-  return { docsOnly, rust };
+  return { docsOnly, rust, tuiOnly };
 }
 
 export function changedFiles({
@@ -94,14 +102,17 @@ function gitDiff(baseSha, headSha, cwd) {
 }
 
 export function classify(env) {
-  if (env.FORCE_FULL === 'true') return { docsOnly: false, rust: true };
+  if (env.FORCE_FULL === 'true') {
+    return { docsOnly: false, rust: true, tuiOnly: false };
+  }
   const files = changedFiles({ baseSha: env.BASE_SHA, headSha: env.HEAD_SHA });
-  if (!files) return { docsOnly: false, rust: true };
+  if (!files) return { docsOnly: false, rust: true, tuiOnly: false };
   return classifyChangedFiles(files);
 }
 
 if (import.meta.main) {
-  const { docsOnly, rust } = classify(process.env);
+  const { docsOnly, rust, tuiOnly } = classify(process.env);
   console.log(`docs-only=${docsOnly}`);
   console.log(`rust=${rust}`);
+  console.log(`tui-only=${tuiOnly}`);
 }

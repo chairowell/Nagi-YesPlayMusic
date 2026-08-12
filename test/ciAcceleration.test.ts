@@ -256,13 +256,14 @@ test('三平台 job 都先准备资源、再打标记，顺序不能反', () => 
 
 test('三处 rust-cache 都不再 cache-on-failure', () => {
   expect(workflow).not.toContain('cache-on-failure');
-  expect(workflow.match(/Swatinem\/rust-cache@v2/g)).toHaveLength(3);
+  expect(workflow.match(/Swatinem\/rust-cache@v2/g)).toHaveLength(4);
 });
 
 test('纯文档改动跳打包，但门禁照跑', () => {
   expect(classifyChangedFiles(['README.md', 'docs/a.md'])).toEqual({
     docsOnly: true,
     rust: false,
+    tuiOnly: false,
   });
   expect(workflow).toContain('docs-gates');
   const docsJob = jobBody('  docs-gates:', '  build-tauri-arm64:');
@@ -276,6 +277,35 @@ test('纯文档改动跳打包，但门禁照跑', () => {
   }
 });
 
+test('TUI、文档与桌面 Rust 路径按三分类矩阵分流', () => {
+  const cases = [
+    {
+      files: ['src-tauri/tui/src/main.rs'],
+      expected: { docsOnly: false, rust: false, tuiOnly: true },
+    },
+    {
+      files: ['src-tauri/tui/Cargo.toml', 'docs/tui.md'],
+      expected: { docsOnly: false, rust: false, tuiOnly: true },
+    },
+    {
+      files: ['src-tauri/tui/src/main.rs', 'src-tauri/core/src/lib.rs'],
+      expected: { docsOnly: false, rust: true, tuiOnly: false },
+    },
+    {
+      files: ['README.md', 'docs/a.md'],
+      expected: { docsOnly: true, rust: false, tuiOnly: false },
+    },
+    {
+      files: ['src-tauri/core/src/lib.rs'],
+      expected: { docsOnly: false, rust: true, tuiOnly: false },
+    },
+  ];
+
+  for (const { files, expected } of cases) {
+    expect(classifyChangedFiles(files)).toEqual(expected);
+  }
+});
+
 test('合规文本是打包输入，不能按纯文档跳过产物验证', () => {
   for (const file of [
     'LICENSE',
@@ -285,6 +315,7 @@ test('合规文本是打包输入，不能按纯文档跳过产物验证', () =>
     expect(classifyChangedFiles([file])).toEqual({
       docsOnly: false,
       rust: false,
+      tuiOnly: false,
     });
   }
 });
@@ -293,10 +324,12 @@ test('只改渲染层时跳过 Rust 门禁，改 Rust 时全跑', () => {
   expect(classifyChangedFiles(['src/App.vue', 'src/utils/x.ts'])).toEqual({
     docsOnly: false,
     rust: false,
+    tuiOnly: false,
   });
   expect(classifyChangedFiles(['src-tauri/src/main.rs'])).toEqual({
     docsOnly: false,
     rust: true,
+    tuiOnly: false,
   });
   expect(classifyChangedFiles(['scripts/build-tauri-host.mjs']).rust).toBe(
     true
@@ -312,10 +345,11 @@ test('只改渲染层时跳过 Rust 门禁，改 Rust 时全跑', () => {
     classifyChangedFiles([
       'src-tauri/sidecar/src/fixtures/audio-tags/README.md',
     ])
-  ).toEqual({ docsOnly: false, rust: true });
+  ).toEqual({ docsOnly: false, rust: true, tuiOnly: false });
   expect(classifyChangedFiles(['.cargo/config.toml'])).toEqual({
     docsOnly: false,
     rust: true,
+    tuiOnly: false,
   });
 
   for (const [start, end] of PLATFORM_JOBS) {
@@ -333,19 +367,26 @@ test('只改渲染层时跳过 Rust 门禁，改 Rust 时全跑', () => {
 });
 
 test('分不清改动范围时一律全跑', () => {
-  expect(classifyChangedFiles([])).toEqual({ docsOnly: false, rust: true });
+  expect(classifyChangedFiles([])).toEqual({
+    docsOnly: false,
+    rust: true,
+    tuiOnly: false,
+  });
   expect(classify({ FORCE_FULL: 'true' })).toEqual({
     docsOnly: false,
     rust: true,
+    tuiOnly: false,
   });
   // Force push and first push give an all-zero or missing base.
   expect(classify({ BASE_SHA: '0'.repeat(40), HEAD_SHA: 'abc' })).toEqual({
     docsOnly: false,
     rust: true,
+    tuiOnly: false,
   });
   expect(classify({ HEAD_SHA: 'abc' })).toEqual({
     docsOnly: false,
     rust: true,
+    tuiOnly: false,
   });
 });
 
@@ -395,6 +436,7 @@ test('rename 同时分类旧路径和新路径，不能把 Rust 删除伪装成�
     expect(classifyChangedFiles(files ?? [])).toEqual({
       docsOnly: false,
       rust: true,
+      tuiOnly: false,
     });
   } finally {
     await rm(root, { recursive: true, force: true });

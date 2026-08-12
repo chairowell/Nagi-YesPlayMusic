@@ -4,9 +4,11 @@ export interface TauriVersionFields {
   cargoVersion: string | undefined;
   coreVersion: string | undefined;
   sidecarVersion: string | undefined;
+  tuiVersion: string | undefined;
   lockCargoVersion: string | undefined;
   lockCoreVersion: string | undefined;
   lockSidecarVersion: string | undefined;
+  lockTuiVersion: string | undefined;
   tag?: string;
 }
 

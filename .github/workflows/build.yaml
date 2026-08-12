@@ -22,6 +22,7 @@ jobs:
     outputs:
       docs-only: ${{ steps.classify.outputs.docs-only }}
       rust: ${{ steps.classify.outputs.rust }}
+      tui-only: ${{ steps.classify.outputs.tui-only }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,7 +71,7 @@ jobs:
   build-tauri-arm64:
     name: Tauri Apple Silicon
     needs: changes
-    if: needs.changes.outputs.docs-only != 'true'
+    if: needs.changes.outputs.docs-only != 'true' && needs.changes.outputs.tui-only != 'true'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -263,7 +264,7 @@ jobs:
   build-tauri-windows-x64:
     name: Tauri Windows x64
     needs: changes
-    if: needs.changes.outputs.docs-only != 'true'
+    if: needs.changes.outputs.docs-only != 'true' && needs.changes.outputs.tui-only != 'true'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -421,7 +422,7 @@ jobs:
   build-tauri-linux-x64:
     name: Tauri Ubuntu x64
     needs: changes
-    if: needs.changes.outputs.docs-only != 'true'
+    if: needs.changes.outputs.docs-only != 'true' && needs.changes.outputs.tui-only != 'true'
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -586,6 +587,72 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-ypm:
+    name: ypm ${{ matrix.label }}
+    needs: changes
+    if: needs.changes.outputs.docs-only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macos-aarch64
+            target: aarch64-apple-darwin
+            source: ypm
+            dest: ypm-macos-aarch64
+          - os: ubuntu-latest
+            label: linux-x64
+            target: x86_64-unknown-linux-gnu
+            source: ypm
+            dest: ypm-linux-x64
+          - os: windows-latest
+            label: windows-x64
+            target: x86_64-pc-windows-msvc
+            source: ypm.exe
+            dest: ypm-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy,rustfmt
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install audio build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: Test ypm and core
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui -p yesplaymusic-core --all-features
+
+      - name: Clippy ypm
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --all-targets -- -D warnings
+
+      - name: Build ypm
+        run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --target ${{ matrix.target }}
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p dist-ypm
+          cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" "dist-ypm/${{ matrix.dest }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.dest }}-${{ github.sha }}
+          path: dist-ypm/${{ matrix.dest }}
+          if-no-files-found: error
+
   draft-release:
     name: Draft GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -593,6 +660,7 @@ jobs:
       - build-tauri-arm64
       - build-tauri-windows-x64
       - build-tauri-linux-x64
+      - build-ypm
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -618,6 +686,12 @@ jobs:
         with:
           name: YesPlayMusic-linux-x64-${{ github.sha }}
           path: release/linux
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ypm-*-${{ github.sha }}
+          path: release/ypm
+          merge-multiple: true
 
       - name: Install updater artifact inspection tools
         run: |

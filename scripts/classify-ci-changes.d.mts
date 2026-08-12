@@ -1,6 +1,7 @@
 export interface CiChangeClassification {
   docsOnly: boolean;
   rust: boolean;
+  tuiOnly: boolean;
 }
 
 export function classifyChangedFiles(files: string[]): CiChangeClassification;
