@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::api::ResolvedTrack;
+use crate::api::{ResolvedTrack, SongRow};
 use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
 
@@ -12,6 +12,7 @@ pub enum View {
     Library,
     Search,
     Queue,
+    Login,
 }
 
 #[derive(Debug)]
@@ -38,6 +39,25 @@ pub enum Action {
     CoverLoaded {
         generation: u64,
         cover: PixelCover,
+    },
+    StartLogin,
+    LoginQrReady {
+        art: String,
+    },
+    LoginProgress {
+        message: String,
+    },
+    LoginFailed {
+        message: String,
+    },
+    LoggedIn {
+        nickname: String,
+    },
+    LibraryLoaded {
+        rows: Vec<SongRow>,
+    },
+    Notice {
+        message: String,
     },
 }
 

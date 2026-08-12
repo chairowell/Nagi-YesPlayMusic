@@ -1,6 +1,7 @@
 //! Pure view layer: reads AppState, writes the frame. No side effects.
 
 mod library;
+mod login;
 mod now_playing;
 mod text;
 
@@ -34,8 +35,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     match state.view {
         View::NowPlaying => now_playing::draw(frame, state, body),
         View::Library => library::draw(frame, state, body),
-        View::Search => placeholder(frame, state, body, "搜索（NCM 服务阶段接入）"),
-        View::Queue => placeholder(frame, state, body, "播放队列（NCM 服务阶段接入）"),
+        View::Search => placeholder(frame, state, body, "搜索（下一阶段接入）"),
+        View::Queue => placeholder(frame, state, body, "播放队列（下一阶段接入）"),
+        View::Login => login::draw(frame, state, body),
     }
     draw_hints(frame, state, hints_area);
 }
@@ -65,9 +67,11 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
         View::Library => &[
             ("Enter", "播放"),
             ("j/k", "选择"),
+            ("g", "登录"),
             ("z", "纯净"),
             ("q", "退出"),
         ],
+        View::Login => &[("Esc", "返回"), ("g", "刷新二维码"), ("q", "退出")],
         _ => &[
             ("Space", "暂停"),
             ("←/→", "seek"),
@@ -104,4 +108,11 @@ fn placeholder(frame: &mut Frame, state: &AppState, area: Rect, text: &str) {
 pub fn format_duration(duration: std::time::Duration) -> String {
     let total = duration.as_secs();
     format!("{:02}:{:02}", total / 60, total % 60)
+}
+
+pub fn format_ms(ms: i64) -> String {
+    if ms <= 0 {
+        return "--:--".into();
+    }
+    format_duration(std::time::Duration::from_millis(ms as u64))
 }

@@ -24,6 +24,7 @@ fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('3') | KeyCode::Char('/') => Some(Action::SwitchView(View::Search)),
         KeyCode::Char('4') => Some(Action::SwitchView(View::Queue)),
         KeyCode::Backspace | KeyCode::Esc => Some(Action::Back),
+        KeyCode::Char('g') => Some(Action::StartLogin),
         KeyCode::Char('z') => Some(Action::ToggleZen),
         KeyCode::Char(' ') => Some(Action::TogglePlay),
         KeyCode::Right => Some(Action::SeekBy(1)),

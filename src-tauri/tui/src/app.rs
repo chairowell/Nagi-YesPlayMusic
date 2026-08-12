@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::action::{Action, View, SEEK_STEP};
-use crate::api::{self, Ncm};
+use crate::api::{self, Ncm, QrStatus, SongRow};
 use crate::config::{self, Config};
 use crate::event;
 use crate::pixel::{self, PixelCover};
@@ -34,18 +34,15 @@ pub struct NowPlaying {
     pub album: String,
 }
 
-pub struct TrackRow {
-    pub title: String,
-    pub artist: String,
-    pub duration: String,
-}
-
 pub struct AppState {
     pub view: View,
     pub zen: bool,
     pub theme: Theme,
-    pub library: Vec<TrackRow>,
+    pub library: Vec<SongRow>,
     pub selected: usize,
+    pub nickname: Option<String>,
+    pub login_qr: Option<String>,
+    pub login_message: Option<String>,
     pub now: Option<NowPlaying>,
     pub cover: Option<PixelCover>,
     pub position: Duration,
@@ -63,25 +60,28 @@ impl AppState {
             view: View::NowPlaying,
             zen: false,
             theme: Theme::by_name(&config.theme),
-            // Fixture rows until real playlists land; resolved live via search.
+            // Demo rows for the logged-out state; replaced by 我喜欢的音乐
+            // right after login (id 0 = resolve via search).
             library: vec![
-                TrackRow {
+                SongRow {
+                    id: 0,
                     title: "反方向的钟".into(),
-                    artist: "".into(),
-                    duration: "--:--".into(),
+                    artist: String::new(),
+                    duration_ms: 0,
+                    pic_url: None,
                 },
-                TrackRow {
-                    title: "夜车电台".into(),
-                    artist: "白日梦岛".into(),
-                    duration: "03:45".into(),
-                },
-                TrackRow {
-                    title: "像素少年".into(),
-                    artist: "洄游".into(),
-                    duration: "03:58".into(),
+                SongRow {
+                    id: 0,
+                    title: "海阔天空".into(),
+                    artist: "Beyond".into(),
+                    duration_ms: 0,
+                    pic_url: None,
                 },
             ],
             selected: 0,
+            nickname: None,
+            login_qr: None,
+            login_message: None,
             now: None,
             cover: None,
             position: Duration::ZERO,
@@ -139,10 +139,46 @@ impl AppState {
                         self.duration = None;
                         self.status = Some("解析中…".into());
                         self.view = View::NowPlaying;
-                        spawn_resolve(fx, self.generation, row.title.clone(), row.artist.clone());
+                        spawn_resolve(fx, self.generation, row.clone());
                     }
                 }
             }
+            Action::StartLogin => {
+                if self.nickname.is_some() {
+                    self.status = Some("已经登录了".into());
+                } else {
+                    self.view = View::Login;
+                    self.login_qr = None;
+                    self.login_message = Some("正在获取二维码…".into());
+                    spawn_login(fx);
+                }
+            }
+            Action::LoginQrReady { art } => {
+                if self.view == View::Login {
+                    self.login_qr = Some(art);
+                    self.login_message = Some("用网易云音乐 App 扫码".into());
+                }
+            }
+            Action::LoginProgress { message } | Action::LoginFailed { message } => {
+                if self.view == View::Login {
+                    self.login_message = Some(message);
+                }
+            }
+            Action::LoggedIn { nickname } => {
+                self.nickname = Some(nickname.clone());
+                self.status = Some(format!("欢迎，{nickname}"));
+                if self.view == View::Login {
+                    self.view = View::Library;
+                }
+                self.login_qr = None;
+                spawn_fetch_library(fx);
+            }
+            Action::LibraryLoaded { rows } => {
+                self.status = Some(format!("我喜欢的音乐 · {} 首", rows.len()));
+                self.library = rows;
+                self.selected = 0;
+            }
+            Action::Notice { message } => self.status = Some(message),
             Action::TrackResolved { generation, track } => {
                 if generation == self.generation {
                     self.now = Some(NowPlaying {
@@ -206,15 +242,104 @@ impl AppState {
     }
 }
 
-fn spawn_resolve(fx: &Effects, generation: u64, title: String, artist: String) {
+fn spawn_resolve(fx: &Effects, generation: u64, row: SongRow) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        let action = match ncm.resolve_for_play(&title, &artist).await {
+        let resolved = if row.id > 0 {
+            ncm.resolve_by_id(&row).await
+        } else {
+            ncm.resolve_for_play(&row.title, &row.artist).await
+        };
+        let action = match resolved {
             Ok(track) => Action::TrackResolved { generation, track },
             Err(error) => Action::ResolveFailed {
                 generation,
                 message: error.to_string(),
+            },
+        };
+        let _ = actions.send(action);
+    });
+}
+
+fn spawn_login(fx: &Effects) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let key = match ncm.qr_key().await {
+            Ok(key) => key,
+            Err(error) => {
+                let _ = actions.send(Action::LoginFailed {
+                    message: error.to_string(),
+                });
+                return;
+            }
+        };
+        let art = match api::qr_unicode(&Ncm::qr_login_url(&key)) {
+            Ok(art) => art,
+            Err(error) => {
+                let _ = actions.send(Action::LoginFailed {
+                    message: error.to_string(),
+                });
+                return;
+            }
+        };
+        if actions.send(Action::LoginQrReady { art }).is_err() {
+            return;
+        }
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            match ncm.qr_check(&key).await {
+                Ok(QrStatus::Waiting) => {}
+                Ok(QrStatus::Scanned) => {
+                    if actions
+                        .send(Action::LoginProgress {
+                            message: "已扫码，在手机上确认…".into(),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Ok(QrStatus::Expired) => {
+                    let _ = actions.send(Action::LoginFailed {
+                        message: "二维码已过期，按 g 重新获取".into(),
+                    });
+                    return;
+                }
+                Ok(QrStatus::Success) => {
+                    let nickname = ncm
+                        .account()
+                        .await
+                        .map(|(_, nickname)| nickname)
+                        .unwrap_or_default();
+                    let _ = actions.send(Action::LoggedIn { nickname });
+                    return;
+                }
+                Err(error) => {
+                    let _ = actions.send(Action::LoginFailed {
+                        message: error.to_string(),
+                    });
+                    return;
+                }
+            }
+        }
+    });
+}
+
+fn spawn_fetch_library(fx: &Effects) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let (uid, _) = ncm.account().await?;
+            ncm.liked_songs(uid).await
+        }
+        .await;
+        let action = match result {
+            Ok(rows) => Action::LibraryLoaded { rows },
+            Err(error) => Action::Notice {
+                message: format!("歌单加载失败：{error}"),
             },
         };
         let _ = actions.send(action);
@@ -279,6 +404,20 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         ncm: Arc::new(Ncm::new(config::session_path(), config.quality.clone())),
         actions: actions_tx,
     };
+    // Restore a persisted session: greet + load 我喜欢的音乐.
+    if fx.ncm.is_logged_in() {
+        let ncm = fx.ncm.clone();
+        let actions = fx.actions.clone();
+        tokio::spawn(async move {
+            let action = match ncm.account().await {
+                Ok((_, nickname)) => Action::LoggedIn { nickname },
+                Err(_) => Action::Notice {
+                    message: "登录态已失效，按 g 重新扫码".into(),
+                },
+            };
+            let _ = actions.send(action);
+        });
+    }
     let mut state = AppState::new(config);
     terminal.draw(|frame| ui::draw(frame, &state))?;
 

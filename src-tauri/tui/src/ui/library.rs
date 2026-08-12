@@ -28,7 +28,16 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
 
 fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
+    let account = match &state.nickname {
+        Some(nickname) => Line::from(Span::styled(
+            format!("♪ {nickname}"),
+            Style::new().fg(theme.accent2),
+        )),
+        None => Line::from(Span::styled("未登录 · 按 g", Style::new().fg(theme.accent2))),
+    };
     let lines = vec![
+        account,
+        Line::default(),
         Line::from(Span::styled("▸ 我喜欢的音乐", Style::new().fg(theme.accent))),
         Line::from(Span::styled("  每日推荐", Style::new().fg(theme.dim))),
         Line::from(Span::styled("  私人FM", Style::new().fg(theme.dim))),
@@ -63,7 +72,7 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect) {
                 index + 1,
                 pad_display(&row.title, 24),
                 pad_display(&row.artist, 14),
-                row.duration
+                super::format_ms(row.duration_ms)
             ),
             style,
         )));
