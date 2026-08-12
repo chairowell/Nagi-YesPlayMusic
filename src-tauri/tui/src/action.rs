@@ -47,6 +47,8 @@ pub enum Action {
     JumpBottom,
     ConfirmYes,
     Mouse(crossterm::event::MouseEvent),
+    RawKey(crossterm::event::KeyEvent),
+    Paste(String),
     Resize,
     Player(PlayerEvent),
     TrackResolved {
@@ -89,6 +91,10 @@ pub enum Action {
     PrefetchReady {
         index: usize,
         track: ResolvedTrack,
+    },
+    SearchResults {
+        seq: u64,
+        rows: Vec<SongRow>,
     },
     LikedIds {
         ids: std::collections::HashSet<i64>,

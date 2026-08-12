@@ -2,6 +2,7 @@
 
 mod library;
 mod login;
+mod search;
 mod now_playing;
 mod queue;
 mod text;
@@ -57,7 +58,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
         match state.view {
             View::NowPlaying => now_playing::draw(frame, state, body, hits),
             View::Library => library::draw(frame, state, body, hits),
-            View::Search => placeholder(frame, state, body, Key::SearchPlaceholder),
+            View::Search => search::draw(frame, state, body, hits),
             View::Queue => queue::draw(frame, state, body, hits),
             View::Login => login::draw(frame, state, body),
         }
@@ -191,6 +192,11 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
             ("i", Key::RefreshQr),
             ("q", Key::Quit),
         ],
+        View::Search => &[
+            ("Enter", Key::Search),
+            ("Tab/↓", Key::Select),
+            ("Esc", Key::Back),
+        ],
         _ => &[
             ("Space", Key::Pause),
             ("←/→", Key::Seek),
@@ -212,16 +218,6 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn placeholder(frame: &mut Frame, state: &AppState, area: Rect, key: Key) {
-    let line = Line::from(Span::styled(i18n::t(key), Style::new().fg(state.theme.dim)));
-    let [_, middle, _] = Layout::vertical([
-        Constraint::Percentage(45),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .areas(area);
-    frame.render_widget(Paragraph::new(line).centered(), middle);
-}
 
 pub fn format_duration(duration: std::time::Duration) -> String {
     let total = duration.as_secs();

@@ -10,11 +10,12 @@ use crate::ui::Hits;
 
 pub fn action_for(event: Event) -> Option<Action> {
     match event {
-        Event::Key(key) if key.kind != KeyEventKind::Release => key_action(key),
+        // Keys route through the reducer, which knows whether a text
+        // input owns the keyboard right now.
+        Event::Key(key) if key.kind != KeyEventKind::Release => Some(Action::RawKey(key)),
         Event::Mouse(mouse) => Some(Action::Mouse(mouse)),
         Event::Resize(_, _) => Some(Action::Resize),
-        // Dropped files arrive as a paste; nothing to do with it yet.
-        Event::Paste(_) => None,
+        Event::Paste(text) => Some(Action::Paste(text)),
         _ => None,
     }
 }
@@ -99,7 +100,7 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
     }
 }
 
-fn key_action(key: KeyEvent) -> Option<Action> {
+pub fn key_action(key: KeyEvent) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return match key.code {
             KeyCode::Char('c') => Some(Action::Quit),
@@ -149,22 +150,22 @@ mod tests {
     }
 
     #[test]
-    fn arrows_and_vim_keys_map_to_the_same_actions() {
+    fn keys_arrive_raw_and_map_through_key_action() {
+        // action_for defers mapping so text inputs can own the keyboard.
         assert!(matches!(
             action_for(key(KeyCode::Down)),
+            Some(Action::RawKey(_))
+        ));
+        let map = |code| key_action(KeyEvent::new(code, KeyModifiers::NONE));
+        assert!(matches!(map(KeyCode::Down), Some(Action::MoveSelection(1))));
+        assert!(matches!(
+            map(KeyCode::Char('j')),
             Some(Action::MoveSelection(1))
         ));
         assert!(matches!(
-            action_for(key(KeyCode::Char('j'))),
-            Some(Action::MoveSelection(1))
-        ));
-        assert!(matches!(
-            action_for(key(KeyCode::Char('2'))),
+            map(KeyCode::Char('2')),
             Some(Action::SwitchView(View::Library))
         ));
-        assert!(matches!(
-            action_for(key(KeyCode::Char('z'))),
-            Some(Action::ToggleZen)
-        ));
+        assert!(matches!(map(KeyCode::Char('z')), Some(Action::ToggleZen)));
     }
 }

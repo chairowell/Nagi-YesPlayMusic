@@ -97,6 +97,11 @@ pub struct AppState {
     prefetched: Option<(usize, api::ResolvedTrack)>,
     enter_replaces_queue: bool,
     pub nickname: Option<String>,
+    pub search_query: String,
+    pub search_results: Vec<SongRow>,
+    pub search_input: bool,
+    pub searching: bool,
+    search_seq: u64,
     pub login_qr: Option<String>,
     pub login_message: Option<String>,
     pub now: Option<NowPlaying>,
@@ -164,6 +169,11 @@ impl AppState {
             prefetched: None,
             enter_replaces_queue: config.enter_replaces_queue,
             nickname: None,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_input: true,
+            searching: false,
+            search_seq: 0,
             login_qr: None,
             login_message: None,
             now: None,
@@ -220,6 +230,44 @@ impl AppState {
                 self.theme.palette,
                 desired,
             ));
+        }
+    }
+
+    fn handle_search_key(&mut self, fx: &Effects, key: crossterm::event::KeyEvent) {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            if key.code == KeyCode::Char('c') {
+                self.confirm_quit = true;
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Char(c) => self.search_query.push(c),
+            KeyCode::Backspace => {
+                self.search_query.pop();
+            }
+            KeyCode::Enter => {
+                let query = self.search_query.trim().to_owned();
+                if !query.is_empty() {
+                    self.searching = true;
+                    self.search_seq += 1;
+                    spawn_search(fx, self.search_seq, query);
+                }
+            }
+            KeyCode::Esc => {
+                if self.search_query.is_empty() {
+                    self.view = View::NowPlaying;
+                } else {
+                    self.search_query.clear();
+                }
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                if !self.search_results.is_empty() {
+                    self.search_input = false;
+                    self.selected = 0;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -302,7 +350,7 @@ impl AppState {
             Source::Liked => 0,
             Source::Daily => 1,
             Source::Fm => 2,
-            Source::Cloud => 3,
+            Source::Cloud | Source::Search => 3,
         }
     }
 
@@ -369,6 +417,25 @@ impl AppState {
             }
             return;
         }
+        // Text-input mode: the search box owns the keyboard.
+        if let Action::RawKey(key) = &action {
+            if self.view == View::Search && self.search_input && !self.confirm_quit {
+                self.handle_search_key(fx, *key);
+                return;
+            }
+            let Some(mapped) = event::key_action(*key) else {
+                return;
+            };
+            self.update(mapped, fx);
+            return;
+        }
+        if let Action::Paste(text) = &action {
+            if self.view == View::Search && self.search_input {
+                self.search_query
+                    .push_str(&text.replace(['\n', '\r'], " "));
+            }
+            return;
+        }
         // vim gg: a second bare `g` right after the first jumps to the top.
         let was_pending_g = self.pending_g;
         self.pending_g = false;
@@ -390,9 +457,16 @@ impl AppState {
             }
             Action::ConfirmYes => {}
             Action::Quit => self.confirm_quit = true,
-            Action::SwitchView(view) => self.view = view,
+            Action::SwitchView(view) => {
+                self.view = view;
+                if view == View::Search {
+                    self.search_input = true;
+                }
+            }
             Action::Back => {
-                if self.view == View::Library && !self.sidebar_focus {
+                if self.view == View::Search && !self.search_input {
+                    self.search_input = true;
+                } else if self.view == View::Library && !self.sidebar_focus {
                     self.sidebar_focus = true;
                     self.sidebar_selected = self.source_index();
                 } else {
@@ -428,6 +502,7 @@ impl AppState {
                 let len = match self.view {
                     View::Library => self.library.len(),
                     View::Queue => self.queue.len(),
+                    View::Search => self.search_results.len(),
                     _ => 0,
                 };
                 if len > 0 {
@@ -459,6 +534,15 @@ impl AppState {
                 View::Queue => {
                     if let Some(row) = self.queue.get(self.selected).cloned() {
                         self.queue_pos = Some(self.selected);
+                        self.play_row(fx, row);
+                        self.view = View::NowPlaying;
+                    }
+                }
+                View::Search if !self.search_input => {
+                    if let Some(row) = self.search_results.get(self.selected).cloned() {
+                        self.queue = self.search_results.clone();
+                        self.queue_pos = Some(self.selected);
+                        self.queue_source = Source::Search;
                         self.play_row(fx, row);
                         self.view = View::NowPlaying;
                     }
@@ -519,6 +603,7 @@ impl AppState {
                 }
             }
             Action::Mouse(_) => {} // resolved against Hits in the event loop
+            Action::RawKey(_) | Action::Paste(_) => {} // handled before this match
             Action::StartLogin => {
                 if self.nickname.is_some() {
                     self.status = Some(i18n::t(Key::AlreadyLoggedIn).into());
@@ -562,6 +647,16 @@ impl AppState {
                     self.library = rows;
                     self.selected = 0;
                     self.library_synced = true;
+                }
+            }
+            Action::SearchResults { seq, rows } => {
+                if seq == self.search_seq {
+                    self.searching = false;
+                    self.search_results = rows;
+                    if !self.search_results.is_empty() {
+                        self.search_input = false;
+                        self.selected = 0;
+                    }
                 }
             }
             Action::Notice { message } => self.status = Some(message),
@@ -843,7 +938,7 @@ fn spawn_fetch_source(fx: &Effects, source: Source) {
             Source::Daily => ncm.daily_songs().await,
             Source::Fm => ncm.personal_fm().await,
             Source::Cloud => ncm.cloud_songs().await,
-            Source::Liked => unreachable!("handled above"),
+            Source::Liked | Source::Search => unreachable!("handled above"),
         };
         let action = match result {
             Ok(rows) => Action::LibraryLoaded { source, rows },
@@ -852,6 +947,15 @@ fn spawn_fetch_source(fx: &Effects, source: Source) {
             },
         };
         let _ = actions.send(action);
+    });
+}
+
+fn spawn_search(fx: &Effects, seq: u64, query: String) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let rows = ncm.search_rows(&query, 30).await.unwrap_or_default();
+        let _ = actions.send(Action::SearchResults { seq, rows });
     });
 }
 

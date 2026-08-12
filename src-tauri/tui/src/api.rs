@@ -40,6 +40,7 @@ pub enum Source {
     Daily,
     Fm,
     Cloud,
+    Search,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -331,6 +332,16 @@ impl Ncm {
             .as_array()
             .cloned()
             .unwrap_or_default())
+    }
+
+    /// Song search mapped straight to typed rows.
+    pub async fn search_rows(&self, keywords: &str, limit: u32) -> Result<Vec<SongRow>> {
+        Ok(self
+            .search_songs(keywords, limit)
+            .await?
+            .iter()
+            .map(song_row)
+            .collect())
     }
 
     /// Resolve a known song id straight to a playable track.
