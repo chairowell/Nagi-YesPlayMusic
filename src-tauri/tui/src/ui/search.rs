@@ -95,7 +95,11 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         } else {
             Style::new().fg(theme.fg)
         };
-        let liked = if state.liked.contains(&row.id) { "♥" } else { " " };
+        let liked = if state.liked.contains(&row.id) {
+            "♥"
+        } else {
+            " "
+        };
         let mut line_style = style;
         if selected {
             line_style = line_style.add_modifier(Modifier::BOLD);

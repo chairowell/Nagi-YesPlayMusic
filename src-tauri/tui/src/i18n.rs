@@ -19,6 +19,7 @@ impl Lang {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::enum_variant_names)] // Op*/Api* prefixes group the key space deliberately
 pub enum Key {
     Resolving,
     QueueFinished,

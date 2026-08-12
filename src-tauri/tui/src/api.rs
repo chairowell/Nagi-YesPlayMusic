@@ -74,6 +74,7 @@ impl Ncm {
         self.session.read().is_ok_and(|session| session.is_some())
     }
 
+    #[allow(dead_code)] // wired by the future `:` command palette
     pub fn logout(&self) -> Result<()> {
         *self.session.write().expect("session lock") = None;
         self.store
@@ -250,7 +251,10 @@ impl Ncm {
             .personal_fm(&self.query())
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
-        let songs = response.body["data"].as_array().cloned().unwrap_or_default();
+        let songs = response.body["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         Ok(songs.iter().map(song_row_flex).collect())
     }
 
@@ -260,7 +264,10 @@ impl Ncm {
             .user_cloud(&self.query())
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
-        let items = response.body["data"].as_array().cloned().unwrap_or_default();
+        let items = response.body["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         Ok(items
             .iter()
             .map(|item| {
@@ -409,7 +416,10 @@ fn song_row_flex(song: &Value) -> SongRow {
         .as_str()
         .or_else(|| song["album"]["picUrl"].as_str())
         .map(str::to_owned);
-    let duration_ms = song["dt"].as_i64().or_else(|| song["duration"].as_i64()).unwrap_or(0);
+    let duration_ms = song["dt"]
+        .as_i64()
+        .or_else(|| song["duration"].as_i64())
+        .unwrap_or(0);
     SongRow {
         id: song["id"].as_i64().unwrap_or(0),
         title: song["name"].as_str().unwrap_or("?").to_owned(),

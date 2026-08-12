@@ -62,7 +62,7 @@ pub fn vinyl(palette: &[Rgb], cell_width: u16, cell_height: u16) -> PixelCover {
         let in_shine = (-2.5..-1.9).contains(&angle) || (0.6..1.2).contains(&angle);
         if in_shine && r > radius * 0.45 {
             shine
-        } else if (r as u32) % 4 == 0 {
+        } else if (r as u32).is_multiple_of(4) {
             ring
         } else {
             disc

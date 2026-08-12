@@ -264,11 +264,9 @@ impl AppState {
                     self.search_query.clear();
                 }
             }
-            KeyCode::Down | KeyCode::Tab => {
-                if !self.search_results.is_empty() {
-                    self.search_input = false;
-                    self.selected = 0;
-                }
+            KeyCode::Down | KeyCode::Tab if !self.search_results.is_empty() => {
+                self.search_input = false;
+                self.selected = 0;
             }
             _ => {}
         }
@@ -303,7 +301,9 @@ impl AppState {
         if self.play_mode == PlayMode::Shuffle {
             return;
         }
-        let Some(position) = self.queue_pos else { return };
+        let Some(position) = self.queue_pos else {
+            return;
+        };
         let next = position + 1;
         if self.prefetched.as_ref().is_some_and(|(i, _)| *i == next) {
             return;
@@ -439,8 +439,7 @@ impl AppState {
         }
         if let Action::Paste(text) = &action {
             if self.view == View::Search && self.search_input {
-                self.search_query
-                    .push_str(&text.replace(['\n', '\r'], " "));
+                self.search_query.push_str(&text.replace(['\n', '\r'], " "));
             }
             return;
         }
@@ -1040,8 +1039,6 @@ fn random_index(len: usize, current: usize) -> usize {
     }
     pick
 }
-
-
 
 fn spawn_cover_fetch(fx: &Effects, generation: u64, pic_url: String) {
     let actions = fx.actions.clone();

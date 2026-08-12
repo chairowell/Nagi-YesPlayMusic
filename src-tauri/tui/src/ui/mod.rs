@@ -2,9 +2,9 @@
 
 mod library;
 mod login;
-mod search;
 mod now_playing;
 mod queue;
+mod search;
 mod text;
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -217,7 +217,6 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
-
 
 pub fn format_duration(duration: std::time::Duration) -> String {
     let total = duration.as_secs();

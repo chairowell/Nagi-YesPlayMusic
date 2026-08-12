@@ -19,11 +19,20 @@ use tokio::sync::mpsc;
 
 #[derive(Debug)]
 pub enum PlayerCommand {
-    PlayFile { generation: u64, path: PathBuf },
-    PlayUrl { generation: u64, url: String },
+    /// Local-file playback: reserved for the core cache integration.
+    #[allow(dead_code)]
+    PlayFile {
+        generation: u64,
+        path: PathBuf,
+    },
+    PlayUrl {
+        generation: u64,
+        url: String,
+    },
     TogglePause,
     SeekTo(Duration),
     SetVolume(f32),
+    #[allow(dead_code)] // stop control lands with the command palette
     Stop,
 }
 

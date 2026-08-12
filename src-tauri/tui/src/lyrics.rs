@@ -43,7 +43,11 @@ pub fn line_index_at(lines: &[LyricLine], position: Duration) -> Option<usize> {
 }
 
 fn parse_timed_text(input: &str) -> Vec<TimedText> {
-    let offset = input.lines().filter_map(parse_offset).last().unwrap_or(0);
+    let offset = input
+        .lines()
+        .filter_map(parse_offset)
+        .next_back()
+        .unwrap_or(0);
     let mut lines = Vec::new();
     for raw_line in input.lines() {
         parse_lyric_line(raw_line, offset, &mut lines);
@@ -59,10 +63,7 @@ fn parse_lyric_line(raw_line: &str, offset: i64, output: &mut Vec<TimedText>) {
     }
 
     let mut timestamps = Vec::new();
-    loop {
-        let Some(after_open) = remaining.strip_prefix('[') else {
-            break;
-        };
+    while let Some(after_open) = remaining.strip_prefix('[') {
         let Some(close) = after_open.find(']') else {
             break;
         };
@@ -189,11 +190,7 @@ fn merge_translations(lines: &mut [LyricLine], translations: &[TimedText]) {
 }
 
 fn duration_distance(left: Duration, right: Duration) -> Duration {
-    if left >= right {
-        left - right
-    } else {
-        right - left
-    }
+    left.abs_diff(right)
 }
 
 #[cfg(test)]
