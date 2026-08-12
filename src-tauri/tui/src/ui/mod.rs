@@ -2,6 +2,7 @@
 
 mod library;
 mod now_playing;
+mod text;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;

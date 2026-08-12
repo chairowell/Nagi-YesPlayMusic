@@ -9,6 +9,8 @@ use ratatui::Frame;
 
 use crate::app::AppState;
 
+use super::text::pad_display;
+
 const SIDEBAR_WIDTH: u16 = 16;
 const COLLAPSE_BELOW: u16 = 50;
 
@@ -39,7 +41,13 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
     let mut lines = Vec::with_capacity(state.library.len() + 1);
     lines.push(Line::from(Span::styled(
-        format!("  {:>3}  {:<24} {:<14} {:>5}", "#", "歌名", "歌手", "时长"),
+        format!(
+            "  {:>3}  {} {} {:>5}",
+            "#",
+            pad_display("歌名", 24),
+            pad_display("歌手", 14),
+            "时长"
+        ),
         Style::new().fg(theme.faint),
     )));
     for (index, row) in state.library.iter().enumerate() {
@@ -51,10 +59,10 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect) {
         };
         lines.push(Line::from(Span::styled(
             format!(
-                "  {:>3}  {:<24} {:<14} {:>5}",
+                "  {:>3}  {} {} {:>5}",
                 index + 1,
-                row.title,
-                row.artist,
+                pad_display(&row.title, 24),
+                pad_display(&row.artist, 14),
                 row.duration
             ),
             style,

@@ -4,6 +4,7 @@ mod action;
 mod app;
 mod config;
 mod event;
+pub mod pixel;
 mod player;
 mod theme;
 mod ui;
