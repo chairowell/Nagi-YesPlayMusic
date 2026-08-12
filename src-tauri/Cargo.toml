@@ -8,7 +8,7 @@ rust-version = "1.88"
 license = "MIT"
 
 [workspace]
-members = ["core", "sidecar"]
+members = ["core", "sidecar", "tui"]
 resolver = "2"
 
 [build-dependencies]
