@@ -42,6 +42,7 @@ pub enum Action {
     GKey,
     CycleMode,
     ToggleLike,
+    SetVolumeTo(f32),
     OpenSource(usize),
     JumpBottom,
     ConfirmYes,
@@ -84,6 +85,10 @@ pub enum Action {
     },
     FmMore {
         rows: Vec<SongRow>,
+    },
+    PrefetchReady {
+        index: usize,
+        track: ResolvedTrack,
     },
     LikedIds {
         ids: std::collections::HashSet<i64>,

@@ -8,7 +8,10 @@ use ratatui::widgets::Widget;
 type Rgb = (u8, u8, u8);
 
 const BAYER_4X4: [[i16; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-const DITHER_RANGE: i16 = 44;
+const DITHER_RANGE: i16 = 20;
+// Below this squared distance the undithered match is faithful enough;
+// dithering there would only speckle smooth gradients (the dirty-logo bug).
+const CLEAN_MATCH_SQ: i32 = 1200;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PixelCell {
@@ -108,14 +111,22 @@ pub fn from_image_bytes(
             let [red, green, blue] = resized.get_pixel(x, y).0;
             let target_x = x + offset_x;
             let target_y = y + offset_y;
-            let offset = bayer_offset(target_x, target_y);
-            let dithered = (
-                apply_offset(red, offset),
-                apply_offset(green, offset),
-                apply_offset(blue, offset),
-            );
             let index = target_y as usize * target_width as usize + target_x as usize;
-            pixels[index] = nearest_color(dithered, palette);
+            let plain = nearest_color((red, green, blue), palette);
+            let error = color_distance_sq((red, green, blue), plain);
+            pixels[index] = if error <= CLEAN_MATCH_SQ {
+                plain
+            } else {
+                let offset = bayer_offset(target_x, target_y);
+                nearest_color(
+                    (
+                        apply_offset(red, offset),
+                        apply_offset(green, offset),
+                        apply_offset(blue, offset),
+                    ),
+                    palette,
+                )
+            };
         }
     }
 
@@ -182,6 +193,13 @@ fn fitted_dimensions(
             .clamp(1, target_width_64);
         (width as u32, target_height)
     }
+}
+
+fn color_distance_sq(a: Rgb, b: Rgb) -> i32 {
+    let dr = a.0 as i32 - b.0 as i32;
+    let dg = a.1 as i32 - b.1 as i32;
+    let db = a.2 as i32 - b.2 as i32;
+    dr * dr + dg * dg + db * db
 }
 
 fn bayer_offset(x: u32, y: u32) -> i16 {

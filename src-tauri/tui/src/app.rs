@@ -35,19 +35,20 @@ pub enum PlayMode {
 }
 
 impl PlayMode {
-    pub fn label_key(self) -> crate::i18n::Key {
-        match self {
-            PlayMode::Sequential => crate::i18n::Key::ModeSequential,
-            PlayMode::Shuffle => crate::i18n::Key::ModeShuffle,
-            PlayMode::RepeatOne => crate::i18n::Key::ModeRepeatOne,
-        }
-    }
-
     fn next(self) -> Self {
         match self {
             PlayMode::Sequential => PlayMode::Shuffle,
             PlayMode::Shuffle => PlayMode::RepeatOne,
             PlayMode::RepeatOne => PlayMode::Sequential,
+        }
+    }
+
+    /// Progress-row glyphs (the artifact mockup style), not words.
+    pub fn icon(self) -> &'static str {
+        match self {
+            PlayMode::Sequential => "»",
+            PlayMode::Shuffle => "⇆",
+            PlayMode::RepeatOne => "↺¹",
         }
     }
 }
@@ -91,6 +92,9 @@ pub struct AppState {
     pub sidebar_focus: bool,
     pub sidebar_selected: usize,
     pending_fm_next: bool,
+    cover_prefetched: bool,
+    /// Next queue item resolved ahead of time — track switches feel instant.
+    prefetched: Option<(usize, api::ResolvedTrack)>,
     enter_replaces_queue: bool,
     pub nickname: Option<String>,
     pub login_qr: Option<String>,
@@ -156,6 +160,8 @@ impl AppState {
             sidebar_focus: false,
             sidebar_selected: 0,
             pending_fm_next: false,
+            cover_prefetched: false,
+            prefetched: None,
             enter_replaces_queue: config.enter_replaces_queue,
             nickname: None,
             login_qr: None,
@@ -217,6 +223,47 @@ impl AppState {
         }
     }
 
+    fn apply_resolved(&mut self, fx: &Effects, generation: u64, track: api::ResolvedTrack) {
+        self.current_track_id = Some(track.id);
+        self.now = Some(NowPlaying {
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            album: String::new(),
+        });
+        self.duration =
+            (track.duration_ms > 0).then(|| Duration::from_millis(track.duration_ms as u64));
+        self.status = Some(i18n::t_playing(&track.kind));
+        fx.player.send(PlayerCommand::PlayUrl {
+            generation,
+            url: track.url.clone(),
+        });
+        if !self.cover_prefetched {
+            if let Some(pic_url) = track.pic_url.clone() {
+                spawn_cover_fetch(fx, generation, pic_url);
+            }
+        }
+        spawn_fetch_lyrics(fx, generation, track.id);
+        self.prefetch_next(fx);
+    }
+
+    /// Resolve the sequential next queue item ahead of time (shuffle is
+    /// unpredictable, so it opts out).
+    fn prefetch_next(&mut self, fx: &Effects) {
+        if self.play_mode == PlayMode::Shuffle {
+            return;
+        }
+        let Some(position) = self.queue_pos else { return };
+        let next = position + 1;
+        if self.prefetched.as_ref().is_some_and(|(i, _)| *i == next) {
+            return;
+        }
+        if let Some(row) = self.queue.get(next).cloned() {
+            if row.id > 0 {
+                spawn_prefetch(fx, next, row);
+            }
+        }
+    }
+
     /// Reset the now-playing surface and kick off resolution for a row.
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
         self.ensure_placeholder();
@@ -232,6 +279,21 @@ impl AppState {
         self.position = Duration::ZERO;
         self.duration = None;
         self.status = Some(i18n::t(Key::Resolving).into());
+        // Cover art is independent of URL resolution: start fetching now
+        // (queue rows carry pic_url) instead of waiting for TrackResolved.
+        self.cover_prefetched = row.pic_url.is_some();
+        if let Some(pic_url) = row.pic_url.clone() {
+            spawn_cover_fetch(fx, self.generation, pic_url);
+        }
+        // Prefetched? Play instantly, skip the resolve round-trip.
+        if let Some((_, track)) = self
+            .prefetched
+            .take_if(|(_, track)| track.id == row.id && row.id > 0)
+        {
+            let generation = self.generation;
+            self.apply_resolved(fx, generation, track);
+            return;
+        }
         spawn_resolve(fx, self.generation, row);
     }
 
@@ -408,6 +470,10 @@ impl AppState {
             Action::CycleMode => {
                 self.play_mode = self.play_mode.next();
             }
+            Action::SetVolumeTo(ratio) => {
+                self.volume = ratio.clamp(0.0, 1.0);
+                fx.player.send(PlayerCommand::SetVolume(self.volume));
+            }
             Action::ToggleLike => {
                 if let Some(id) = self.current_track_id {
                     let like = !self.liked.contains(&id);
@@ -506,23 +572,14 @@ impl AppState {
             }
             Action::TrackResolved { generation, track } => {
                 if generation == self.generation {
-                    self.current_track_id = Some(track.id);
-                    self.now = Some(NowPlaying {
-                        title: track.title.clone(),
-                        artist: track.artist.clone(),
-                        album: String::new(),
-                    });
-                    self.duration = (track.duration_ms > 0)
-                        .then(|| Duration::from_millis(track.duration_ms as u64));
-                    self.status = Some(i18n::t_playing(&track.kind));
-                    fx.player.send(PlayerCommand::PlayUrl {
-                        generation,
-                        url: track.url.clone(),
-                    });
-                    if let Some(pic_url) = track.pic_url {
-                        spawn_cover_fetch(fx, generation, pic_url);
-                    }
-                    spawn_fetch_lyrics(fx, generation, track.id);
+                    self.apply_resolved(fx, generation, track);
+                }
+            }
+            Action::PrefetchReady { index, track } => {
+                // Guard against a rebuilt queue: only keep it if the row
+                // at that index is still the same song.
+                if self.queue.get(index).is_some_and(|row| row.id == track.id) {
+                    self.prefetched = Some((index, track));
                 }
             }
             Action::ResolveFailed {
@@ -798,6 +855,16 @@ fn spawn_fetch_source(fx: &Effects, source: Source) {
     });
 }
 
+fn spawn_prefetch(fx: &Effects, index: usize, row: SongRow) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        if let Ok(track) = ncm.resolve_by_id(&row).await {
+            let _ = actions.send(Action::PrefetchReady { index, track });
+        }
+    });
+}
+
 fn spawn_fm_more(fx: &Effects) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
@@ -891,7 +958,7 @@ fn render_idle_art(
 /// Idle art scales with the terminal like covers do.
 fn desired_idle_cells() -> (u16, u16) {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    let height = (rows * 2 / 5).clamp(10, 32);
+    let height = rows.saturating_sub(12).clamp(12, 44);
     let width = (height * 2).min(cols.saturating_sub(4).max(16));
     (width, width / 2)
 }

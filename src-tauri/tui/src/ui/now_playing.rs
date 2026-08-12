@@ -30,7 +30,8 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let (cover_w, cover_h) = state
         .cover
         .as_ref()
-        .map(|cover| (cover.width, cover.height))
+        .or(state.placeholder.as_ref())
+        .map(|art| (art.width, art.height))
         .unwrap_or(COVER_GRID);
 
     match state.layout {
@@ -172,7 +173,9 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect, centered_text: boo
     let theme = &state.theme;
     let indent = if centered_text { "" } else { "  " };
     let mut lines = Vec::new();
-    lines.push(Line::default());
+    if centered_text {
+        lines.push(Line::default());
+    }
     if let Some(now) = &state.now {
         lines.push(Line::from(Span::styled(
             format!("{indent}{}", now.title),
@@ -258,19 +261,18 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let icon = if state.paused { "⏸" } else { "▶" };
-    let mode_label = crate::i18n::t(state.play_mode.label_key());
+    let mode_icon = state.play_mode.icon();
     let liked = state
         .current_track_id
         .map(|id| state.liked.contains(&id))
         .unwrap_or(false);
-    let heart = if liked { "♥" } else { "♡" };
     let elapsed = format_duration(state.position);
     let total = state
         .duration
         .map(format_duration)
         .unwrap_or_else(|| "--:--".into());
 
-    let fixed = icon.len() + elapsed.len() + total.len() + display_width(mode_label) + 22;
+    let fixed = icon.len() + elapsed.len() + total.len() + display_width(mode_icon) + 22;
     let bar_width = (area.width as usize).saturating_sub(fixed).max(8);
     let ratio = match state.duration {
         Some(duration) if !duration.is_zero() => {
@@ -324,20 +326,40 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         (),
     ));
     spans.push(Span::raw("  "));
+    // Filled+bright = liked, hollow+faint = not — glyph AND color both signal.
+    if liked {
+        spans.push(Span::styled("♥", Style::new().fg(theme.accent2)));
+    } else {
+        spans.push(Span::styled("♡", Style::new().fg(theme.faint)));
+    }
     spans.push(Span::styled(
-        heart.to_owned(),
-        Style::new().fg(theme.accent2),
+        format!("  {mode_icon}"),
+        Style::new().fg(theme.dim),
     ));
-    spans.push(Span::styled(
-        format!("  {mode_label}"),
-        Style::new().fg(theme.faint),
+    // Battery-style volume: click or drag inside the bracket to set.
+    const VOLUME_CELLS: usize = 10;
+    let filled = (state.volume.clamp(0.0, 1.0) * VOLUME_CELLS as f32).round() as usize;
+    let volume_x = spans
+        .iter()
+        .map(|span| display_width(&span.content) as u16)
+        .sum::<u16>()
+        + area.x
+        + 3; // skip the "  [" prefix
+    hits.volume.push((
+        Rect {
+            x: volume_x,
+            y: area.y,
+            width: VOLUME_CELLS as u16,
+            height: 1,
+        },
+        (),
     ));
-    let filled = ((state.volume / 1.5) * 6.0).round().clamp(0.0, 6.0) as usize;
-    spans.push(Span::raw("  "));
+    spans.push(Span::styled("  [", Style::new().fg(theme.faint)));
     spans.push(Span::styled("▮".repeat(filled), Style::new().fg(theme.dim)));
     spans.push(Span::styled(
-        "▯".repeat(6 - filled),
+        "▯".repeat(VOLUME_CELLS - filled),
         Style::new().fg(theme.faint),
     ));
+    spans.push(Span::styled("]", Style::new().fg(theme.faint)));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

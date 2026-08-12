@@ -40,6 +40,19 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
         }
         return None;
     }
+    // Battery-style volume bar: click or drag anywhere inside sets the level.
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            | MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+    ) {
+        for (rect, _) in &hits.volume {
+            if rect.contains(position) || matches!(mouse.kind, MouseEventKind::Drag(_)) && mouse.row == rect.y {
+                let ratio = (mouse.column.saturating_sub(rect.x) as f32 + 0.5) / rect.width as f32;
+                return Some(Action::SetVolumeTo(ratio.clamp(0.0, 1.0)));
+            }
+        }
+    }
     match mouse.kind {
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             for (rect, view) in &hits.tabs {
