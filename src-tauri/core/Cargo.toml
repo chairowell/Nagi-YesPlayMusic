@@ -1,0 +1,33 @@
+[package]
+name = "yesplaymusic-core"
+version = "0.8.0-canary.2"
+description = "YesPlayMusic shared business logic (UNM, session, cache)"
+edition = "2021"
+rust-version = "1.89"
+license = "GPL-3.0-only"
+publish = false
+
+[features]
+default = []
+# SQLite-backed track cache; only the TUI links this, keeping the sidecar's
+# compliance dependency closure unchanged.
+cache = ["dep:rusqlite"]
+
+[dependencies]
+anyhow = "=1.0.104"
+async-trait = "=0.1.92"
+base64 = "=0.22.1"
+futures-util = "=0.3.33"
+reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"], optional = true }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+thiserror = "=2.0.19"
+tokio = { version = "=1.53.1", features = ["sync", "time"] }
+unm_api_utils = "=0.4.0"
+unm_engine = "=0.4.0"
+unm_types = "=0.4.0"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+tokio = { version = "=1.53.1", features = ["full"] }
