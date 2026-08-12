@@ -122,8 +122,8 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
         Rect { height: 1, ..inner },
     );
 
-    let confirm_label = "[ y 确定退出 ]";
-    let cancel_label = "[ n 点错了 ]";
+    let confirm_label = "[ y 退出 ]";
+    let cancel_label = "[ n 取消 ]";
     let gap = 3_u16;
     let confirm_width = text::display_width(confirm_label) as u16;
     let cancel_width = text::display_width(cancel_label) as u16;

@@ -49,6 +49,22 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect) {
 
 fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
+    if state.library.is_empty() {
+        let message = if state.nickname.is_some() && !state.library_synced {
+            "歌单同步中…"
+        } else {
+            "这里还是空的"
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                message,
+                Style::new().fg(theme.dim),
+            )))
+            .centered(),
+            area,
+        );
+        return;
+    }
     let visible = area.height.saturating_sub(1) as usize; // header row
     let offset = super::scroll_offset(state.selected, state.library.len(), visible);
 

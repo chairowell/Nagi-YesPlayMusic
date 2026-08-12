@@ -4,7 +4,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::action::MenuEntry;
@@ -33,26 +33,31 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
 
     match state.layout {
         crate::app::PlayLayout::Side => {
-            let frame_width = (cover_w + 2).min(main.width);
-            let frame_height = (cover_h + 2).min(main.height);
-            let [cover_column, meta_area] =
-                Layout::horizontal([Constraint::Length(frame_width), Constraint::Min(0)])
-                    .areas(main);
+            // Borderless pixel art + one column of breathing room.
+            let [cover_column, _, meta_area] = Layout::horizontal([
+                Constraint::Length(cover_w.min(main.width)),
+                Constraint::Length(2),
+                Constraint::Min(0),
+            ])
+            .areas(main);
             let cover_area = Rect {
                 x: cover_column.x,
                 y: cover_column.y,
-                width: frame_width,
-                height: frame_height,
+                width: cover_column.width,
+                height: cover_h.min(main.height),
             };
             draw_cover(frame, state, cover_area);
             draw_meta(frame, state, meta_area, false);
         }
         crate::app::PlayLayout::Stacked => {
-            let frame_height = (cover_h + 2).min(main.height.saturating_sub(4));
-            let [cover_row, meta_area] =
-                Layout::vertical([Constraint::Length(frame_height), Constraint::Min(0)])
-                    .areas(main);
-            let cover_area = centered(cover_row, cover_w + 2, frame_height);
+            let art_height = cover_h.min(main.height.saturating_sub(4));
+            let [cover_row, _, meta_area] = Layout::vertical([
+                Constraint::Length(art_height),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
+            .areas(main);
+            let cover_area = centered(cover_row, cover_w, art_height);
             draw_cover(frame, state, cover_area);
             draw_meta(frame, state, meta_area, true);
         }
@@ -105,8 +110,8 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
     }
 
     let footer = match (&state.nickname, state.library.len()) {
-        (Some(nickname), n) if n > 0 => format!("♪ {nickname} · {n} 首已就绪"),
-        (Some(nickname), _) => format!("♪ {nickname}"),
+        (Some(nickname), n) if state.library_synced => format!("♪ {nickname} · {n} 首已就绪"),
+        (Some(nickname), _) => format!("♪ {nickname} · 歌单同步中…"),
         (None, _) => "未登录 · 扫码后同步你的音乐".into(),
     };
     frame.render_widget(
@@ -142,22 +147,14 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 // ── playing layout ──────────────────────────────────────────────────
 
 fn draw_cover(frame: &mut Frame, state: &AppState, area: Rect) {
-    let theme = &state.theme;
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .border_type(BorderType::QuadrantOutside)
-        .border_style(Style::new().fg(theme.faint));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.height == 0 {
+    if area.height == 0 {
         return;
     }
-    if let Some(cover) = &state.cover {
-        frame.render_widget(cover, inner);
-        return;
+    match &state.cover {
+        Some(cover) => frame.render_widget(cover, area),
+        // Cover still loading: the idle art stands in, no chrome.
+        None => frame.render_widget(&state.idle_art, area),
     }
-    // Cover still loading: keep the frame quiet, no label.
-    frame.render_widget(&state.idle_art, inner);
 }
 
 fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect, centered_text: bool) {

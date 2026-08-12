@@ -72,6 +72,7 @@ pub enum Action {
         message: String,
     },
     LoggedIn {
+        uid: i64,
         nickname: String,
     },
     LibraryLoaded {

@@ -24,9 +24,6 @@ pub struct Effects {
     pub actions: mpsc::UnboundedSender<Action>,
 }
 
-/// Idle art + fallback cover grid; the playing cover is re-rendered
-/// dynamically from the kept source bytes to fit the layout.
-const COVER_CELLS: (u16, u16) = (26, 13);
 const COVER_SOURCE_EDGE: u32 = 500;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +66,9 @@ pub struct AppState {
     pub layout: PlayLayout,
     pub thick_progress: bool,
     pub idle_art: PixelCover,
+    pub library_synced: bool,
+    /// Source image for the idle art; None = procedural vinyl.
+    idle_bytes: Option<Vec<u8>>,
     cover_bytes: Option<Vec<u8>>,
     pub lyrics: Vec<crate::lyrics::LyricLine>,
     pub position: Duration,
@@ -118,7 +118,13 @@ impl AppState {
             cover: None,
             layout: PlayLayout::from_config(&config.layout),
             thick_progress: config.progress_style == "bar",
-            idle_art: load_idle_art(config),
+            idle_art: render_idle_art(
+                idle_art_bytes(config).as_deref(),
+                Theme::by_name(&config.theme).palette,
+                desired_idle_cells(),
+            ),
+            library_synced: false,
+            idle_bytes: idle_art_bytes(config),
             cover_bytes: None,
             lyrics: Vec::new(),
             position: Duration::ZERO,
@@ -309,19 +315,25 @@ impl AppState {
                     self.login_message = Some(message);
                 }
             }
-            Action::LoggedIn { nickname } => {
+            Action::LoggedIn { uid, nickname } => {
                 self.nickname = Some(nickname.clone());
                 self.status = Some(format!("欢迎，{nickname}"));
                 if self.view == View::Login {
                     self.view = View::Library;
                 }
                 self.login_qr = None;
-                spawn_fetch_library(fx);
+                // Demo rows are a logged-out affordance; a real library is
+                // on its way now.
+                self.library.clear();
+                self.selected = 0;
+                self.library_synced = false;
+                spawn_fetch_library(fx, uid);
             }
             Action::LibraryLoaded { rows } => {
                 self.status = Some(format!("我喜欢的音乐 · {} 首", rows.len()));
                 self.library = rows;
                 self.selected = 0;
+                self.library_synced = true;
             }
             Action::Notice { message } => self.status = Some(message),
             Action::LyricsLoaded { generation, lines } => {
@@ -379,8 +391,8 @@ impl AppState {
                 }
             }
             Action::Resize => {
-                // Layout-dependent cover resolution: re-render from the
-                // kept source bytes when the desired grid changed.
+                // Layout-dependent resolution: re-render cover and idle art
+                // from their kept source bytes when the desired grid changed.
                 if let (Some(bytes), Some(cover)) = (&self.cover_bytes, &self.cover) {
                     let desired = self.desired_cover_cells();
                     if (cover.width, cover.height) != desired {
@@ -392,6 +404,11 @@ impl AppState {
                             desired,
                         );
                     }
+                }
+                let desired = desired_idle_cells();
+                if (self.idle_art.width, self.idle_art.height) != desired {
+                    self.idle_art =
+                        render_idle_art(self.idle_bytes.as_deref(), self.theme.palette, desired);
                 }
             }
         }
@@ -497,12 +514,8 @@ fn spawn_login(fx: &Effects) {
                     return;
                 }
                 Ok(QrStatus::Success) => {
-                    let nickname = ncm
-                        .account()
-                        .await
-                        .map(|(_, nickname)| nickname)
-                        .unwrap_or_default();
-                    let _ = actions.send(Action::LoggedIn { nickname });
+                    let (uid, nickname) = ncm.account().await.unwrap_or((0, String::new()));
+                    let _ = actions.send(Action::LoggedIn { uid, nickname });
                     return;
                 }
                 Err(error) => {
@@ -541,15 +554,11 @@ fn spawn_fetch_lyrics(fx: &Effects, generation: u64, song_id: i64) {
     });
 }
 
-fn spawn_fetch_library(fx: &Effects) {
+fn spawn_fetch_library(fx: &Effects, uid: i64) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        let result = async {
-            let (uid, _) = ncm.account().await?;
-            ncm.liked_songs(uid).await
-        }
-        .await;
+        let result = ncm.liked_songs(uid).await;
         let action = match result {
             Ok(rows) => Action::LibraryLoaded { rows },
             Err(error) => Action::Notice {
@@ -593,20 +602,32 @@ fn spawn_render_cover(
 /// dashboard art, pixelated through the same pipeline as covers.
 const LOGO_BYTES: &[u8] = include_bytes!("../../../images/logo.png");
 
-fn load_idle_art(config: &Config) -> PixelCover {
-    let theme = Theme::by_name(&config.theme);
+/// The idle-art source: the user's configured image, else the logo.
+fn idle_art_bytes(config: &Config) -> Option<Vec<u8>> {
     if let Some(path) = &config.idle_art {
-        let expanded = shellexpand_home(path);
-        if let Ok(bytes) = std::fs::read(expanded) {
-            if let Ok(art) =
-                pixel::from_image_bytes(&bytes, theme.palette, COVER_CELLS.0, COVER_CELLS.1)
-            {
-                return art;
-            }
+        if let Ok(bytes) = std::fs::read(shellexpand_home(path)) {
+            return Some(bytes);
         }
     }
-    pixel::from_image_bytes(LOGO_BYTES, theme.palette, COVER_CELLS.0, COVER_CELLS.1)
-        .unwrap_or_else(|_| pixel::vinyl(theme.palette, COVER_CELLS.0, COVER_CELLS.1))
+    Some(LOGO_BYTES.to_vec())
+}
+
+fn render_idle_art(
+    bytes: Option<&[u8]>,
+    palette: &'static [(u8, u8, u8)],
+    cells: (u16, u16),
+) -> PixelCover {
+    bytes
+        .and_then(|bytes| pixel::from_image_bytes(bytes, palette, cells.0, cells.1).ok())
+        .unwrap_or_else(|| pixel::vinyl(palette, cells.0, cells.1))
+}
+
+/// Idle art scales with the terminal like covers do.
+fn desired_idle_cells() -> (u16, u16) {
+    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let height = (rows * 2 / 5).clamp(10, 32);
+    let width = (height * 2).min(cols.saturating_sub(4).max(16));
+    (width, width / 2)
 }
 
 fn shellexpand_home(path: &str) -> std::path::PathBuf {
@@ -663,7 +684,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         let actions = fx.actions.clone();
         tokio::spawn(async move {
             let action = match ncm.account().await {
-                Ok((_, nickname)) => Action::LoggedIn { nickname },
+                Ok((uid, nickname)) => Action::LoggedIn { uid, nickname },
                 Err(_) => Action::Notice {
                     message: "登录态已失效，按 g 重新扫码".into(),
                 },
