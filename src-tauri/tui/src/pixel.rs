@@ -28,9 +28,9 @@ pub struct PixelCover {
 pub fn vinyl(palette: &[Rgb], cell_width: u16, cell_height: u16) -> PixelCover {
     let last = palette.len().saturating_sub(1);
     let bg = palette[0];
-    let outline = palette[last / 2];
-    let groove_a = palette[last * 7 / 16];
-    let groove_b = palette[(last / 2).saturating_sub(1).max(1)];
+    let disc = palette[1.min(last)];
+    let ring = palette[last / 2];
+    let shine = palette[last * 5 / 8];
     let label = palette[last.saturating_sub(1).max(1)];
 
     let width_px = cell_width as f64;
@@ -43,17 +43,26 @@ pub fn vinyl(palette: &[Rgb], cell_width: u16, cell_height: u16) -> PixelCover {
         let (dx, dy) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
         let r = (dx * dx + dy * dy).sqrt();
         if r > radius {
-            bg
-        } else if r > radius - 1.0 {
-            outline
-        } else if r < radius * 0.10 {
-            bg // spindle hole
-        } else if r < radius * 0.34 {
-            label
-        } else if (r as u32) % 3 == 0 {
-            groove_b
+            return bg;
+        }
+        if r > radius - 1.0 {
+            return ring;
+        }
+        if r < radius * 0.08 {
+            return bg; // spindle hole
+        }
+        if r < radius * 0.32 {
+            return label;
+        }
+        // Groove zone: dark disc, sparse lighter rings, one specular wedge.
+        let angle = dy.atan2(dx);
+        let in_shine = (-2.5..-1.9).contains(&angle) || (0.6..1.2).contains(&angle);
+        if in_shine && r > radius * 0.45 {
+            shine
+        } else if (r as u32) % 4 == 0 {
+            ring
         } else {
-            groove_a
+            disc
         }
     };
     for cell_y in 0..cell_height as u32 {
