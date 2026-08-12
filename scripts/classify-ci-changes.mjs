@@ -9,6 +9,8 @@ import { spawnSync } from 'node:child_process';
 // Touching these can change Rust behaviour, so cargo test/clippy/fmt must run.
 const RUST_PATTERNS = [
   /^src-tauri\//,
+  /^src\/sidecar-route-manifest\.json$/,
+  /^test\/fixtures\/proxy-ca\.pem$/,
   /^rust-toolchain/,
   /^\.github\/workflows\//,
   /^scripts\//,
@@ -16,41 +18,63 @@ const RUST_PATTERNS = [
   /^bun\.lock$/,
 ];
 
-// Everything else is documentation: no packaging, no Rust, gates still run.
+// These files are documentation only: no packaging, no Rust, cheap gates run.
 const DOCS_PATTERNS = [
   /^docs\//,
   /^images\//,
-  /^legal\//,
-  /\.md$/,
-  /^LICENSE$/,
+  /^(?:AGENTS|CLAUDE|README)\.md$/,
   /^\.github\/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)/,
 ];
 
+// These are known packaging/renderer inputs that do not require Cargo gates.
+// Anything outside this allowlist fails open and runs the Rust gates.
+const KNOWN_NON_RUST_PATTERNS = [
+  ...DOCS_PATTERNS,
+  /^legal\//,
+  /^LICENSE$/,
+  /^src\//,
+  /^test\//,
+  /^public\//,
+  /^build\//,
+  /^index\.html$/,
+  /^vite\.config\.mjs$/,
+  /^tsconfig(?:\.[^.]+)?\.json$/,
+  /^\.env\.example$/,
+];
+
+function matches(file, patterns) {
+  return patterns.some(pattern => pattern.test(file));
+}
+
 export function classifyChangedFiles(files) {
   if (files.length === 0) return { docsOnly: false, rust: true };
-  const docsOnly = files.every(file =>
-    DOCS_PATTERNS.some(pattern => pattern.test(file))
+  const docsOnly = files.every(file => matches(file, DOCS_PATTERNS));
+  const rust = files.some(
+    file =>
+      matches(file, RUST_PATTERNS) || !matches(file, KNOWN_NON_RUST_PATTERNS)
   );
-  const rust = files.some(file =>
-    RUST_PATTERNS.some(pattern => pattern.test(file))
-  );
-  return { docsOnly, rust: docsOnly ? false : rust };
+  return { docsOnly, rust };
 }
 
-export function changedFiles({ baseSha, headSha, run = gitDiff } = {}) {
+export function changedFiles({
+  baseSha,
+  headSha,
+  cwd = process.cwd(),
+  run = gitDiff,
+} = {}) {
   const zero = /^0*$/;
   if (!baseSha || !headSha || zero.test(baseSha)) return null;
-  return run(baseSha, headSha);
+  return run(baseSha, headSha, cwd);
 }
 
-function gitDiff(baseSha, headSha) {
+function gitDiff(baseSha, headSha, cwd) {
   const result = spawnSync(
     'git',
-    ['diff', '--name-only', `${baseSha}...${headSha}`],
-    { encoding: 'utf8' }
+    ['diff', '--no-renames', '--name-only', '-z', `${baseSha}...${headSha}`],
+    { cwd, encoding: 'utf8' }
   );
   if (result.status !== 0) return null;
-  return result.stdout.split('\n').filter(Boolean);
+  return result.stdout.split('\0').filter(Boolean);
 }
 
 export function classify(env) {

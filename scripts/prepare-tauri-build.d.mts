@@ -23,3 +23,13 @@ export function missingPreparedResources(
 export function shouldSkipPreparation(
   env?: Record<string, string | undefined>
 ): boolean;
+
+export interface PrepareTauriBuildOptions extends PreparedResourceOptions {
+  env?: Record<string, string | undefined>;
+  runCommand?: (command: string[]) => void;
+  log?: (message: string) => void;
+}
+
+export function prepareTauriBuild(options?: PrepareTauriBuildOptions): {
+  skipped: boolean;
+};

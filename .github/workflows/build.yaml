@@ -35,7 +35,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          FORCE_FULL: ${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && 'true' || 'false' }}
+          FORCE_FULL: ${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.forced == true)) && 'true' || 'false' }}
         run: bun scripts/classify-ci-changes.mjs >> "$GITHUB_OUTPUT"
 
   # Docs still reach the test suite (README assertions, locale parity), so a

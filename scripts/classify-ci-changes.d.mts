@@ -8,7 +8,8 @@ export function classifyChangedFiles(files: string[]): CiChangeClassification;
 export function changedFiles(options?: {
   baseSha?: string | undefined;
   headSha?: string | undefined;
-  run?: (baseSha: string, headSha: string) => string[] | null;
+  cwd?: string | undefined;
+  run?: (baseSha: string, headSha: string, cwd: string) => string[] | null;
 }): string[] | null;
 
 export function classify(

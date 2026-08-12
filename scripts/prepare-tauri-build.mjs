@@ -10,7 +10,10 @@ import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { hostTargetTriple } from './build-rust-sidecar.mjs';
+import {
+  hostTargetTriple,
+  rustSidecarBuildPlan,
+} from './build-rust-sidecar.mjs';
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -43,6 +46,7 @@ export function preparedResources({
   root = projectRoot,
   targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE || hostTargetTriple(),
 } = {}) {
+  const sidecarPlan = rustSidecarBuildPlan({ targetTriple });
   return [
     {
       label: 'renderer',
@@ -74,14 +78,7 @@ export function preparedResources({
     {
       label: 'Rust Sidecar',
       producer: 'bun run build:sidecar',
-      files: [
-        path.join(
-          root,
-          'src-tauri',
-          'binaries',
-          `yesplaymusic-sidecar-${targetTriple}`
-        ),
-      ],
+      files: [path.join(root, 'src-tauri', 'binaries', sidecarPlan.outputName)],
       directories: [],
     },
     {
@@ -104,6 +101,44 @@ export function preparedResources({
         ),
       ],
       directories: [],
+    },
+    {
+      label: 'complete Sidecar source',
+      producer: 'bun run build:sidecar',
+      files: [
+        path.join(
+          root,
+          'src-tauri',
+          'generated',
+          'sidecar-complete-source',
+          'SHA256SUMS'
+        ),
+        path.join(
+          root,
+          'src-tauri',
+          'generated',
+          'sidecar-complete-source',
+          'SOURCE-MANIFEST.json'
+        ),
+        path.join(
+          root,
+          'src-tauri',
+          'generated',
+          'sidecar-complete-source',
+          '.cargo',
+          'config.toml'
+        ),
+      ],
+      directories: [
+        path.join(
+          root,
+          'src-tauri',
+          'generated',
+          'sidecar-complete-source',
+          'source',
+          'vendor'
+        ),
+      ],
     },
   ];
 }
@@ -128,36 +163,55 @@ export function shouldSkipPreparation(env = process.env) {
   return env.GITHUB_ACTIONS === 'true' && env[PREPARED_FLAG] === '1';
 }
 
-function run(command) {
+function run(command, root = projectRoot) {
   const result = spawnSync('bun', command, {
     stdio: 'inherit',
-    cwd: projectRoot,
+    cwd: root,
   });
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    throw new Error(
+      `bun ${command.join(' ')} 失败，退出码 ${result.status ?? 1}`
+    );
+  }
+}
+
+export function prepareTauriBuild({
+  env = process.env,
+  root = projectRoot,
+  targetTriple,
+  runCommand = command => run(command, root),
+  log = message => console.log(message),
+} = {}) {
+  if (shouldSkipPreparation(env)) {
+    const missing = missingPreparedResources({ root, targetTriple });
+    if (missing.length > 0) {
+      const lines = [`${PREPARED_FLAG}=1 但准备好的产物缺失，拒绝跳过：`];
+      for (const resource of missing) {
+        lines.push(`  ${resource.label}（由 ${resource.producer} 生成）`);
+        for (const absent of resource.absent) {
+          lines.push(`    缺 ${path.relative(root, absent)}`);
+        }
+      }
+      throw new Error(lines.join('\n'));
+    }
+    log('[prepare-tauri-build] 复用 CI 已准备的 renderer 与 Sidecar 产物');
+    return { skipped: true };
+  } else {
+    runCommand(['run', 'build:tauri:renderer']);
+    runCommand(['run', 'build:sidecar']);
+    return { skipped: false };
   }
 }
 
 if (import.meta.main) {
-  if (shouldSkipPreparation()) {
-    const missing = missingPreparedResources();
-    if (missing.length > 0) {
-      console.error(
-        `[prepare-tauri-build] ${PREPARED_FLAG}=1 但准备好的产物缺失，拒绝跳过：`
-      );
-      for (const resource of missing) {
-        console.error(`  ${resource.label}（由 ${resource.producer} 生成）`);
-        for (const absent of resource.absent) {
-          console.error(`    缺 ${path.relative(projectRoot, absent)}`);
-        }
-      }
-      process.exit(1);
-    }
-    console.log(
-      '[prepare-tauri-build] 复用 CI 已准备的 renderer 与 Sidecar 产物'
+  try {
+    prepareTauriBuild();
+  } catch (error) {
+    console.error(
+      `[prepare-tauri-build] ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
-  } else {
-    run(['run', 'build:tauri:renderer']);
-    run(['run', 'build:sidecar']);
+    process.exit(1);
   }
 }
