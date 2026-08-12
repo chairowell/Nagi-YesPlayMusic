@@ -67,9 +67,26 @@ jobs:
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
               -f "ref=refs/heads/$YPM_FEED_BRANCH" \
               -f "sha=$YPM_DEFAULT_SHA"
+
+            # The Git ref can become visible before the Contents API can read it.
+            YPM_FEED_READY=false
+            for _ in {1..10}; do
+              if gh api "repos/$GITHUB_REPOSITORY/contents?ref=$YPM_FEED_BRANCH" >/dev/null 2>&1; then
+                YPM_FEED_READY=true
+                break
+              fi
+              sleep 1
+            done
+            if [[ "$YPM_FEED_READY" != true ]]; then
+              echo "updater feed branch did not become readable" >&2
+              exit 1
+            fi
           fi
 
-          YPM_FEED_SHA="$(gh api "$YPM_FEED_API?ref=$YPM_FEED_BRANCH" --jq .sha 2>/dev/null || true)"
+          YPM_FEED_SHA=""
+          if YPM_EXISTING_SHA="$(gh api "$YPM_FEED_API?ref=$YPM_FEED_BRANCH" --jq .sha 2>/dev/null)"; then
+            YPM_FEED_SHA="$YPM_EXISTING_SHA"
+          fi
           if [[ -n "$YPM_FEED_SHA" ]]; then
             gh api "$YPM_FEED_API?ref=$YPM_FEED_BRANCH" --jq .content \
               | tr -d '\n' \

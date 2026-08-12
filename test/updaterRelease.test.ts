@@ -146,6 +146,24 @@ test('published canaries advance a separate verified updater feed', () => {
   expect(canaryFeedWorkflow).toContain('p7zip-full squashfs-tools');
   expect(canaryFeedWorkflow).toContain('updater-feed');
   expect(canaryFeedWorkflow).toContain('channels/canary.json');
+  const feedReadiness = canaryFeedWorkflow.indexOf('YPM_FEED_READY=false');
+  const rootProbe = canaryFeedWorkflow.indexOf(
+    'contents?ref=$YPM_FEED_BRANCH'
+  );
+  const timeoutFailure = canaryFeedWorkflow.indexOf(
+    'updater feed branch did not become readable'
+  );
+  const existingFeedProbe = canaryFeedWorkflow.indexOf(
+    'if YPM_EXISTING_SHA="$(gh api'
+  );
+  const manifestWrite = canaryFeedWorkflow.indexOf('YPM_API_ARGS=(');
+  expect(canaryFeedWorkflow).toContain('for _ in {1..10}');
+  expect(feedReadiness).toBeGreaterThan(-1);
+  expect(rootProbe).toBeGreaterThan(feedReadiness);
+  expect(timeoutFailure).toBeGreaterThan(rootProbe);
+  expect(existingFeedProbe).toBeGreaterThan(timeoutFailure);
+  expect(canaryFeedWorkflow).not.toContain('--jq .sha 2>/dev/null || true');
+  expect(manifestWrite).toBeGreaterThan(existingFeedProbe);
 
   expect(
     verifyCanaryUpdaterFeedAdvance(
