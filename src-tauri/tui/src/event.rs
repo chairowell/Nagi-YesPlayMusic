@@ -47,6 +47,16 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
                     return Some(Action::SwitchView(*view));
                 }
             }
+            for (rect, _) in &hits.heart {
+                if rect.contains(position) {
+                    return Some(Action::ToggleLike);
+                }
+            }
+            for (rect, index) in &hits.sidebar {
+                if rect.contains(position) {
+                    return Some(Action::OpenSource(*index));
+                }
+            }
             for (rect, entry) in &hits.menu {
                 if rect.contains(position) {
                     return Some(match entry {
@@ -100,6 +110,8 @@ fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('i') => Some(Action::StartLogin),
         KeyCode::Char('y') => Some(Action::ConfirmYes),
         KeyCode::Char('z') => Some(Action::ToggleZen),
+        KeyCode::Char('s') => Some(Action::CycleMode),
+        KeyCode::Char('x') => Some(Action::ToggleLike),
         KeyCode::Char(' ') => Some(Action::TogglePlay),
         KeyCode::Char('n') => Some(Action::NextTrack),
         KeyCode::Char('p') => Some(Action::PrevTrack),

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::api::{ResolvedTrack, SongRow};
+use crate::api::{ResolvedTrack, SongRow, Source};
 use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
 
@@ -40,6 +40,9 @@ pub enum Action {
     SelectIndex(usize),
     /// vim `g` prefix: two in a row jump to the list top.
     GKey,
+    CycleMode,
+    ToggleLike,
+    OpenSource(usize),
     JumpBottom,
     ConfirmYes,
     Mouse(crossterm::event::MouseEvent),
@@ -76,7 +79,14 @@ pub enum Action {
         nickname: String,
     },
     LibraryLoaded {
+        source: Source,
         rows: Vec<SongRow>,
+    },
+    FmMore {
+        rows: Vec<SongRow>,
+    },
+    LikedIds {
+        ids: std::collections::HashSet<i64>,
     },
     Notice {
         message: String,

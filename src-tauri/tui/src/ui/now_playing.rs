@@ -26,6 +26,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
 
     let [main, progress_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas(area);
+    let progress_hits = progress_area;
     let (cover_w, cover_h) = state
         .cover
         .as_ref()
@@ -63,7 +64,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
             draw_meta(frame, state, meta_area, true);
         }
     }
-    draw_progress(frame, state, progress_area);
+    draw_progress(frame, state, progress_hits, hits);
 }
 
 // ── idle dashboard ──────────────────────────────────────────────────
@@ -254,17 +255,22 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
     lines
 }
 
-fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect) {
+fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let icon = if state.paused { "⏸" } else { "▶" };
+    let mode_label = crate::i18n::t(state.play_mode.label_key());
+    let liked = state
+        .current_track_id
+        .map(|id| state.liked.contains(&id))
+        .unwrap_or(false);
+    let heart = if liked { "♥" } else { "♡" };
     let elapsed = format_duration(state.position);
     let total = state
         .duration
         .map(format_duration)
         .unwrap_or_else(|| "--:--".into());
 
-    let volume_label = i18n::t(Key::VolumeShort);
-    let fixed = icon.len() + elapsed.len() + total.len() + display_width(volume_label) + 9;
+    let fixed = icon.len() + elapsed.len() + total.len() + display_width(mode_label) + 22;
     let bar_width = (area.width as usize).saturating_sub(fixed).max(8);
     let ratio = match state.duration {
         Some(duration) if !duration.is_zero() => {
@@ -301,8 +307,36 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect) {
     spans.extend(bar_spans);
     spans.push(Span::raw(" "));
     spans.push(Span::styled(total, Style::new().fg(theme.dim)));
+    // Clickable heart: its cell position is the rendered width so far + 2.
+    let heart_x = spans
+        .iter()
+        .map(|span| display_width(&span.content) as u16)
+        .sum::<u16>()
+        + area.x
+        + 2;
+    hits.heart.push((
+        Rect {
+            x: heart_x,
+            y: area.y,
+            width: 1,
+            height: 1,
+        },
+        (),
+    ));
+    spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        format!("  {volume_label} {:>3.0}%", state.volume * 100.0),
+        heart.to_owned(),
+        Style::new().fg(theme.accent2),
+    ));
+    spans.push(Span::styled(
+        format!("  {mode_label}"),
+        Style::new().fg(theme.faint),
+    ));
+    let filled = ((state.volume / 1.5) * 6.0).round().clamp(0.0, 6.0) as usize;
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled("▮".repeat(filled), Style::new().fg(theme.dim)));
+    spans.push(Span::styled(
+        "▯".repeat(6 - filled),
         Style::new().fg(theme.faint),
     ));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);

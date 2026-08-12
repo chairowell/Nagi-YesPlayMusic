@@ -20,14 +20,21 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     if area.width >= COLLAPSE_BELOW {
         let [sidebar, list] =
             Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(0)]).areas(area);
-        draw_sidebar(frame, state, sidebar);
+        draw_sidebar(frame, state, sidebar, hits);
         draw_list(frame, state, list, hits);
     } else {
         draw_list(frame, state, area, hits);
     }
 }
 
-fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect) {
+pub const SOURCES: [Key; 4] = [
+    Key::LikedSongs,
+    Key::DailyRecommendations,
+    Key::PersonalFm,
+    Key::CloudDrive,
+];
+
+fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let account = match &state.nickname {
         Some(nickname) => Line::from(Span::styled(
@@ -39,26 +46,35 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect) {
             Style::new().fg(theme.accent2),
         )),
     };
-    let lines = vec![
-        account,
-        Line::default(),
-        Line::from(Span::styled(
-            format!("▸ {}", i18n::t(Key::LikedSongs)),
-            Style::new().fg(theme.accent),
-        )),
-        Line::from(Span::styled(
-            format!("  {}", i18n::t(Key::DailyRecommendations)),
-            Style::new().fg(theme.dim),
-        )),
-        Line::from(Span::styled(
-            format!("  {}", i18n::t(Key::PersonalFm)),
-            Style::new().fg(theme.dim),
-        )),
-        Line::from(Span::styled(
-            format!("  {}", i18n::t(Key::CloudDrive)),
-            Style::new().fg(theme.dim),
-        )),
-    ];
+    let mut lines = vec![account, Line::default()];
+    for (index, key) in SOURCES.iter().enumerate() {
+        let y = area.y + 2 + index as u16;
+        if y < area.y + area.height {
+            hits.sidebar.push((
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+                index,
+            ));
+        }
+        let is_current = index == state.source_index();
+        let is_cursor = state.sidebar_focus && index == state.sidebar_selected;
+        let marker = if is_current { "▸" } else { " " };
+        let style = if is_cursor {
+            Style::new().fg(theme.bg).bg(theme.sel)
+        } else if is_current {
+            Style::new().fg(theme.accent)
+        } else {
+            Style::new().fg(theme.dim)
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker} {}", i18n::t(*key)),
+            style,
+        )));
+    }
     frame.render_widget(Paragraph::new(lines), area);
 }
 

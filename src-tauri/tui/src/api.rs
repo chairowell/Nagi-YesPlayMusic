@@ -33,6 +33,15 @@ pub struct SongRow {
     pub pic_url: Option<String>,
 }
 
+/// Which library list is on screen / feeding the queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Liked,
+    Daily,
+    Fm,
+    Cloud,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QrStatus {
     Waiting,
@@ -192,6 +201,83 @@ impl Ncm {
         Ok(songs.iter().map(song_row).collect())
     }
 
+    pub async fn set_like(&self, id: i64, like: bool) -> Result<()> {
+        let query = self
+            .query()
+            .param("id", &id.to_string())
+            .param("like", if like { "true" } else { "false" });
+        let response = self
+            .client
+            .like(&query)
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))?;
+        match response.body["code"].as_i64() {
+            Some(200) => Ok(()),
+            other => Err(anyhow!("{} ({other:?})", i18n::t(Key::LikeFailed))),
+        }
+    }
+
+    pub async fn liked_ids(&self, uid: i64) -> Result<std::collections::HashSet<i64>> {
+        let query = self.query().param("uid", &uid.to_string());
+        let response = self
+            .client
+            .likelist(&query)
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpUserPlaylist, error)))?;
+        Ok(response.body["ids"]
+            .as_array()
+            .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
+            .unwrap_or_default())
+    }
+
+    pub async fn daily_songs(&self) -> Result<Vec<SongRow>> {
+        let response = self
+            .client
+            .recommend_songs(&self.query())
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
+        let songs = response.body["data"]["dailySongs"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        Ok(songs.iter().map(song_row_flex).collect())
+    }
+
+    pub async fn personal_fm(&self) -> Result<Vec<SongRow>> {
+        let response = self
+            .client
+            .personal_fm(&self.query())
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
+        let songs = response.body["data"].as_array().cloned().unwrap_or_default();
+        Ok(songs.iter().map(song_row_flex).collect())
+    }
+
+    pub async fn cloud_songs(&self) -> Result<Vec<SongRow>> {
+        let response = self
+            .client
+            .user_cloud(&self.query())
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
+        let items = response.body["data"].as_array().cloned().unwrap_or_default();
+        Ok(items
+            .iter()
+            .map(|item| {
+                let mut row = song_row_flex(&item["simpleSong"]);
+                if row.id == 0 {
+                    row.id = item["songId"].as_i64().unwrap_or(0);
+                }
+                if row.title == "?" {
+                    row.title = item["songName"].as_str().unwrap_or("?").to_owned();
+                }
+                if row.artist == "?" {
+                    row.artist = item["artist"].as_str().unwrap_or("?").to_owned();
+                }
+                row
+            })
+            .collect())
+    }
+
     // ── playback resolution ──────────────────────────────────────────
 
     pub async fn song_url(&self, id: i64) -> Result<(String, String)> {
@@ -297,6 +383,28 @@ fn song_row(song: &Value) -> SongRow {
         artist: song["ar"][0]["name"].as_str().unwrap_or("?").to_owned(),
         duration_ms: song["dt"].as_i64().unwrap_or(0),
         pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
+    }
+}
+
+/// Tolerant mapping: daily/FM/cloud payloads use ar|artists, al|album,
+/// dt|duration interchangeably.
+fn song_row_flex(song: &Value) -> SongRow {
+    let artist = song["ar"][0]["name"]
+        .as_str()
+        .or_else(|| song["artists"][0]["name"].as_str())
+        .unwrap_or("?")
+        .to_owned();
+    let pic_url = song["al"]["picUrl"]
+        .as_str()
+        .or_else(|| song["album"]["picUrl"].as_str())
+        .map(str::to_owned);
+    let duration_ms = song["dt"].as_i64().or_else(|| song["duration"].as_i64()).unwrap_or(0);
+    SongRow {
+        id: song["id"].as_i64().unwrap_or(0),
+        title: song["name"].as_str().unwrap_or("?").to_owned(),
+        artist,
+        duration_ms,
+        pic_url,
     }
 }
 

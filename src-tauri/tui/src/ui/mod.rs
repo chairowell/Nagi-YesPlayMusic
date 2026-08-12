@@ -23,6 +23,8 @@ pub struct Hits {
     pub tabs: Vec<(Rect, View)>,
     pub rows: Vec<(Rect, usize)>,
     pub menu: Vec<(Rect, crate::action::MenuEntry)>,
+    pub sidebar: Vec<(Rect, usize)>,
+    pub heart: Vec<(Rect, ())>,
     /// Quit-confirm buttons: true = 确定退出, false = 点错了.
     pub confirm: Vec<(Rect, bool)>,
 }
@@ -31,6 +33,8 @@ pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
     hits.tabs.clear();
     hits.rows.clear();
     hits.menu.clear();
+    hits.sidebar.clear();
+    hits.heart.clear();
     hits.confirm.clear();
 
     let theme = &state.theme;

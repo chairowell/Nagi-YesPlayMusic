@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::action::{Action, View, SEEK_STEP};
-use crate::api::{self, Ncm, QrStatus, SongRow};
+use crate::api::{self, Ncm, QrStatus, SongRow, Source};
 use crate::config::{self, Config};
 use crate::event;
 use crate::i18n::{self, Key};
@@ -26,6 +26,31 @@ pub struct Effects {
 }
 
 const COVER_SOURCE_EDGE: u32 = 500;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayMode {
+    Sequential,
+    Shuffle,
+    RepeatOne,
+}
+
+impl PlayMode {
+    pub fn label_key(self) -> crate::i18n::Key {
+        match self {
+            PlayMode::Sequential => crate::i18n::Key::ModeSequential,
+            PlayMode::Shuffle => crate::i18n::Key::ModeShuffle,
+            PlayMode::RepeatOne => crate::i18n::Key::ModeRepeatOne,
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            PlayMode::Sequential => PlayMode::Shuffle,
+            PlayMode::Shuffle => PlayMode::RepeatOne,
+            PlayMode::RepeatOne => PlayMode::Sequential,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayLayout {
@@ -58,6 +83,14 @@ pub struct AppState {
     pub selected: usize,
     pub queue: Vec<SongRow>,
     pub queue_pos: Option<usize>,
+    queue_source: Source,
+    pub play_mode: PlayMode,
+    pub liked: std::collections::HashSet<i64>,
+    pub current_track_id: Option<i64>,
+    pub library_source: Source,
+    pub sidebar_focus: bool,
+    pub sidebar_selected: usize,
+    pending_fm_next: bool,
     enter_replaces_queue: bool,
     pub nickname: Option<String>,
     pub login_qr: Option<String>,
@@ -115,6 +148,14 @@ impl AppState {
             selected: 0,
             queue: Vec::new(),
             queue_pos: None,
+            queue_source: Source::Liked,
+            play_mode: PlayMode::Sequential,
+            liked: std::collections::HashSet::new(),
+            current_track_id: None,
+            library_source: Source::Liked,
+            sidebar_focus: false,
+            sidebar_selected: 0,
+            pending_fm_next: false,
             enter_replaces_queue: config.enter_replaces_queue,
             nickname: None,
             login_qr: None,
@@ -194,12 +235,50 @@ impl AppState {
         spawn_resolve(fx, self.generation, row);
     }
 
+    pub fn source_index(&self) -> usize {
+        match self.library_source {
+            Source::Liked => 0,
+            Source::Daily => 1,
+            Source::Fm => 2,
+            Source::Cloud => 3,
+        }
+    }
+
+    fn open_source(&mut self, fx: &Effects, index: usize) {
+        let source = match index {
+            1 => Source::Daily,
+            2 => Source::Fm,
+            3 => Source::Cloud,
+            _ => Source::Liked,
+        };
+        self.library_source = source;
+        self.sidebar_selected = index;
+        self.sidebar_focus = false;
+        self.library.clear();
+        self.selected = 0;
+        self.library_synced = false;
+        spawn_fetch_source(fx, source);
+    }
+
     /// Move within the queue (manual n/p and end-of-track auto-advance).
-    fn step_queue(&mut self, fx: &Effects, delta: i32) {
+    fn step_queue(&mut self, fx: &Effects, delta: i32, auto: bool) {
         let Some(position) = self.queue_pos else {
             return;
         };
-        let next = position as i32 + delta;
+        if self.queue.is_empty() {
+            return;
+        }
+        if auto && self.play_mode == PlayMode::RepeatOne {
+            if let Some(row) = self.queue.get(position).cloned() {
+                self.play_row(fx, row);
+            }
+            return;
+        }
+        let next = if self.play_mode == PlayMode::Shuffle && self.queue.len() > 1 {
+            random_index(self.queue.len(), position) as i32
+        } else {
+            position as i32 + delta
+        };
         if next < 0 {
             return;
         }
@@ -207,6 +286,11 @@ impl AppState {
             Some(row) => {
                 self.queue_pos = Some(next as usize);
                 self.play_row(fx, row);
+            }
+            None if self.queue_source == Source::Fm && delta > 0 => {
+                // FM is an endless stream: pull the next batch, then play.
+                self.pending_fm_next = true;
+                spawn_fm_more(fx);
             }
             None => self.status = Some(i18n::t(Key::QueueFinished).into()),
         }
@@ -245,7 +329,15 @@ impl AppState {
             Action::ConfirmYes => {}
             Action::Quit => self.confirm_quit = true,
             Action::SwitchView(view) => self.view = view,
-            Action::Back => self.view = View::NowPlaying,
+            Action::Back => {
+                if self.view == View::Library && !self.sidebar_focus {
+                    self.sidebar_focus = true;
+                    self.sidebar_selected = self.source_index();
+                } else {
+                    self.sidebar_focus = false;
+                    self.view = View::NowPlaying;
+                }
+            }
             Action::ToggleZen => {
                 self.zen = !self.zen;
                 if self.zen {
@@ -266,6 +358,11 @@ impl AppState {
                 fx.player.send(PlayerCommand::SetVolume(self.volume));
             }
             Action::MoveSelection(delta) => {
+                if self.view == View::Library && self.sidebar_focus {
+                    let next = (self.sidebar_selected as i32 + delta.signum()).clamp(0, 3);
+                    self.sidebar_selected = next as usize;
+                    return;
+                }
                 let len = match self.view {
                     View::Library => self.library.len(),
                     View::Queue => self.queue.len(),
@@ -278,6 +375,9 @@ impl AppState {
                 }
             }
             Action::Activate => match self.view {
+                View::Library if self.sidebar_focus => {
+                    self.open_source(fx, self.sidebar_selected);
+                }
                 View::Library => {
                     if let Some(row) = self.library.get(self.selected).cloned() {
                         if self.enter_replaces_queue {
@@ -289,6 +389,7 @@ impl AppState {
                             self.queue = vec![row.clone()];
                             self.queue_pos = Some(0);
                         }
+                        self.queue_source = self.library_source;
                         self.play_row(fx, row);
                         self.view = View::NowPlaying;
                     }
@@ -302,8 +403,45 @@ impl AppState {
                 }
                 _ => {}
             },
-            Action::NextTrack => self.step_queue(fx, 1),
-            Action::PrevTrack => self.step_queue(fx, -1),
+            Action::NextTrack => self.step_queue(fx, 1, false),
+            Action::PrevTrack => self.step_queue(fx, -1, false),
+            Action::CycleMode => {
+                self.play_mode = self.play_mode.next();
+            }
+            Action::ToggleLike => {
+                if let Some(id) = self.current_track_id {
+                    let like = !self.liked.contains(&id);
+                    if like {
+                        self.liked.insert(id);
+                    } else {
+                        self.liked.remove(&id);
+                    }
+                    self.status = Some(
+                        crate::i18n::t(if like {
+                            crate::i18n::Key::Liked
+                        } else {
+                            crate::i18n::Key::Unliked
+                        })
+                        .to_owned(),
+                    );
+                    spawn_toggle_like(fx, id, like);
+                }
+            }
+            Action::OpenSource(index) => self.open_source(fx, index),
+            Action::LikedIds { ids } => self.liked = ids,
+            Action::FmMore { rows } => {
+                if self.queue_source == Source::Fm {
+                    self.queue.extend(rows.iter().cloned());
+                }
+                if self.library_source == Source::Fm {
+                    self.library.extend(rows.iter().cloned());
+                    self.library_synced = true;
+                }
+                if self.pending_fm_next {
+                    self.pending_fm_next = false;
+                    self.step_queue(fx, 1, true);
+                }
+            }
             Action::SelectIndex(index) => {
                 let len = match self.view {
                     View::Library => self.library.len(),
@@ -350,11 +488,15 @@ impl AppState {
                 self.library_synced = false;
                 spawn_fetch_library(fx, uid);
             }
-            Action::LibraryLoaded { rows } => {
-                self.status = Some(i18n::t_liked_songs_count(rows.len()));
-                self.library = rows;
-                self.selected = 0;
-                self.library_synced = true;
+            Action::LibraryLoaded { source, rows } => {
+                if source == self.library_source {
+                    if source == Source::Liked {
+                        self.status = Some(i18n::t_liked_songs_count(rows.len()));
+                    }
+                    self.library = rows;
+                    self.selected = 0;
+                    self.library_synced = true;
+                }
             }
             Action::Notice { message } => self.status = Some(message),
             Action::LyricsLoaded { generation, lines } => {
@@ -364,6 +506,7 @@ impl AppState {
             }
             Action::TrackResolved { generation, track } => {
                 if generation == self.generation {
+                    self.current_track_id = Some(track.id);
                     self.now = Some(NowPlaying {
                         title: track.title.clone(),
                         artist: track.artist.clone(),
@@ -411,7 +554,7 @@ impl AppState {
                 self.apply_player_event(event);
                 if self.pending_auto_next {
                     self.pending_auto_next = false;
-                    self.step_queue(fx, 1);
+                    self.step_queue(fx, 1, true);
                 }
             }
             Action::Resize => {
@@ -593,7 +736,60 @@ fn spawn_fetch_library(fx: &Effects, uid: i64) {
     tokio::spawn(async move {
         let result = ncm.liked_songs(uid).await;
         let action = match result {
-            Ok(rows) => Action::LibraryLoaded { rows },
+            Ok(rows) => Action::LibraryLoaded {
+                source: Source::Liked,
+                rows,
+            },
+            Err(error) => Action::Notice {
+                message: i18n::t_library_load_failed(error),
+            },
+        };
+        let _ = actions.send(action);
+    });
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        if let Ok(ids) = ncm.liked_ids(uid).await {
+            let _ = actions.send(Action::LikedIds { ids });
+        }
+    });
+}
+
+fn spawn_fetch_source(fx: &Effects, source: Source) {
+    if source == Source::Liked {
+        // Liked needs the uid; reuse the account-carrying path.
+        let ncm = fx.ncm.clone();
+        let actions = fx.actions.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let (uid, _) = ncm.account().await?;
+                ncm.liked_songs(uid).await
+            }
+            .await;
+            let action = match result {
+                Ok(rows) => Action::LibraryLoaded {
+                    source: Source::Liked,
+                    rows,
+                },
+                Err(error) => Action::Notice {
+                    message: i18n::t_library_load_failed(error),
+                },
+            };
+            let _ = actions.send(action);
+        });
+        return;
+    }
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let result = match source {
+            Source::Daily => ncm.daily_songs().await,
+            Source::Fm => ncm.personal_fm().await,
+            Source::Cloud => ncm.cloud_songs().await,
+            Source::Liked => unreachable!("handled above"),
+        };
+        let action = match result {
+            Ok(rows) => Action::LibraryLoaded { source, rows },
             Err(error) => Action::Notice {
                 message: i18n::t_library_load_failed(error),
             },
@@ -601,6 +797,43 @@ fn spawn_fetch_library(fx: &Effects, uid: i64) {
         let _ = actions.send(action);
     });
 }
+
+fn spawn_fm_more(fx: &Effects) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        if let Ok(rows) = ncm.personal_fm().await {
+            let _ = actions.send(Action::FmMore { rows });
+        }
+    });
+}
+
+fn spawn_toggle_like(fx: &Effects, id: i64, like: bool) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        if let Err(error) = ncm.set_like(id, like).await {
+            let _ = actions.send(Action::Notice {
+                message: error.to_string(),
+            });
+        }
+    });
+}
+
+/// Cheap non-repeating pick for shuffle; nanos beat rand-crate weight here.
+fn random_index(len: usize, current: usize) -> usize {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as usize)
+        .unwrap_or(0);
+    let mut pick = nanos % len;
+    if pick == current {
+        pick = (pick + 1) % len;
+    }
+    pick
+}
+
+
 
 fn spawn_cover_fetch(fx: &Effects, generation: u64, pic_url: String) {
     let actions = fx.actions.clone();
