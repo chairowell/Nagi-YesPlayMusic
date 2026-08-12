@@ -617,7 +617,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           components: clippy,rustfmt
           targets: ${{ matrix.target }}
@@ -647,10 +647,31 @@ jobs:
           mkdir -p dist-ypm
           cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" "dist-ypm/${{ matrix.dest }}"
 
+      # GPL complete-corresponding-source kit rides the Linux leg on tags;
+      # provenance reads target/release/, so mirror the target-dir binary.
+      - uses: oven-sh/setup-bun@v2
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
+        with:
+          bun-version: 1.3.12
+
+      - name: Install dependencies
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build ypm complete-source kit
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p src-tauri/target/release
+          cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" src-tauri/target/release/ypm
+          bun run build:ypm:compliance
+          VERSION="${GITHUB_REF_NAME#v}"
+          tar -czf "dist-ypm/YesPlayMusic_${VERSION}_ypm-source.tar.gz" -C src-tauri/generated ypm-complete-source
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.dest }}-${{ github.sha }}
-          path: dist-ypm/${{ matrix.dest }}
+          path: dist-ypm/
           if-no-files-found: error
 
   draft-release:

@@ -35,6 +35,7 @@
     "build:sidecar": "bun scripts/build-rust-sidecar.mjs --release && bun scripts/build-sidecar-compliance.mjs",
     "build:sidecar:dev": "bun scripts/build-rust-sidecar.mjs --debug && bun scripts/build-sidecar-compliance.mjs --notices-only",
     "build:sidecar:bun-reference": "bun scripts/build-sidecar.mjs",
+    "build:ypm:compliance": "bun scripts/build-ypm-compliance.mjs",
     "test": "bun test",
     "prettier": "npx prettier --write ./src",
     "netease_api:run": "npx @neteaseapireborn/api"
