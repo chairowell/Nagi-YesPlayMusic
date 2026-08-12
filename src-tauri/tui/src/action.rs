@@ -61,6 +61,10 @@ pub enum Action {
     Notice {
         message: String,
     },
+    LyricsLoaded {
+        generation: u64,
+        lines: Vec<crate::lyrics::LyricLine>,
+    },
 }
 
 pub const SEEK_STEP: Duration = Duration::from_secs(5);

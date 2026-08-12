@@ -10,16 +10,26 @@ use ratatui::Frame;
 use crate::app::AppState;
 use crate::ui::format_duration;
 
+// Cover art travels as a 26×13 cell grid (each cell is two vertical pixels,
+// so the pixel grid is square); the frame must hug exactly that grid or the
+// border reads as a stretched rectangle.
+const COVER_GRID: (u16, u16) = (26, 13);
+
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
     let [main, progress_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas(area);
 
-    let cover_width = (main.height.saturating_mul(2)).clamp(12, 28);
-    let [cover_area, meta_area] = Layout::horizontal([
-        Constraint::Length(cover_width),
-        Constraint::Min(0),
-    ])
-    .areas(main);
+    let frame_width = (COVER_GRID.0 + 2).min(main.width);
+    let frame_height = (COVER_GRID.1 + 2).min(main.height);
+    let [cover_column, meta_area] =
+        Layout::horizontal([Constraint::Length(frame_width), Constraint::Min(0)]).areas(main);
+    // Fixed square frame, top-aligned with the title column.
+    let cover_area = Rect {
+        x: cover_column.x,
+        y: cover_column.y,
+        width: frame_width,
+        height: frame_height,
+    };
 
     draw_cover(frame, state, cover_area);
     draw_meta(frame, state, meta_area);
@@ -71,6 +81,11 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect) {
                     Style::new().fg(theme.faint),
                 )));
             }
+            if !state.lyrics.is_empty() {
+                lines.push(Line::default());
+                let reserved = lines.len() as u16;
+                lines.extend(lyric_window(state, area.height.saturating_sub(reserved)));
+            }
         }
         None => {
             lines.push(Line::from(Span::styled(
@@ -97,6 +112,49 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect) {
         )));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// Rows of synced lyrics with the current line pinned mid-window:
+/// context dimmed, current line accented, its translation right below.
+fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
+    let theme = &state.theme;
+    let current = crate::lyrics::line_index_at(&state.lyrics, state.position);
+    let rows = height.max(1) as usize;
+    let anchor = current.unwrap_or(0);
+    let above = rows / 2;
+    let start = anchor.saturating_sub(above);
+
+    let mut lines = Vec::new();
+    let mut used = 0_usize;
+    for (index, lyric) in state.lyrics.iter().enumerate().skip(start) {
+        if used >= rows {
+            break;
+        }
+        let is_current = Some(index) == current;
+        let style = if is_current {
+            Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(theme.dim)
+        };
+        let marker = if is_current { "▸ " } else { "  " };
+        lines.push(Line::from(Span::styled(
+            format!("  {marker}{}", lyric.text),
+            style,
+        )));
+        used += 1;
+        if is_current {
+            if let Some(translation) = &lyric.translation {
+                if used < rows {
+                    lines.push(Line::from(Span::styled(
+                        format!("    {translation}"),
+                        Style::new().fg(theme.faint),
+                    )));
+                    used += 1;
+                }
+            }
+        }
+    }
+    lines
 }
 
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect) {

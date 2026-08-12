@@ -201,6 +201,23 @@ impl Ncm {
         Ok((url.to_owned(), kind))
     }
 
+    /// Raw LRC text pair (original, translation) for a song.
+    pub async fn lyrics(&self, id: i64) -> Result<(String, Option<String>)> {
+        let query = self.query().param("id", &id.to_string());
+        let response = self
+            .client
+            .lyric(&query)
+            .await
+            .map_err(|error| anyhow!("lyric failed: {error:?}"))?;
+        let body = &response.body;
+        let lrc = body["lrc"]["lyric"].as_str().unwrap_or_default().to_owned();
+        let tlyric = body["tlyric"]["lyric"]
+            .as_str()
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned);
+        Ok((lrc, tlyric))
+    }
+
     pub async fn search_songs(&self, keywords: &str, limit: u32) -> Result<Vec<Value>> {
         let query = self
             .query()

@@ -156,7 +156,26 @@ impl Theme {
             "db16" => Some(Self::db16()),
             "pico8" => Some(Self::pico8()),
             "gameboy" => Some(Self::gameboy()),
+            "transparent" => Some(Self::transparent()),
             _ => None,
+        }
+    }
+
+    /// Terminal-native theme: Reset = the terminal's own default colors,
+    /// the TUI equivalent of a transparent background. Accents and the
+    /// cover palette stay DB16 so pixel art keeps its contrast; best on
+    /// dark terminals (light-terminal users should write a light theme
+    /// file instead).
+    fn transparent() -> Self {
+        Self {
+            bg: Color::Reset,
+            fg: Color::Reset,
+            dim: rgb(DB16[10]),
+            faint: rgb(DB16[7]),
+            accent: rgb(DB16[14]),
+            accent2: rgb(DB16[9]),
+            sel: rgb(DB16[12]),
+            palette: DB16,
         }
     }
 

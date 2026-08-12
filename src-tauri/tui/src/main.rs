@@ -5,6 +5,8 @@ mod api;
 mod app;
 mod config;
 mod event;
+#[allow(dead_code)] // wired in lyrics view stage
+mod lyrics;
 pub mod pixel;
 mod player;
 mod theme;

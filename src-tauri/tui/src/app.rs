@@ -24,7 +24,8 @@ pub struct Effects {
     pub actions: mpsc::UnboundedSender<Action>,
 }
 
-/// Cover art cell grid fetched per track (rendering clips or centers).
+/// Cover art cell grid fetched per track; ui::now_playing::COVER_GRID
+/// frames exactly this size, keeping the art visually square.
 const COVER_CELLS: (u16, u16) = (26, 13);
 const COVER_SOURCE_EDGE: u32 = 300;
 
@@ -48,6 +49,7 @@ pub struct AppState {
     pub login_message: Option<String>,
     pub now: Option<NowPlaying>,
     pub cover: Option<PixelCover>,
+    pub lyrics: Vec<crate::lyrics::LyricLine>,
     pub position: Duration,
     pub duration: Option<Duration>,
     pub paused: bool,
@@ -91,6 +93,7 @@ impl AppState {
             login_message: None,
             now: None,
             cover: None,
+            lyrics: Vec::new(),
             position: Duration::ZERO,
             duration: None,
             paused: false,
@@ -111,6 +114,7 @@ impl AppState {
             album: String::new(),
         });
         self.cover = None;
+        self.lyrics.clear();
         self.position = Duration::ZERO;
         self.duration = None;
         self.status = Some("解析中…".into());
@@ -234,6 +238,11 @@ impl AppState {
                 self.selected = 0;
             }
             Action::Notice { message } => self.status = Some(message),
+            Action::LyricsLoaded { generation, lines } => {
+                if generation == self.generation {
+                    self.lyrics = lines;
+                }
+            }
             Action::TrackResolved { generation, track } => {
                 if generation == self.generation {
                     self.now = Some(NowPlaying {
@@ -251,6 +260,7 @@ impl AppState {
                     if let Some(pic_url) = track.pic_url {
                         spawn_cover_fetch(fx, generation, pic_url, self.theme.palette);
                     }
+                    spawn_fetch_lyrics(fx, generation, track.id);
                 }
             }
             Action::ResolveFailed { generation, message } => {
@@ -400,6 +410,20 @@ fn spawn_login(fx: &Effects) {
                     }
                 }
             }
+        }
+    });
+}
+
+fn spawn_fetch_lyrics(fx: &Effects, generation: u64, song_id: i64) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let Ok((lrc, tlyric)) = ncm.lyrics(song_id).await else {
+            return; // missing lyrics are cosmetic
+        };
+        let lines = crate::lyrics::parse_lrc(&lrc, tlyric.as_deref());
+        if !lines.is_empty() {
+            let _ = actions.send(Action::LyricsLoaded { generation, lines });
         }
     });
 }
