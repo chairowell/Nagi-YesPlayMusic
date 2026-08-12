@@ -143,7 +143,10 @@ mod tests {
                 csrf: String::new(),
             })
             .unwrap();
-        let mode = std::fs::metadata(store.path()).unwrap().permissions().mode();
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
 

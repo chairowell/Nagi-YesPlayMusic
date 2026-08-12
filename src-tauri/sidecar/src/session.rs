@@ -310,5 +310,4 @@ mod tests {
         }
         assert_eq!(counter.load(Ordering::Relaxed), 1);
     }
-
 }

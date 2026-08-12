@@ -103,11 +103,11 @@ impl TrackCache {
     }
 
     pub fn total_bytes(&self) -> Result<u64, CacheError> {
-        let total: i64 = self
-            .conn
-            .query_row("SELECT COALESCE(SUM(bytes), 0) FROM tracks", [], |row| {
-                row.get(0)
-            })?;
+        let total: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(SUM(bytes), 0) FROM tracks", [], |row| {
+                    row.get(0)
+                })?;
         Ok(total.max(0) as u64)
     }
 
@@ -138,7 +138,9 @@ impl TrackCache {
     }
 
     fn track_path(&self, track_id: i64, level: &str, ext: &str) -> PathBuf {
-        self.root.join("tracks").join(format!("{track_id}-{level}.{ext}"))
+        self.root
+            .join("tracks")
+            .join(format!("{track_id}-{level}.{ext}"))
     }
 }
 
