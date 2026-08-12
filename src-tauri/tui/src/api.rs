@@ -5,11 +5,13 @@
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use ncm_api_rs::api::Query;
 use ncm_api_rs::ApiClient;
 use serde_json::Value;
 use yesplaymusic_core::auth::{Session, SessionStore};
+
+use crate::i18n::{self, Key};
 
 #[derive(Clone, Debug)]
 pub struct ResolvedTrack {
@@ -64,7 +66,9 @@ impl Ncm {
 
     pub fn logout(&self) -> Result<()> {
         *self.session.write().expect("session lock") = None;
-        self.store.clear().context("clear session store")
+        self.store
+            .clear()
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpClearSession, error)))
     }
 
     fn query(&self) -> Query {
@@ -97,13 +101,13 @@ impl Ncm {
             .client
             .login_qr_key(&self.query())
             .await
-            .map_err(|error| anyhow!("login_qr_key failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpQrKey, error)))?;
         let body = &response.body;
         body["unikey"]
             .as_str()
             .or_else(|| body["data"]["unikey"].as_str())
             .map(str::to_owned)
-            .ok_or_else(|| anyhow!("二维码 key 响应缺少 unikey"))
+            .ok_or_else(|| anyhow!(i18n::t(Key::ApiQrKeyMissing)))
     }
 
     pub fn qr_login_url(key: &str) -> String {
@@ -116,7 +120,7 @@ impl Ncm {
             .client
             .login_qr_check(&query)
             .await
-            .map_err(|error| anyhow!("login_qr_check failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpQrCheck, error)))?;
         let code = response.body["code"].as_i64().unwrap_or(0);
         match code {
             800 => Ok(QrStatus::Expired),
@@ -124,12 +128,14 @@ impl Ncm {
             802 => Ok(QrStatus::Scanned),
             803 => {
                 let session = Session::from_set_cookies(&response.cookie)
-                    .ok_or_else(|| anyhow!("登录成功但响应里没有 MUSIC_U cookie"))?;
-                self.store.save(&session).context("persist session")?;
+                    .ok_or_else(|| anyhow!(i18n::t(Key::ApiLoginCookieMissing)))?;
+                self.store
+                    .save(&session)
+                    .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPersistSession, error)))?;
                 *self.session.write().expect("session lock") = Some(session);
                 Ok(QrStatus::Success)
             }
-            other => Err(anyhow!("二维码状态码未知：{other}")),
+            other => Err(anyhow!(i18n::t_unknown_qr_status(other))),
         }
     }
 
@@ -140,26 +146,32 @@ impl Ncm {
             .client
             .user_account(&self.query())
             .await
-            .map_err(|error| anyhow!("user_account failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpAccount, error)))?;
         let body = &response.body;
         let uid = body["account"]["id"]
             .as_i64()
-            .ok_or_else(|| anyhow!("登录态无效（拿不到账号 id）"))?;
-        let nickname = body["profile"]["nickname"].as_str().unwrap_or("").to_owned();
+            .ok_or_else(|| anyhow!(i18n::t(Key::ApiInvalidSession)))?;
+        let nickname = body["profile"]["nickname"]
+            .as_str()
+            .unwrap_or("")
+            .to_owned();
         Ok((uid, nickname))
     }
 
     /// The user's "我喜欢的音乐" — by NCM convention the first playlist.
     pub async fn liked_songs(&self, uid: i64) -> Result<Vec<SongRow>> {
-        let query = self.query().param("uid", &uid.to_string()).param("limit", "1");
+        let query = self
+            .query()
+            .param("uid", &uid.to_string())
+            .param("limit", "1");
         let response = self
             .client
             .user_playlist(&query)
             .await
-            .map_err(|error| anyhow!("user_playlist failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpUserPlaylist, error)))?;
         let playlist_id = response.body["playlist"][0]["id"]
             .as_i64()
-            .ok_or_else(|| anyhow!("没有找到「我喜欢的音乐」歌单"))?;
+            .ok_or_else(|| anyhow!(i18n::t(Key::ApiLikedPlaylistMissing)))?;
         self.playlist_songs(playlist_id).await
     }
 
@@ -172,7 +184,7 @@ impl Ncm {
             .client
             .playlist_track_all(&query)
             .await
-            .map_err(|error| anyhow!("playlist_track_all failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
         let songs = response.body["songs"]
             .as_array()
             .cloned()
@@ -191,12 +203,12 @@ impl Ncm {
             .client
             .song_url(&query)
             .await
-            .map_err(|error| anyhow!("song_url failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))?;
         let data = &response.body["data"][0];
         let url = data["url"]
             .as_str()
             .filter(|url| !url.is_empty())
-            .ok_or_else(|| anyhow!("这首歌暂时拿不到播放地址（可能需要登录或 VIP）"))?;
+            .ok_or_else(|| anyhow!(i18n::t(Key::ApiPlaybackUrlUnavailable)))?;
         let kind = data["type"].as_str().unwrap_or("mp3").to_lowercase();
         Ok((url.to_owned(), kind))
     }
@@ -208,7 +220,7 @@ impl Ncm {
             .client
             .lyric(&query)
             .await
-            .map_err(|error| anyhow!("lyric failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpLyrics, error)))?;
         let body = &response.body;
         let lrc = body["lrc"]["lyric"].as_str().unwrap_or_default().to_owned();
         let tlyric = body["tlyric"]["lyric"]
@@ -228,7 +240,7 @@ impl Ncm {
             .client
             .cloudsearch(&query)
             .await
-            .map_err(|error| anyhow!("cloudsearch failed: {error:?}"))?;
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSearch, error)))?;
         Ok(response.body["result"]["songs"]
             .as_array()
             .cloned()
@@ -255,10 +267,12 @@ impl Ncm {
         let keywords = format!("{title} {artist}");
         let songs = self.search_songs(keywords.trim(), 8).await?;
         if songs.is_empty() {
-            return Err(anyhow!("搜索不到「{keywords}」"));
+            return Err(anyhow!(i18n::t_search_not_found(&keywords)));
         }
         for song in &songs {
-            let Some(id) = song["id"].as_i64() else { continue };
+            let Some(id) = song["id"].as_i64() else {
+                continue;
+            };
             let Ok((url, kind)) = self.song_url(id).await else {
                 continue;
             };
@@ -272,7 +286,7 @@ impl Ncm {
                 pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
             });
         }
-        Err(anyhow!("「{keywords}」的候选都拿不到播放地址（可能需要登录）"))
+        Err(anyhow!(i18n::t_candidates_unavailable(&keywords)))
     }
 }
 
@@ -289,14 +303,20 @@ fn song_row(song: &Value) -> SongRow {
 /// Small square cover JPEG from the NCM CDN (`?param=WxH` server-side crop).
 pub async fn fetch_cover(pic_url: &str, edge: u32) -> Result<Vec<u8>> {
     let url = format!("{pic_url}?param={edge}y{edge}");
-    let response = reqwest::get(&url).await.context("fetch cover")?;
-    let bytes = response.bytes().await.context("read cover body")?;
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpFetchCover, error)))?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpReadCover, error)))?;
     Ok(bytes.to_vec())
 }
 
 /// Render a QR login link as terminal half-block art.
 pub fn qr_unicode(url: &str) -> Result<String> {
-    let code = qrcode::QrCode::new(url.as_bytes()).context("build QR code")?;
+    let code = qrcode::QrCode::new(url.as_bytes())
+        .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpBuildQr, error)))?;
     Ok(code
         .render::<qrcode::render::unicode::Dense1x2>()
         .dark_color(qrcode::render::unicode::Dense1x2::Light)

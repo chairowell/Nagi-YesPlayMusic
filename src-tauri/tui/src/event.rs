@@ -30,7 +30,11 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
         if let MouseEventKind::Down(crossterm::event::MouseButton::Left) = mouse.kind {
             for (rect, is_confirm) in &hits.confirm {
                 if rect.contains(position) {
-                    return Some(if *is_confirm { Action::Quit } else { Action::Back });
+                    return Some(if *is_confirm {
+                        Action::Quit
+                    } else {
+                        Action::Back
+                    });
                 }
             }
         }

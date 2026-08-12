@@ -14,6 +14,7 @@ use ratatui::Frame;
 
 use crate::action::View;
 use crate::app::AppState;
+use crate::i18n::{self, Key};
 
 /// Geometry recorded at draw time so mouse events can be resolved
 /// against what is actually on screen.
@@ -50,7 +51,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
         match state.view {
             View::NowPlaying => now_playing::draw(frame, state, body, hits),
             View::Library => library::draw(frame, state, body, hits),
-            View::Search => placeholder(frame, state, body, "搜索（下一阶段接入）"),
+            View::Search => placeholder(frame, state, body, Key::SearchPlaceholder),
             View::Queue => queue::draw(frame, state, body, hits),
             View::Login => login::draw(frame, state, body),
         }
@@ -62,19 +63,19 @@ pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
     }
 }
 
-const TABS: [(&str, View); 4] = [
-    ("1 正在播放", View::NowPlaying),
-    ("2 曲库", View::Library),
-    ("3 搜索", View::Search),
-    ("4 队列", View::Queue),
+const TABS: [(&str, Key, View); 4] = [
+    ("1", Key::NowPlaying, View::NowPlaying),
+    ("2", Key::Library, View::Library),
+    ("3", Key::Search, View::Search),
+    ("4", Key::Queue, View::Queue),
 ];
 
 fn draw_tabs(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let mut spans = Vec::new();
     let mut x = area.x;
-    for (label, view) in TABS {
-        let text = format!("[{label}] ");
+    for (number, label, view) in TABS {
+        let text = format!("[{number} {}] ", i18n::t(label));
         let width = text::display_width(&text) as u16;
         let style = if state.view == view {
             Style::new().fg(theme.accent)
@@ -115,18 +116,18 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
 
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "退出 ypm？",
+            i18n::t(Key::QuitQuestion),
             Style::new().fg(theme.fg),
         )))
         .centered(),
         Rect { height: 1, ..inner },
     );
 
-    let confirm_label = "[ y 退出 ]";
-    let cancel_label = "[ n 取消 ]";
+    let confirm_label = format!("[ y {} ]", i18n::t(Key::Quit));
+    let cancel_label = format!("[ n {} ]", i18n::t(Key::Cancel));
     let gap = 3_u16;
-    let confirm_width = text::display_width(confirm_label) as u16;
-    let cancel_width = text::display_width(cancel_label) as u16;
+    let confirm_width = text::display_width(&confirm_label) as u16;
+    let cancel_width = text::display_width(&cancel_label) as u16;
     let total = confirm_width + gap + cancel_width;
     let buttons_y = inner.y + inner.height.saturating_sub(1);
     let start_x = inner.x + (inner.width.saturating_sub(total)) / 2;
@@ -164,46 +165,47 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
 
 fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
-    let hints: &[(&str, &str)] = match state.view {
+    let hints: &[(&str, Key)] = match state.view {
         View::Library => &[
-            ("l/Enter", "播放"),
-            ("j/k", "选择"),
-            ("gg/G", "顶/底"),
-            ("h", "返回"),
-            ("q", "退出"),
+            ("l/Enter", Key::Play),
+            ("j/k", Key::Select),
+            ("gg/G", Key::TopBottom),
+            ("h", Key::Back),
+            ("q", Key::Quit),
         ],
         View::Queue => &[
-            ("l/Enter", "跳到这首"),
-            ("j/k", "选择"),
-            ("n/p", "切歌"),
-            ("h", "返回"),
+            ("l/Enter", Key::JumpToTrack),
+            ("j/k", Key::Select),
+            ("n/p", Key::ChangeTrack),
+            ("h", Key::Back),
         ],
-        View::Login => &[("h/Esc", "返回"), ("i", "刷新二维码"), ("q", "退出")],
+        View::Login => &[
+            ("h/Esc", Key::Back),
+            ("i", Key::RefreshQr),
+            ("q", Key::Quit),
+        ],
         _ => &[
-            ("Space", "暂停"),
-            ("←/→", "seek"),
-            ("-/+", "音量"),
-            ("n/p", "切歌"),
-            ("z", "纯净"),
-            ("q", "退出"),
+            ("Space", Key::Pause),
+            ("←/→", Key::Seek),
+            ("-/+", Key::Volume),
+            ("n/p", Key::ChangeTrack),
+            ("z", Key::Zen),
+            ("q", Key::Quit),
         ],
     };
     let mut spans = Vec::new();
     for (key, label) in hints {
         spans.push(Span::styled(*key, Style::new().fg(theme.fg)));
         spans.push(Span::styled(
-            format!(" {label}   "),
+            format!(" {}   ", i18n::t(*label)),
             Style::new().fg(theme.dim),
         ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn placeholder(frame: &mut Frame, state: &AppState, area: Rect, text: &str) {
-    let line = Line::from(Span::styled(
-        text.to_owned(),
-        Style::new().fg(state.theme.dim),
-    ));
+fn placeholder(frame: &mut Frame, state: &AppState, area: Rect, key: Key) {
+    let line = Line::from(Span::styled(i18n::t(key), Style::new().fg(state.theme.dim)));
     let [_, middle, _] = Layout::vertical([
         Constraint::Percentage(45),
         Constraint::Length(1),
@@ -224,9 +226,7 @@ pub fn scroll_offset(selected: usize, len: usize, visible: usize) -> usize {
     if visible == 0 || len <= visible {
         return 0;
     }
-    selected
-        .saturating_sub(visible / 2)
-        .min(len - visible)
+    selected.saturating_sub(visible / 2).min(len - visible)
 }
 
 pub fn format_ms(ms: i64) -> String {

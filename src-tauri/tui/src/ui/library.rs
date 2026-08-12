@@ -8,6 +8,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::AppState;
+use crate::i18n::{self, Key};
 use crate::ui::Hits;
 
 use super::text::pad_display;
@@ -18,8 +19,7 @@ const COLLAPSE_BELOW: u16 = 50;
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     if area.width >= COLLAPSE_BELOW {
         let [sidebar, list] =
-            Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(0)])
-                .areas(area);
+            Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(0)]).areas(area);
         draw_sidebar(frame, state, sidebar);
         draw_list(frame, state, list, hits);
     } else {
@@ -34,15 +34,30 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect) {
             format!("♪ {nickname}"),
             Style::new().fg(theme.accent2),
         )),
-        None => Line::from(Span::styled("未登录 · 按 g", Style::new().fg(theme.accent2))),
+        None => Line::from(Span::styled(
+            i18n::t(Key::NotLoggedInPressG),
+            Style::new().fg(theme.accent2),
+        )),
     };
     let lines = vec![
         account,
         Line::default(),
-        Line::from(Span::styled("▸ 我喜欢的音乐", Style::new().fg(theme.accent))),
-        Line::from(Span::styled("  每日推荐", Style::new().fg(theme.dim))),
-        Line::from(Span::styled("  私人FM", Style::new().fg(theme.dim))),
-        Line::from(Span::styled("  云盘", Style::new().fg(theme.dim))),
+        Line::from(Span::styled(
+            format!("▸ {}", i18n::t(Key::LikedSongs)),
+            Style::new().fg(theme.accent),
+        )),
+        Line::from(Span::styled(
+            format!("  {}", i18n::t(Key::DailyRecommendations)),
+            Style::new().fg(theme.dim),
+        )),
+        Line::from(Span::styled(
+            format!("  {}", i18n::t(Key::PersonalFm)),
+            Style::new().fg(theme.dim),
+        )),
+        Line::from(Span::styled(
+            format!("  {}", i18n::t(Key::CloudDrive)),
+            Style::new().fg(theme.dim),
+        )),
     ];
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -51,9 +66,9 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     if state.library.is_empty() {
         let message = if state.nickname.is_some() && !state.library_synced {
-            "歌单同步中…"
+            i18n::t(Key::SyncingLibrary)
         } else {
-            "这里还是空的"
+            i18n::t(Key::EmptyLibrary)
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -73,9 +88,9 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         format!(
             "  {:>3}  {} {} {:>5}",
             "#",
-            pad_display("歌名", 24),
-            pad_display("歌手", 14),
-            "时长"
+            pad_display(i18n::t(Key::ColumnTitle), 24),
+            pad_display(i18n::t(Key::ColumnArtist), 14),
+            i18n::t(Key::ColumnDuration)
         ),
         Style::new().fg(theme.faint),
     )));

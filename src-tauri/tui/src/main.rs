@@ -5,6 +5,7 @@ mod api;
 mod app;
 mod config;
 mod event;
+mod i18n;
 #[allow(dead_code)] // wired in lyrics view stage
 mod lyrics;
 pub mod pixel;
@@ -28,6 +29,7 @@ fn main() -> Result<()> {
     let _log_guard = init_logging(args.debug)?;
 
     let config = config::Config::load();
+    i18n::init(i18n::Lang::from_config(&config.language));
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(app::run(config))
 }

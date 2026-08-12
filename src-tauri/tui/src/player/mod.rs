@@ -106,7 +106,10 @@ fn actor(
     loop {
         match commands.recv_timeout(TICK) {
             Ok(command) => match command {
-                PlayerCommand::PlayFile { generation: g, path } => {
+                PlayerCommand::PlayFile {
+                    generation: g,
+                    path,
+                } => {
                     generation = g;
                     active = start(&mut engine, volume, g, &events, || open_file(&path));
                 }

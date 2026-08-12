@@ -9,6 +9,7 @@ use ratatui::Frame;
 
 use crate::action::MenuEntry;
 use crate::app::AppState;
+use crate::i18n::{self, Key};
 use crate::ui::text::display_width;
 use crate::ui::{format_duration, Hits};
 
@@ -71,7 +72,10 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
     let theme = &state.theme;
     let menu = menu_entries(state);
     let menu_height = menu.len() as u16;
-    let art_height = state.idle_art.height.min(area.height.saturating_sub(menu_height + 4));
+    let art_height = state
+        .idle_art
+        .height
+        .min(area.height.saturating_sub(menu_height + 4));
 
     let [_, art_area, _, menu_area, _, footer_area, _] = Layout::vertical([
         Constraint::Fill(2),
@@ -96,8 +100,8 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
             height: 1,
         };
         hits.menu.push((row, *entry));
-        let pad = (MENU_WIDTH as usize)
-            .saturating_sub(display_width(label) + display_width(key) + 2);
+        let pad =
+            (MENU_WIDTH as usize).saturating_sub(display_width(label) + display_width(key) + 2);
         let line = Line::from(vec![
             Span::styled(
                 format!(" {label}{}", " ".repeat(pad)),
@@ -110,9 +114,13 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
     }
 
     let footer = match (&state.nickname, state.library.len()) {
-        (Some(nickname), n) if state.library_synced => format!("♪ {nickname} · {n} 首已就绪"),
-        (Some(nickname), _) => format!("♪ {nickname} · 歌单同步中…"),
-        (None, _) => "未登录 · 扫码后同步你的音乐".into(),
+        (Some(nickname), n) if state.library_synced => {
+            format!("♪ {nickname} · {}", i18n::t_songs_ready(n))
+        }
+        (Some(nickname), _) => {
+            format!("♪ {nickname} · {}", i18n::t(Key::SyncingLibrary))
+        }
+        (None, _) => i18n::t(Key::NotLoggedInSync).into(),
     };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -125,13 +133,13 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
 }
 
 fn menu_entries(state: &AppState) -> Vec<(String, &'static str, MenuEntry)> {
-    let mut entries = vec![("我喜欢的音乐".to_owned(), "2", MenuEntry::Library)];
-    entries.push(("搜索".to_owned(), "/", MenuEntry::Search));
+    let mut entries = vec![(i18n::t(Key::LikedSongs).to_owned(), "2", MenuEntry::Library)];
+    entries.push((i18n::t(Key::Search).to_owned(), "f", MenuEntry::Search));
     entries.push(match &state.nickname {
-        Some(_) => ("重新扫码登录".to_owned(), "i", MenuEntry::Login),
-        None => ("扫码登录".to_owned(), "i", MenuEntry::Login),
+        Some(_) => (i18n::t(Key::Relogin).to_owned(), "i", MenuEntry::Login),
+        None => (i18n::t(Key::ScanLogin).to_owned(), "i", MenuEntry::Login),
     });
-    entries.push(("退出".to_owned(), "q", MenuEntry::Quit));
+    entries.push((i18n::t(Key::Quit).to_owned(), "q", MenuEntry::Quit));
     entries
 }
 
@@ -253,7 +261,8 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect) {
         .map(format_duration)
         .unwrap_or_else(|| "--:--".into());
 
-    let fixed = icon.len() + elapsed.len() + total.len() + 12;
+    let volume_label = i18n::t(Key::VolumeShort);
+    let fixed = icon.len() + elapsed.len() + total.len() + display_width(volume_label) + 9;
     let bar_width = (area.width as usize).saturating_sub(fixed).max(8);
     let ratio = match state.duration {
         Some(duration) if !duration.is_zero() => {
@@ -291,7 +300,7 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect) {
     spans.push(Span::raw(" "));
     spans.push(Span::styled(total, Style::new().fg(theme.dim)));
     spans.push(Span::styled(
-        format!("  vol {:>3.0}%", state.volume * 100.0),
+        format!("  {volume_label} {:>3.0}%", state.volume * 100.0),
         Style::new().fg(theme.faint),
     ));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);

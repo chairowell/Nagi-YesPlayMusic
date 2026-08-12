@@ -7,6 +7,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::AppState;
+use crate::i18n::{self, Key};
 use crate::ui::text::pad_display;
 use crate::ui::Hits;
 
@@ -15,7 +16,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     if state.queue.is_empty() {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "队列是空的——去曲库按 Enter，整列表就会成为播放队列",
+                i18n::t(Key::EmptyQueue),
                 Style::new().fg(theme.dim),
             )))
             .centered(),

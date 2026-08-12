@@ -12,6 +12,7 @@ use crate::action::{Action, View, SEEK_STEP};
 use crate::api::{self, Ncm, QrStatus, SongRow};
 use crate::config::{self, Config};
 use crate::event;
+use crate::i18n::{self, Key};
 use crate::pixel::{self, PixelCover};
 use crate::player::{self, PlayerCommand, PlayerEvent, PlayerHandle};
 use crate::theme::Theme;
@@ -169,7 +170,7 @@ impl AppState {
         self.lyrics.clear();
         self.position = Duration::ZERO;
         self.duration = None;
-        self.status = Some("解析中…".into());
+        self.status = Some(i18n::t(Key::Resolving).into());
         spawn_resolve(fx, self.generation, row);
     }
 
@@ -187,7 +188,7 @@ impl AppState {
                 self.queue_pos = Some(next as usize);
                 self.play_row(fx, row);
             }
-            None => self.status = Some("队列播完了".into()),
+            None => self.status = Some(i18n::t(Key::QueueFinished).into()),
         }
     }
 
@@ -296,18 +297,18 @@ impl AppState {
             Action::Mouse(_) => {} // resolved against Hits in the event loop
             Action::StartLogin => {
                 if self.nickname.is_some() {
-                    self.status = Some("已经登录了".into());
+                    self.status = Some(i18n::t(Key::AlreadyLoggedIn).into());
                 } else {
                     self.view = View::Login;
                     self.login_qr = None;
-                    self.login_message = Some("正在获取二维码…".into());
+                    self.login_message = Some(i18n::t(Key::FetchingQr).into());
                     spawn_login(fx);
                 }
             }
             Action::LoginQrReady { art } => {
                 if self.view == View::Login {
                     self.login_qr = Some(art);
-                    self.login_message = Some("用网易云音乐 App 扫码".into());
+                    self.login_message = Some(i18n::t(Key::ScanQr).into());
                 }
             }
             Action::LoginProgress { message } | Action::LoginFailed { message } => {
@@ -317,7 +318,7 @@ impl AppState {
             }
             Action::LoggedIn { uid, nickname } => {
                 self.nickname = Some(nickname.clone());
-                self.status = Some(format!("欢迎，{nickname}"));
+                self.status = Some(i18n::t_welcome(&nickname));
                 if self.view == View::Login {
                     self.view = View::Library;
                 }
@@ -330,7 +331,7 @@ impl AppState {
                 spawn_fetch_library(fx, uid);
             }
             Action::LibraryLoaded { rows } => {
-                self.status = Some(format!("我喜欢的音乐 · {} 首", rows.len()));
+                self.status = Some(i18n::t_liked_songs_count(rows.len()));
                 self.library = rows;
                 self.selected = 0;
                 self.library_synced = true;
@@ -350,7 +351,7 @@ impl AppState {
                     });
                     self.duration = (track.duration_ms > 0)
                         .then(|| Duration::from_millis(track.duration_ms as u64));
-                    self.status = Some(format!("播放中 · {}", track.kind));
+                    self.status = Some(i18n::t_playing(&track.kind));
                     fx.player.send(PlayerCommand::PlayUrl {
                         generation,
                         url: track.url.clone(),
@@ -361,7 +362,10 @@ impl AppState {
                     spawn_fetch_lyrics(fx, generation, track.id);
                 }
             }
-            Action::ResolveFailed { generation, message } => {
+            Action::ResolveFailed {
+                generation,
+                message,
+            } => {
                 if generation == self.generation {
                     self.status = Some(message);
                 }
@@ -423,7 +427,10 @@ impl AppState {
                     self.paused = false;
                 }
             }
-            PlayerEvent::Position { generation, position } => {
+            PlayerEvent::Position {
+                generation,
+                position,
+            } => {
                 if generation == self.generation {
                     self.position = position;
                 }
@@ -434,7 +441,10 @@ impl AppState {
                     self.pending_auto_next = true;
                 }
             }
-            PlayerEvent::Failed { generation, message } => {
+            PlayerEvent::Failed {
+                generation,
+                message,
+            } => {
                 if generation == self.generation {
                     self.status = Some(message);
                 }
@@ -500,7 +510,7 @@ fn spawn_login(fx: &Effects) {
                     consecutive_errors = 0;
                     if actions
                         .send(Action::LoginProgress {
-                            message: "已扫码，在手机上确认…".into(),
+                            message: i18n::t(Key::QrScannedConfirm).into(),
                         })
                         .is_err()
                     {
@@ -509,7 +519,7 @@ fn spawn_login(fx: &Effects) {
                 }
                 Ok(QrStatus::Expired) => {
                     let _ = actions.send(Action::LoginFailed {
-                        message: "二维码已过期，按 g 重新获取".into(),
+                        message: i18n::t(Key::QrExpired).into(),
                     });
                     return;
                 }
@@ -522,13 +532,13 @@ fn spawn_login(fx: &Effects) {
                     consecutive_errors += 1;
                     if consecutive_errors >= 3 {
                         let _ = actions.send(Action::LoginFailed {
-                            message: format!("网络不稳定，登录中断（{error}）；按 g 重试"),
+                            message: i18n::t_login_interrupted(error),
                         });
                         return;
                     }
                     if actions
                         .send(Action::LoginProgress {
-                            message: "网络抖动，重试中…".into(),
+                            message: i18n::t(Key::NetworkRetrying).into(),
                         })
                         .is_err()
                     {
@@ -562,7 +572,7 @@ fn spawn_fetch_library(fx: &Effects, uid: i64) {
         let action = match result {
             Ok(rows) => Action::LibraryLoaded { rows },
             Err(error) => Action::Notice {
-                message: format!("歌单加载失败：{error}"),
+                message: i18n::t_library_load_failed(error),
             },
         };
         let _ = actions.send(action);
@@ -686,7 +696,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
             let action = match ncm.account().await {
                 Ok((uid, nickname)) => Action::LoggedIn { uid, nickname },
                 Err(_) => Action::Notice {
-                    message: "登录态已失效，按 g 重新扫码".into(),
+                    message: i18n::t(Key::SessionExpired).into(),
                 },
             };
             let _ = actions.send(action);

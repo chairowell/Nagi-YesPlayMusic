@@ -2,11 +2,14 @@
 
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// UI language: zh | en | ja
+    #[serde(deserialize_with = "deserialize_language")]
+    pub language: String,
     /// NCM quality level: 128 | 320 | exhigh | lossless | hires
     pub quality: String,
     /// Built-in theme name; later also a file in themes/.
@@ -30,6 +33,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            language: "zh".into(),
             quality: "exhigh".into(),
             theme: "db16".into(),
             cache_limit_mib: 2048,
@@ -59,6 +63,7 @@ impl Config {
 
 const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都可省略（用默认值）。
 
+# language = "zh"            # zh | en | ja
 # quality = "exhigh"          # 128 | 320 | exhigh | lossless | hires
 # theme = "db16"              # db16 | pico8 | gameboy | transparent，或 themes/ 里的自定义主题名
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
@@ -67,6 +72,17 @@ const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都�
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 2048
 "#;
+
+fn deserialize_language<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        "zh" | "en" | "ja" => value,
+        _ => "zh".into(),
+    })
+}
 
 fn write_template(path: &std::path::Path) -> std::io::Result<()> {
     if path.exists() {
@@ -107,11 +123,17 @@ mod tests {
     #[test]
     fn defaults_hold_when_config_is_missing_or_broken() {
         let config = Config::default();
+        assert_eq!(config.language, "zh");
         assert_eq!(config.quality, "exhigh");
         assert_eq!(config.theme, "db16");
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
         assert_eq!(parsed.quality, "lossless");
         assert_eq!(parsed.theme, "db16");
+
+        let parsed: Config = toml::from_str("language = \"ja\"").unwrap();
+        assert_eq!(parsed.language, "ja");
+        let parsed: Config = toml::from_str("language = \"fr\"").unwrap();
+        assert_eq!(parsed.language, "zh");
     }
 }

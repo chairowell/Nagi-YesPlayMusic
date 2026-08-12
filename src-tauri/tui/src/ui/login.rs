@@ -7,6 +7,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::AppState;
+use crate::i18n::{self, Key};
 
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
@@ -32,7 +33,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
 
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "扫码登录网易云",
+            i18n::t(Key::LoginTitle),
             Style::new().fg(theme.accent),
         )))
         .centered(),
@@ -46,7 +47,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
             Paragraph::new(vec![
                 Line::from(Span::styled(message.clone(), Style::new().fg(theme.dim))),
                 Line::from(Span::styled(
-                    "请用网易云音乐 App 里的「扫一扫」（系统相机扫会提示无效）",
+                    i18n::t(Key::LoginInstruction),
                     Style::new().fg(theme.faint),
                 )),
             ])
