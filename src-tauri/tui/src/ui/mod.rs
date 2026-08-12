@@ -65,9 +65,63 @@ pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
         draw_hints(frame, state, hints_area);
     }
 
+    if state.show_help {
+        draw_help(frame, state, area);
+    }
     if state.confirm_quit {
         draw_quit_confirm(frame, state, area, hits);
     }
+}
+
+fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
+    let theme = &state.theme;
+    let rows: Vec<(&str, Key)> = vec![
+        ("1-4", Key::NowPlaying),
+        ("j/k ↑/↓", Key::Select),
+        ("l/Enter", Key::Play),
+        ("h/Esc", Key::Back),
+        ("gg / G", Key::TopBottom),
+        ("Space", Key::Pause),
+        ("n / p", Key::ChangeTrack),
+        ("←/→", Key::Seek),
+        ("- / +", Key::Volume),
+        ("s", Key::LabelPlayMode),
+        ("x", Key::LabelLike),
+        ("/ 或 f", Key::Search),
+        ("i", Key::LoginTitle),
+        ("z", Key::Zen),
+        ("?", Key::LabelHelp),
+        ("q", Key::Quit),
+    ];
+    let height = (rows.len() as u16 + 4).min(area.height);
+    let width = 42_u16.min(area.width);
+    let modal = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(ratatui::widgets::Clear, modal);
+    let block = Block::bordered()
+        .style(Style::new().bg(theme.bg))
+        .border_style(Style::new().fg(theme.accent))
+        .title(format!(" {} ", i18n::t(Key::HelpTitle)));
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+
+    let mut lines = Vec::new();
+    for (keys, label) in rows {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {keys:<10}"), Style::new().fg(theme.accent)),
+            Span::styled(i18n::t(label), Style::new().fg(theme.fg)),
+        ]));
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        format!("  {}", i18n::t(Key::HelpAnyKey)),
+        Style::new().fg(theme.faint),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 const TABS: [(&str, Key, View); 4] = [

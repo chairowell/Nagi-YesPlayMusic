@@ -127,6 +127,7 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('G') => Some(Action::JumpBottom),
         KeyCode::Char('i') => Some(Action::StartLogin),
         KeyCode::Char('y') => Some(Action::ConfirmYes),
+        KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Char('z') => Some(Action::ToggleZen),
         KeyCode::Char('s') => Some(Action::CycleMode),
         KeyCode::Char('x') => Some(Action::ToggleLike),

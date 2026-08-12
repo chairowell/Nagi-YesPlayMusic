@@ -41,6 +41,7 @@ pub enum Action {
     /// vim `g` prefix: two in a row jump to the list top.
     GKey,
     CycleMode,
+    ToggleHelp,
     ToggleLike,
     SetVolumeTo(f32),
     OpenSource(usize),

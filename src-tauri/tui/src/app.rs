@@ -127,6 +127,7 @@ pub struct AppState {
     pub status: Option<String>,
     pub generation: u64,
     pub confirm_quit: bool,
+    pub show_help: bool,
     pending_g: bool,
     pending_auto_next: bool,
     should_quit: bool,
@@ -201,6 +202,7 @@ impl AppState {
             status: None,
             generation: 0,
             confirm_quit: false,
+            show_help: false,
             pending_g: false,
             pending_auto_next: false,
             should_quit: false,
@@ -425,6 +427,11 @@ impl AppState {
             }
             return;
         }
+        // The help overlay is modal: any key dismisses it.
+        if self.show_help && matches!(action, Action::RawKey(_) | Action::Mouse(_)) {
+            self.show_help = false;
+            return;
+        }
         // Text-input mode: the search box owns the keyboard.
         if let Action::RawKey(key) = &action {
             if self.view == View::Search && self.search_input && !self.confirm_quit {
@@ -558,6 +565,7 @@ impl AppState {
             },
             Action::NextTrack => self.step_queue(fx, 1, false),
             Action::PrevTrack => self.step_queue(fx, -1, false),
+            Action::ToggleHelp => self.show_help = true,
             Action::CycleMode => {
                 self.play_mode = self.play_mode.next();
             }
