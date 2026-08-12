@@ -6,6 +6,15 @@ use crate::api::{ResolvedTrack, SongRow};
 use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
 
+/// Idle-dashboard menu entries; resolved to Actions at the input layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuEntry {
+    Library,
+    Search,
+    Login,
+    Quit,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
     NowPlaying,
@@ -39,6 +48,10 @@ pub enum Action {
     ResolveFailed {
         generation: u64,
         message: String,
+    },
+    CoverBytes {
+        generation: u64,
+        bytes: Vec<u8>,
     },
     CoverLoaded {
         generation: u64,

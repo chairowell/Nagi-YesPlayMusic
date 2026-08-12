@@ -12,21 +12,6 @@ use crate::ui::Hits;
 
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
-    for (index, _) in state.queue.iter().enumerate() {
-        let y = area.y + index as u16;
-        if y >= area.y + area.height {
-            break;
-        }
-        hits.rows.push((
-            Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            },
-            index,
-        ));
-    }
     if state.queue.is_empty() {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -39,8 +24,19 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         return;
     }
 
-    let mut lines = Vec::with_capacity(state.queue.len());
-    for (index, row) in state.queue.iter().enumerate() {
+    let visible = area.height as usize;
+    let offset = super::scroll_offset(state.selected, state.queue.len(), visible);
+    let mut lines = Vec::with_capacity(visible);
+    for (index, row) in state.queue.iter().enumerate().skip(offset).take(visible) {
+        hits.rows.push((
+            Rect {
+                x: area.x,
+                y: area.y + (index - offset) as u16,
+                width: area.width,
+                height: 1,
+            },
+            index,
+        ));
         let playing = state.queue_pos == Some(index);
         let selected = index == state.selected;
         let marker = if playing { "▶" } else { " " };

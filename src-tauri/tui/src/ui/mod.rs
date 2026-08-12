@@ -21,6 +21,7 @@ use crate::app::AppState;
 pub struct Hits {
     pub tabs: Vec<(Rect, View)>,
     pub rows: Vec<(Rect, usize)>,
+    pub menu: Vec<(Rect, crate::action::MenuEntry)>,
     /// Quit-confirm buttons: true = 确定退出, false = 点错了.
     pub confirm: Vec<(Rect, bool)>,
 }
@@ -28,6 +29,7 @@ pub struct Hits {
 pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
     hits.tabs.clear();
     hits.rows.clear();
+    hits.menu.clear();
     hits.confirm.clear();
 
     let theme = &state.theme;
@@ -35,7 +37,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
     frame.render_widget(Block::new().style(Style::new().bg(theme.bg)), area);
 
     if state.zen {
-        now_playing::draw(frame, state, area);
+        now_playing::draw(frame, state, area, hits);
     } else {
         let [tabs_area, body, hints_area] = Layout::vertical([
             Constraint::Length(1),
@@ -46,7 +48,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
 
         draw_tabs(frame, state, tabs_area, hits);
         match state.view {
-            View::NowPlaying => now_playing::draw(frame, state, body),
+            View::NowPlaying => now_playing::draw(frame, state, body, hits),
             View::Library => library::draw(frame, state, body, hits),
             View::Search => placeholder(frame, state, body, "搜索（下一阶段接入）"),
             View::Queue => queue::draw(frame, state, body, hits),
@@ -120,8 +122,8 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
         Rect { height: 1, ..inner },
     );
 
-    let confirm_label = "[ 确定退出 ]";
-    let cancel_label = "[ 点错了 ]";
+    let confirm_label = "[ Enter 确定退出 ]";
+    let cancel_label = "[ Esc 点错了 ]";
     let gap = 3_u16;
     let confirm_width = text::display_width(confirm_label) as u16;
     let cancel_width = text::display_width(cancel_label) as u16;
@@ -214,6 +216,17 @@ fn placeholder(frame: &mut Frame, state: &AppState, area: Rect, text: &str) {
 pub fn format_duration(duration: std::time::Duration) -> String {
     let total = duration.as_secs();
     format!("{:02}:{:02}", total / 60, total % 60)
+}
+
+/// First visible index for a list viewport that keeps the selection
+/// centered where possible.
+pub fn scroll_offset(selected: usize, len: usize, visible: usize) -> usize {
+    if visible == 0 || len <= visible {
+        return 0;
+    }
+    selected
+        .saturating_sub(visible / 2)
+        .min(len - visible)
 }
 
 pub fn format_ms(ms: i64) -> String {

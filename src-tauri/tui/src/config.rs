@@ -16,6 +16,15 @@ pub struct Config {
     /// Enter on a list: true = the list becomes the queue from that song
     /// (desktop/NCM semantics), false = play just that one song.
     pub enter_replaces_queue: bool,
+    /// Playing layout: "side" = cover fills the height, lyrics beside;
+    /// "stacked" = cover centered on top, lyrics below.
+    pub layout: String,
+    /// Optional image for the idle dashboard; run through the same pixel
+    /// pipeline as covers. Falls back to the built-in vinyl.
+    pub idle_art: Option<String>,
+    /// Progress bar look: "dot" = thin line with a playhead dot,
+    /// "bar" = thick block line, no dot.
+    pub progress_style: String,
 }
 
 impl Default for Config {
@@ -25,6 +34,9 @@ impl Default for Config {
             theme: "db16".into(),
             cache_limit_mib: 2048,
             enter_replaces_queue: true,
+            layout: "side".into(),
+            idle_art: None,
+            progress_style: "dot".into(),
         }
     }
 }

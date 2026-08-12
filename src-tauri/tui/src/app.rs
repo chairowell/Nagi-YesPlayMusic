@@ -24,10 +24,27 @@ pub struct Effects {
     pub actions: mpsc::UnboundedSender<Action>,
 }
 
-/// Cover art cell grid fetched per track; ui::now_playing::COVER_GRID
-/// frames exactly this size, keeping the art visually square.
+/// Idle art + fallback cover grid; the playing cover is re-rendered
+/// dynamically from the kept source bytes to fit the layout.
 const COVER_CELLS: (u16, u16) = (26, 13);
-const COVER_SOURCE_EDGE: u32 = 300;
+const COVER_SOURCE_EDGE: u32 = 500;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayLayout {
+    /// Cover fills the height, lyrics beside it.
+    Side,
+    /// Cover centered on top, lyrics below.
+    Stacked,
+}
+
+impl PlayLayout {
+    fn from_config(value: &str) -> Self {
+        match value {
+            "stacked" => Self::Stacked,
+            _ => Self::Side,
+        }
+    }
+}
 
 pub struct NowPlaying {
     pub title: String,
@@ -49,6 +66,10 @@ pub struct AppState {
     pub login_message: Option<String>,
     pub now: Option<NowPlaying>,
     pub cover: Option<PixelCover>,
+    pub layout: PlayLayout,
+    pub thick_progress: bool,
+    pub idle_art: PixelCover,
+    cover_bytes: Option<Vec<u8>>,
     pub lyrics: Vec<crate::lyrics::LyricLine>,
     pub position: Duration,
     pub duration: Option<Duration>,
@@ -94,6 +115,10 @@ impl AppState {
             login_message: None,
             now: None,
             cover: None,
+            layout: PlayLayout::from_config(&config.layout),
+            thick_progress: config.progress_style == "bar",
+            idle_art: load_idle_art(config),
+            cover_bytes: None,
             lyrics: Vec::new(),
             position: Duration::ZERO,
             duration: None,
@@ -105,6 +130,23 @@ impl AppState {
             pending_auto_next: false,
             should_quit: false,
         }
+    }
+
+    /// The cover cell grid that fits the current terminal and layout.
+    /// Height-driven in Side layout, width-bounded in Stacked.
+    fn desired_cover_cells(&self) -> (u16, u16) {
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        let body_rows = rows.saturating_sub(if self.zen { 2 } else { 4 });
+        let height = match self.layout {
+            PlayLayout::Side => body_rows.saturating_sub(2),
+            PlayLayout::Stacked => body_rows / 2,
+        };
+        let height = height.clamp(8, 40);
+        let width = (height * 2).min(match self.layout {
+            PlayLayout::Side => cols.saturating_sub(30).max(16),
+            PlayLayout::Stacked => cols.saturating_sub(4).max(16),
+        });
+        (width, width / 2)
     }
 
     /// Reset the now-playing surface and kick off resolution for a row.
@@ -282,7 +324,7 @@ impl AppState {
                         url: track.url.clone(),
                     });
                     if let Some(pic_url) = track.pic_url {
-                        spawn_cover_fetch(fx, generation, pic_url, self.theme.palette);
+                        spawn_cover_fetch(fx, generation, pic_url);
                     }
                     spawn_fetch_lyrics(fx, generation, track.id);
                 }
@@ -290,6 +332,18 @@ impl AppState {
             Action::ResolveFailed { generation, message } => {
                 if generation == self.generation {
                     self.status = Some(message);
+                }
+            }
+            Action::CoverBytes { generation, bytes } => {
+                if generation == self.generation {
+                    self.cover_bytes = Some(bytes.clone());
+                    spawn_render_cover(
+                        fx,
+                        generation,
+                        bytes,
+                        self.theme.palette,
+                        self.desired_cover_cells(),
+                    );
                 }
             }
             Action::CoverLoaded { generation, cover } => {
@@ -304,7 +358,22 @@ impl AppState {
                     self.step_queue(fx, 1);
                 }
             }
-            Action::Resize => {}
+            Action::Resize => {
+                // Layout-dependent cover resolution: re-render from the
+                // kept source bytes when the desired grid changed.
+                if let (Some(bytes), Some(cover)) = (&self.cover_bytes, &self.cover) {
+                    let desired = self.desired_cover_cells();
+                    if (cover.width, cover.height) != desired {
+                        spawn_render_cover(
+                            fx,
+                            self.generation,
+                            bytes.clone(),
+                            self.theme.palette,
+                            desired,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -471,25 +540,56 @@ fn spawn_fetch_library(fx: &Effects) {
     });
 }
 
-fn spawn_cover_fetch(
-    fx: &Effects,
-    generation: u64,
-    pic_url: String,
-    palette: &'static [(u8, u8, u8)],
-) {
+fn spawn_cover_fetch(fx: &Effects, generation: u64, pic_url: String) {
     let actions = fx.actions.clone();
     tokio::spawn(async move {
         let Ok(bytes) = api::fetch_cover(&pic_url, COVER_SOURCE_EDGE).await else {
-            return; // a missing cover is cosmetic; the placeholder stays
+            return; // a missing cover is cosmetic; the idle art stays
         };
+        let _ = actions.send(Action::CoverBytes { generation, bytes });
+    });
+}
+
+fn spawn_render_cover(
+    fx: &Effects,
+    generation: u64,
+    bytes: Vec<u8>,
+    palette: &'static [(u8, u8, u8)],
+    cells: (u16, u16),
+) {
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
         let cover = tokio::task::spawn_blocking(move || {
-            pixel::from_image_bytes(&bytes, palette, COVER_CELLS.0, COVER_CELLS.1)
+            pixel::from_image_bytes(&bytes, palette, cells.0, cells.1)
         })
         .await;
         if let Ok(Ok(cover)) = cover {
             let _ = actions.send(Action::CoverLoaded { generation, cover });
         }
     });
+}
+
+fn load_idle_art(config: &Config) -> PixelCover {
+    let theme = Theme::by_name(&config.theme);
+    if let Some(path) = &config.idle_art {
+        let expanded = shellexpand_home(path);
+        if let Ok(bytes) = std::fs::read(expanded) {
+            if let Ok(art) = pixel::from_image_bytes(&bytes, theme.palette, COVER_CELLS.0, COVER_CELLS.1)
+            {
+                return art;
+            }
+        }
+    }
+    pixel::vinyl(theme.palette, COVER_CELLS.0, COVER_CELLS.1)
+}
+
+fn shellexpand_home(path: &str) -> std::path::PathBuf {
+    match path.strip_prefix("~/") {
+        Some(rest) => dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(rest),
+        None => std::path::PathBuf::from(path),
+    }
 }
 
 pub async fn run(config: Config) -> Result<()> {

@@ -23,6 +23,54 @@ pub struct PixelCover {
     pub cells: Vec<PixelCell>,
 }
 
+/// Built-in idle art: a procedural vinyl record quantized to the theme
+/// palette — no bundled asset, and it recolors with the theme like covers.
+pub fn vinyl(palette: &[Rgb], cell_width: u16, cell_height: u16) -> PixelCover {
+    let last = palette.len().saturating_sub(1);
+    let bg = palette[0];
+    let outline = palette[last / 2];
+    let groove_a = palette[last * 7 / 16];
+    let groove_b = palette[(last / 2).saturating_sub(1).max(1)];
+    let label = palette[last.saturating_sub(1).max(1)];
+
+    let width_px = cell_width as f64;
+    let height_px = (cell_height * 2) as f64;
+    let (cx, cy) = (width_px / 2.0, height_px / 2.0);
+    let radius = width_px.min(height_px) / 2.0 - 0.5;
+
+    let mut cells = Vec::with_capacity(cell_width as usize * cell_height as usize);
+    let color_at = |x: u32, y: u32| -> Rgb {
+        let (dx, dy) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
+        let r = (dx * dx + dy * dy).sqrt();
+        if r > radius {
+            bg
+        } else if r > radius - 1.0 {
+            outline
+        } else if r < radius * 0.10 {
+            bg // spindle hole
+        } else if r < radius * 0.34 {
+            label
+        } else if (r as u32) % 3 == 0 {
+            groove_b
+        } else {
+            groove_a
+        }
+    };
+    for cell_y in 0..cell_height as u32 {
+        for x in 0..cell_width as u32 {
+            cells.push(PixelCell {
+                upper: color_at(x, cell_y * 2),
+                lower: color_at(x, cell_y * 2 + 1),
+            });
+        }
+    }
+    PixelCover {
+        width: cell_width,
+        height: cell_height,
+        cells,
+    }
+}
+
 pub fn from_image_bytes(
     bytes: &[u8],
     palette: &[Rgb],

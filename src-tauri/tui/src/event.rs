@@ -43,6 +43,16 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
                     return Some(Action::SwitchView(*view));
                 }
             }
+            for (rect, entry) in &hits.menu {
+                if rect.contains(position) {
+                    return Some(match entry {
+                        crate::action::MenuEntry::Library => Action::SwitchView(View::Library),
+                        crate::action::MenuEntry::Search => Action::SwitchView(View::Search),
+                        crate::action::MenuEntry::Login => Action::StartLogin,
+                        crate::action::MenuEntry::Quit => Action::Quit,
+                    });
+                }
+            }
             for (rect, index) in &hits.rows {
                 if rect.contains(position) {
                     return Some(if *index == selected {

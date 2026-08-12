@@ -49,22 +49,10 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect) {
 
 fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
-    for (index, _) in state.library.iter().enumerate() {
-        let y = area.y + 1 + index as u16;
-        if y >= area.y + area.height {
-            break;
-        }
-        hits.rows.push((
-            Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            },
-            index,
-        ));
-    }
-    let mut lines = Vec::with_capacity(state.library.len() + 1);
+    let visible = area.height.saturating_sub(1) as usize; // header row
+    let offset = super::scroll_offset(state.selected, state.library.len(), visible);
+
+    let mut lines = Vec::with_capacity(visible + 1);
     lines.push(Line::from(Span::styled(
         format!(
             "  {:>3}  {} {} {:>5}",
@@ -75,7 +63,16 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         ),
         Style::new().fg(theme.faint),
     )));
-    for (index, row) in state.library.iter().enumerate() {
+    for (index, row) in state.library.iter().enumerate().skip(offset).take(visible) {
+        hits.rows.push((
+            Rect {
+                x: area.x,
+                y: area.y + 1 + (index - offset) as u16,
+                width: area.width,
+                height: 1,
+            },
+            index,
+        ));
         let selected = index == state.selected;
         let style = if selected {
             Style::new().fg(theme.bg).bg(theme.sel)
