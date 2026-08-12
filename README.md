@@ -68,7 +68,7 @@ macOS Tauri 重构版，不再跟随上游发版。原项目的界面和主要�
 
 ## 安装
 
-> **尝鲜版 [v0.8.0-canary.1](https://github.com/nagi-studio/YesPlayMusic/releases/tag/v0.8.0-canary.1) 已发布** —— 后台服务改用
+> **尝鲜版 [v0.8.0-canary.2](https://github.com/nagi-studio/YesPlayMusic/releases/tag/v0.8.0-canary.2) 已发布** —— 后台服务改用
 > Rust 重写，常驻内存约 82 MB 降到约 9 MB，macOS 安装包 36.5 MiB 缩到 11.9 MiB。
 > canary 走独立更新通道，装了它不会收到 stable 更新，装 stable 也不会被升到 canary。
 > 稳定版请继续用下面的 Releases 页面。
