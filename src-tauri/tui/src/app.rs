@@ -958,7 +958,7 @@ fn render_idle_art(
 /// Idle art scales with the terminal like covers do.
 fn desired_idle_cells() -> (u16, u16) {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    let height = rows.saturating_sub(12).clamp(12, 44);
+    let height = (rows * 2 / 5).clamp(12, 24);
     let width = (height * 2).min(cols.saturating_sub(4).max(16));
     (width, width / 2)
 }
@@ -981,9 +981,17 @@ fn shellexpand_home(path: &str) -> std::path::PathBuf {
 
 pub async fn run(config: Config) -> Result<()> {
     let mut terminal = ratatui::init();
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableBracketedPaste
+    );
     let result = event_loop(&mut terminal, &config).await;
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste
+    );
     ratatui::restore();
     result
 }
@@ -995,7 +1003,10 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
     let input_tx = actions_tx.clone();
     tokio::spawn(async move {
         let mut stream = crossterm::event::EventStream::new();
-        while let Some(Ok(event)) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            // A single unparseable sequence (e.g. an exotic drag-and-drop
+            // payload) must not kill the input loop.
+            let Ok(event) = result else { continue };
             if let Some(action) = event::action_for(event) {
                 if input_tx.send(action).is_err() {
                     break;

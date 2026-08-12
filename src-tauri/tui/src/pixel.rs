@@ -8,10 +8,10 @@ use ratatui::widgets::Widget;
 type Rgb = (u8, u8, u8);
 
 const BAYER_4X4: [[i16; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-const DITHER_RANGE: i16 = 20;
+const DITHER_RANGE: i16 = 14;
 // Below this squared distance the undithered match is faithful enough;
 // dithering there would only speckle smooth gradients (the dirty-logo bug).
-const CLEAN_MATCH_SQ: i32 = 1200;
+const CLEAN_MATCH_SQ: i32 = 2800;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PixelCell {
@@ -280,7 +280,9 @@ mod tests {
 
         let first = from_image_bytes(&bytes, &palette, 4, 2).unwrap();
         let second = from_image_bytes(&bytes, &palette, 4, 2).unwrap();
-        let row = vec![
+        // Snapshot under DITHER_RANGE=14 / CLEAN_MATCH_SQ=2800: mid-gray
+        // still checkers, with one Bayer cell tipping to white.
+        let top = vec![
             PixelCell {
                 upper: BLACK,
                 lower: WHITE,
@@ -298,9 +300,27 @@ mod tests {
                 lower: BLACK,
             },
         ];
+        let bottom = vec![
+            PixelCell {
+                upper: BLACK,
+                lower: WHITE,
+            },
+            PixelCell {
+                upper: WHITE,
+                lower: WHITE,
+            },
+            PixelCell {
+                upper: BLACK,
+                lower: WHITE,
+            },
+            PixelCell {
+                upper: WHITE,
+                lower: BLACK,
+            },
+        ];
 
         assert_eq!(first, second);
-        assert_eq!(first.cells, [row.clone(), row].concat());
+        assert_eq!(first.cells, [top, bottom].concat());
     }
 
     #[test]

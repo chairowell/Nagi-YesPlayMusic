@@ -13,6 +13,8 @@ pub fn action_for(event: Event) -> Option<Action> {
         Event::Key(key) if key.kind != KeyEventKind::Release => key_action(key),
         Event::Mouse(mouse) => Some(Action::Mouse(mouse)),
         Event::Resize(_, _) => Some(Action::Resize),
+        // Dropped files arrive as a paste; nothing to do with it yet.
+        Event::Paste(_) => None,
         _ => None,
     }
 }
