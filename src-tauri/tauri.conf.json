@@ -7,7 +7,7 @@
   "build": {
     "beforeDevCommand": "bun run build:sidecar:dev && bun run dev:tauri:renderer",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "bun run build:tauri:renderer && bun run build:sidecar",
+    "beforeBuildCommand": "bun scripts/prepare-tauri-build.mjs",
     "frontendDist": "http://127.0.0.1:28232"
   },
   "app": {

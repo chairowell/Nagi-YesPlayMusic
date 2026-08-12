@@ -193,7 +193,11 @@ describe('Tauri 本机安装包', () => {
       'binaries/yesplaymusic-sidecar',
     ]);
     expect(tauriConfig.build.beforeDevCommand).toContain('build:sidecar:dev');
-    expect(tauriConfig.build.beforeBuildCommand).toContain('build:sidecar');
+    // Packaging goes through the prepare wrapper, which runs build:sidecar
+    // itself unless CI already prepared the resources.
+    expect(tauriConfig.build.beforeBuildCommand).toBe(
+      'bun scripts/prepare-tauri-build.mjs'
+    );
   });
 
   test('Rust 外壳不再依赖 Windows 不存在的 /dev/urandom', () => {

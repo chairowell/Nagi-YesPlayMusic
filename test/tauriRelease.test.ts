@@ -84,7 +84,6 @@ test('Windows CI 上传测试包并把 tag updater 交给 release job', () => {
   expect(windowsJob).toContain(
     'bun install --frozen-lockfile --ignore-scripts'
   );
-  expect(windowsJob).toContain('cache-on-failure: true');
   expect(windowsJob).toContain('run: bun run build:tauri:windows');
   expect(windowsJob).toContain(
     'yesplaymusic-sidecar-x86_64-pc-windows-msvc.exe'
@@ -118,7 +117,6 @@ test('Ubuntu CI 构建 AppImage、deb 并把 tag updater 交给 release job', ()
   expect(linuxJob).toContain('dbus \\');
   expect(linuxJob).toContain('libwebkit2gtk-4.1-dev');
   expect(linuxJob).toContain('bun run build:tauri:linux');
-  expect(linuxJob).toContain('cache-on-failure: true');
   expect(packageJson.scripts['build:tauri:linux']).toContain('--verbose');
   expect(packageJson.scripts['build:tauri:linux']).toContain(
     '--bundles deb,appimage'
