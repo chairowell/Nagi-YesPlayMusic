@@ -313,6 +313,8 @@ export default {
     copyLyricWithTranslation: '歌詞をコピー（訳詞つき）',
   },
   toast: {
+    dailyTracksLoadFailed:
+      '今日のおすすめを読み込めませんでした。しばらくしてからもう一度お試しください。',
     savedToPlaylist: 'プレイリストに追加しました',
     removedFromPlaylist: 'プレイリストから削除しました',
     copied: 'コピーしました',

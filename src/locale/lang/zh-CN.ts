@@ -316,6 +316,7 @@ export default {
     copyLyricWithTranslation: '复制歌词（含翻译）',
   },
   toast: {
+    dailyTracksLoadFailed: '每日推荐加载失败，请稍后重试。',
     savedToPlaylist: '已添加到歌单',
     removedFromPlaylist: '已从歌单中删除',
     copied: '已复制',

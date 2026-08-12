@@ -2,11 +2,43 @@ import { describe, expect, test } from 'bun:test';
 import {
   ApiContractError,
   decodeCodeResponse,
+  decodeDailyTracksResponse,
   decodeTrackCollectionResponse,
   decodeUserProfile,
 } from '../src/api/decoders';
 
 describe('API response decoders', () => {
+  test('accepts daily recommendations after the upstream privileges field was removed', () => {
+    const result = decodeDailyTracksResponse(
+      {
+        code: 200,
+        data: {
+          dailySongs: [{ id: 42, name: 'Track' }],
+          recommendReasons: [],
+        },
+      },
+      { url: '/recommend/songs' }
+    );
+
+    expect(result.data.dailySongs[0]?.id).toBe(42);
+    expect(result.data.privileges).toBeUndefined();
+  });
+
+  test('still validates daily recommendation privileges when upstream returns them', () => {
+    expect(() =>
+      decodeDailyTracksResponse(
+        {
+          code: 200,
+          data: {
+            dailySongs: [{ id: 42 }],
+            privileges: [{ id: '42' }],
+          },
+        },
+        { url: '/recommend/songs' }
+      )
+    ).toThrow('/recommend/songs 的 $.data.privileges[0].id');
+  });
+
   test('preserves valid response data after checking nested track identities', () => {
     const result = decodeTrackCollectionResponse(
       {
