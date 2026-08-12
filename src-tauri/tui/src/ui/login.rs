@@ -43,10 +43,13 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
     }
     if let Some(message) = &state.login_message {
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                message.clone(),
-                Style::new().fg(theme.dim),
-            )))
+            Paragraph::new(vec![
+                Line::from(Span::styled(message.clone(), Style::new().fg(theme.dim))),
+                Line::from(Span::styled(
+                    "请用网易云音乐 App 里的「扫一扫」（系统相机扫会提示无效）",
+                    Style::new().fg(theme.faint),
+                )),
+            ])
             .centered(),
             message_area,
         );

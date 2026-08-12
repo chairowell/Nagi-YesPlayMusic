@@ -81,6 +81,12 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect) {
                 "  按 2 打开曲库，Enter 播放",
                 Style::new().fg(theme.dim),
             )));
+            if state.nickname.is_none() {
+                lines.push(Line::from(Span::styled(
+                    "  按 g 扫码登录，听你自己的歌单",
+                    Style::new().fg(theme.accent2),
+                )));
+            }
         }
     }
     if let Some(status) = &state.status {

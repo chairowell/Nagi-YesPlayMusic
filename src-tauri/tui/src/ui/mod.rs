@@ -76,6 +76,7 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
             ("Space", "暂停"),
             ("←/→", "seek"),
             ("-/+", "音量"),
+            ("g", "登录"),
             ("z", "纯净"),
             ("q", "退出"),
         ],

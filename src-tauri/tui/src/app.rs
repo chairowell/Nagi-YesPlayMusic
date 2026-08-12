@@ -287,11 +287,16 @@ fn spawn_login(fx: &Effects) {
         if actions.send(Action::LoginQrReady { art }).is_err() {
             return;
         }
+        // One flaky poll must not orphan the QR key — the phone-side scan
+        // would then report "invalid" against a dead session. Tolerate
+        // transient errors and only give up after several in a row.
+        let mut consecutive_errors = 0_u32;
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
             match ncm.qr_check(&key).await {
-                Ok(QrStatus::Waiting) => {}
+                Ok(QrStatus::Waiting) => consecutive_errors = 0,
                 Ok(QrStatus::Scanned) => {
+                    consecutive_errors = 0;
                     if actions
                         .send(Action::LoginProgress {
                             message: "已扫码，在手机上确认…".into(),
@@ -317,10 +322,21 @@ fn spawn_login(fx: &Effects) {
                     return;
                 }
                 Err(error) => {
-                    let _ = actions.send(Action::LoginFailed {
-                        message: error.to_string(),
-                    });
-                    return;
+                    consecutive_errors += 1;
+                    if consecutive_errors >= 3 {
+                        let _ = actions.send(Action::LoginFailed {
+                            message: format!("网络不稳定，登录中断（{error}）；按 g 重试"),
+                        });
+                        return;
+                    }
+                    if actions
+                        .send(Action::LoginProgress {
+                            message: "网络抖动，重试中…".into(),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
             }
         }
