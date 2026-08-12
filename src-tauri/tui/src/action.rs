@@ -38,6 +38,10 @@ pub enum Action {
     MoveSelection(i32),
     Activate,
     SelectIndex(usize),
+    /// vim `g` prefix: two in a row jump to the list top.
+    GKey,
+    JumpBottom,
+    ConfirmYes,
     Mouse(crossterm::event::MouseEvent),
     Resize,
     Player(PlayerEvent),

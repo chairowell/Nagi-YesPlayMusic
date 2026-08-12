@@ -78,6 +78,7 @@ pub struct AppState {
     pub status: Option<String>,
     pub generation: u64,
     pub confirm_quit: bool,
+    pending_g: bool,
     pending_auto_next: bool,
     should_quit: bool,
 }
@@ -127,6 +128,7 @@ impl AppState {
             status: None,
             generation: 0,
             confirm_quit: false,
+            pending_g: false,
             pending_auto_next: false,
             should_quit: false,
         }
@@ -184,18 +186,36 @@ impl AppState {
     }
 
     fn update(&mut self, action: Action, fx: &Effects) {
-        // The quit-confirm dialog is modal: it swallows everything except
-        // confirm (Quit/Activate) and cancel (Back).
+        // The quit-confirm dialog is modal: y/Enter/q confirm, n/Esc cancel.
         if self.confirm_quit {
             match action {
-                Action::Quit | Action::Activate => self.should_quit = true,
-                Action::Back => self.confirm_quit = false,
+                Action::ConfirmYes | Action::Quit | Action::Activate => self.should_quit = true,
+                Action::Back | Action::NextTrack => self.confirm_quit = false,
                 Action::Player(event) => self.apply_player_event(event),
                 _ => {}
             }
             return;
         }
+        // vim gg: a second bare `g` right after the first jumps to the top.
+        let was_pending_g = self.pending_g;
+        self.pending_g = false;
         match action {
+            Action::GKey => {
+                if was_pending_g {
+                    self.selected = 0;
+                } else {
+                    self.pending_g = true;
+                }
+            }
+            Action::JumpBottom => {
+                let len = match self.view {
+                    View::Library => self.library.len(),
+                    View::Queue => self.queue.len(),
+                    _ => 0,
+                };
+                self.selected = len.saturating_sub(1);
+            }
+            Action::ConfirmYes => {}
             Action::Quit => self.confirm_quit = true,
             Action::SwitchView(view) => self.view = view,
             Action::Back => self.view = View::NowPlaying,
@@ -569,18 +589,24 @@ fn spawn_render_cover(
     });
 }
 
+/// The project's own logo (MIT, ships with the repo) — the default
+/// dashboard art, pixelated through the same pipeline as covers.
+const LOGO_BYTES: &[u8] = include_bytes!("../../../images/logo.png");
+
 fn load_idle_art(config: &Config) -> PixelCover {
     let theme = Theme::by_name(&config.theme);
     if let Some(path) = &config.idle_art {
         let expanded = shellexpand_home(path);
         if let Ok(bytes) = std::fs::read(expanded) {
-            if let Ok(art) = pixel::from_image_bytes(&bytes, theme.palette, COVER_CELLS.0, COVER_CELLS.1)
+            if let Ok(art) =
+                pixel::from_image_bytes(&bytes, theme.palette, COVER_CELLS.0, COVER_CELLS.1)
             {
                 return art;
             }
         }
     }
-    pixel::vinyl(theme.palette, COVER_CELLS.0, COVER_CELLS.1)
+    pixel::from_image_bytes(LOGO_BYTES, theme.palette, COVER_CELLS.0, COVER_CELLS.1)
+        .unwrap_or_else(|_| pixel::vinyl(theme.palette, COVER_CELLS.0, COVER_CELLS.1))
 }
 
 fn shellexpand_home(path: &str) -> std::path::PathBuf {

@@ -120,11 +120,11 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
 }
 
 fn menu_entries(state: &AppState) -> Vec<(String, &'static str, MenuEntry)> {
-    let mut entries = vec![("我喜欢的音乐".to_owned(), "l", MenuEntry::Library)];
+    let mut entries = vec![("我喜欢的音乐".to_owned(), "2", MenuEntry::Library)];
     entries.push(("搜索".to_owned(), "/", MenuEntry::Search));
     entries.push(match &state.nickname {
-        Some(_) => ("重新扫码登录".to_owned(), "g", MenuEntry::Login),
-        None => ("扫码登录".to_owned(), "g", MenuEntry::Login),
+        Some(_) => ("重新扫码登录".to_owned(), "i", MenuEntry::Login),
+        None => ("扫码登录".to_owned(), "i", MenuEntry::Login),
     });
     entries.push(("退出".to_owned(), "q", MenuEntry::Quit));
     entries

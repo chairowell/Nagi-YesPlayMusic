@@ -122,8 +122,8 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
         Rect { height: 1, ..inner },
     );
 
-    let confirm_label = "[ Enter 确定退出 ]";
-    let cancel_label = "[ Esc 点错了 ]";
+    let confirm_label = "[ y 确定退出 ]";
+    let cancel_label = "[ n 点错了 ]";
     let gap = 3_u16;
     let confirm_width = text::display_width(confirm_label) as u16;
     let cancel_width = text::display_width(cancel_label) as u16;
@@ -166,24 +166,24 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
     let hints: &[(&str, &str)] = match state.view {
         View::Library => &[
-            ("Enter", "播放"),
+            ("l/Enter", "播放"),
             ("j/k", "选择"),
-            ("g", "登录"),
-            ("z", "纯净"),
+            ("gg/G", "顶/底"),
+            ("h", "返回"),
             ("q", "退出"),
         ],
         View::Queue => &[
-            ("Enter", "跳到这首"),
+            ("l/Enter", "跳到这首"),
             ("j/k", "选择"),
             ("n/p", "切歌"),
-            ("Esc", "返回"),
+            ("h", "返回"),
         ],
-        View::Login => &[("Esc", "返回"), ("g", "刷新二维码"), ("q", "退出")],
+        View::Login => &[("h/Esc", "返回"), ("i", "刷新二维码"), ("q", "退出")],
         _ => &[
             ("Space", "暂停"),
             ("←/→", "seek"),
             ("-/+", "音量"),
-            ("g", "登录"),
+            ("n/p", "切歌"),
             ("z", "纯净"),
             ("q", "退出"),
         ],

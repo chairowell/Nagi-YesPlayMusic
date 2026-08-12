@@ -71,17 +71,30 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
 }
 
 fn key_action(key: KeyEvent) -> Option<Action> {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return Some(Action::Quit);
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('c') => Some(Action::Quit),
+            // vim half-page jumps
+            KeyCode::Char('d') => Some(Action::MoveSelection(10)),
+            KeyCode::Char('u') => Some(Action::MoveSelection(-10)),
+            _ => None,
+        };
     }
     match key.code {
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('1') => Some(Action::SwitchView(View::NowPlaying)),
-        KeyCode::Char('2') | KeyCode::Char('l') => Some(Action::SwitchView(View::Library)),
-        KeyCode::Char('3') | KeyCode::Char('/') => Some(Action::SwitchView(View::Search)),
+        KeyCode::Char('2') => Some(Action::SwitchView(View::Library)),
+        KeyCode::Char('3') | KeyCode::Char('/') | KeyCode::Char('f') => {
+            Some(Action::SwitchView(View::Search))
+        }
         KeyCode::Char('4') => Some(Action::SwitchView(View::Queue)),
-        KeyCode::Backspace | KeyCode::Esc => Some(Action::Back),
-        KeyCode::Char('g') => Some(Action::StartLogin),
+        // vim: h backs out, l dives in (Backspace/Esc keep working)
+        KeyCode::Backspace | KeyCode::Esc | KeyCode::Char('h') => Some(Action::Back),
+        KeyCode::Char('l') | KeyCode::Enter => Some(Action::Activate),
+        KeyCode::Char('g') => Some(Action::GKey),
+        KeyCode::Char('G') => Some(Action::JumpBottom),
+        KeyCode::Char('i') => Some(Action::StartLogin),
+        KeyCode::Char('y') => Some(Action::ConfirmYes),
         KeyCode::Char('z') => Some(Action::ToggleZen),
         KeyCode::Char(' ') => Some(Action::TogglePlay),
         KeyCode::Char('n') => Some(Action::NextTrack),
@@ -92,7 +105,6 @@ fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('-') => Some(Action::VolumeBy(-0.05)),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::MoveSelection(1)),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::MoveSelection(-1)),
-        KeyCode::Enter => Some(Action::Activate),
         _ => None,
     }
 }

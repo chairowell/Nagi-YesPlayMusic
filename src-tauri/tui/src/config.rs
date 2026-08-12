@@ -43,14 +43,39 @@ impl Default for Config {
 
 impl Config {
     /// Missing or invalid config falls back to defaults — the TUI must
-    /// always start.
+    /// always start. A missing file gets a commented template so the
+    /// options are discoverable without reading docs.
     pub fn load() -> Self {
         let path = config_dir().join("config.toml");
         match std::fs::read_to_string(&path) {
             Ok(text) => toml::from_str(&text).unwrap_or_default(),
-            Err(_) => Self::default(),
+            Err(_) => {
+                let _ = write_template(&path);
+                Self::default()
+            }
         }
     }
+}
+
+const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都可省略（用默认值）。
+
+# quality = "exhigh"          # 128 | 320 | exhigh | lossless | hires
+# theme = "db16"              # db16 | pico8 | gameboy | transparent，或 themes/ 里的自定义主题名
+# layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
+# progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
+# enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
+# idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
+# cache_limit_mib = 2048
+"#;
+
+fn write_template(path: &std::path::Path) -> std::io::Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, TEMPLATE)
 }
 
 /// All platforms use the ~/.config style directory — that is the TUI
