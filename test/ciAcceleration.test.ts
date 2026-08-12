@@ -8,6 +8,7 @@ import {
   changedFiles,
   classify,
   classifyChangedFiles,
+  envWithoutGitBindings,
 } from '../scripts/classify-ci-changes.mjs';
 import {
   PREPARED_FLAG,
@@ -358,8 +359,17 @@ test('tag、手动触发与 force push 强制全跑', () => {
 
 test('rename 同时分类旧路径和新路径，不能把 Rust 删除伪装成文档改动', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'ypm-ci-rename-'));
+  // Explicit env, or a pre-commit hook's GIT_DIR makes this fixture git
+  // (and mutating commands like `git commit`) target the real repository.
+  // Bun's delete process.env does not reach child processes, so the env
+  // object must be passed to spawnSync directly.
+  const gitEnv = envWithoutGitBindings();
   const git = (args: string[]): string => {
-    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    const result = spawnSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      env: gitEnv,
+    });
     if (result.status !== 0) throw new Error(result.stderr);
     return result.stdout.trim();
   };

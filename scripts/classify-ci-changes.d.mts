@@ -15,3 +15,7 @@ export function changedFiles(options?: {
 export function classify(
   env: Record<string, string | undefined>
 ): CiChangeClassification;
+
+export function envWithoutGitBindings(
+  env?: Record<string, string | undefined>
+): Record<string, string | undefined>;
