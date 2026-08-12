@@ -23,32 +23,17 @@ macOS Tauri 重构版，不再跟随上游发版。原项目的界面和主要�
 **欢迎提 Issue 和 PR。** Apple Silicon Mac 是正式支持平台；Windows x64 和 Ubuntu x64
 由 CI 提供实验构建，等待更多真实设备反馈。
 
-## Tauri 重构版改了什么
+## 两次桌面重构
 
-**v0.6.0 是一次完整的 Tauri 重构。** 渲染层升级到 Vue 3 和 Vite 7，桌面外壳改为
-Tauri 2。应用不再捆绑 Chromium。窗口、菜单栏、媒体状态和 Sidecar 生命周期由 Rust
-主进程负责；独立的 Rust Sidecar 托管页面，并提供网易云 API、同源 `/api` 代理和 UNM。
-当前桌面包不再携带 Bun runtime。
+| 阶段                        | 改动                                                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `v0.6.0`：桌面外壳          | Electron → Tauri 2；升级 Vue 3、Vite 7、TypeScript 6 和 Pinia 4，改用系统 WebView                                |
+| `v0.8.0-canary.1`：后台服务 | Bun Sidecar → Rust Sidecar；页面托管、网易云 API、同源 `/api` 和 UNM 全部改写为 Rust，桌面包不再携带 Bun runtime |
 
-当前代码已迁移到 TypeScript 6.0 严格模式与 Pinia 4。Vue 组件、API、播放器和前端测试
-参加 TypeScript 类型检查；Rust 主进程与 Rust Sidecar 由 Cargo 测试和 Clippy 验证。
-外部响应在运行时验证后才进入业务层。Electron 运行时已删除，
-原有桌面能力的 Tauri 对应实现和验收状态见
-[Electron → Tauri 功能迁移表](docs/feature-migration.md)。
-
-Rust Sidecar 迁移后的 `0.8.0-canary.1` 本机验收候选包中，Apple Silicon `.app`
-从本 fork v0.7.0 的 84,536 KiB（82.555 MiB）降到 23,528 KiB（22.976563 MiB），
-减少 72.168%；DMG 为 12,551,495 bytes（11.970038 MiB）。作为外部历史参考，上游
-qier222 v0.4.10 官方 arm64 DMG 为 88.773 MiB，挂载后的 `.app` 为
-211.934 MiB，当前分别减少约 86.5% 和 89.2%。
-
-安装包实测的隐藏窗口完整进程树 CPU mean 为 0.15%，连续播放两个 5 分钟窗口的 Tauri
-主进程 CPU mean 为 0.30% 和 0.32%。播放 5 与 10 分钟时，Rust Sidecar
-`phys_footprint` 从 8.938004 MiB 降到 8.609901 MiB，没有观察到持续累积。相对历史
-Bun Sidecar 约 82 MB 的粗略记录，后端占用量级约低 89% 至 90%；这不是 matched
-run。完整进程树内存受 WebKit 和媒体缓存影响，尚无同场景 Bun 对照，因此不据此宣传整机内存降幅。
-四份 schema v3 证据各含 300 个逐秒样本；完整数据、测量口径和限制见
-[性能迁移基线](docs/performance-baseline.md)。
+`0.8.0-canary.1` Apple Silicon 候选包的 `.app` 从 82.555 MiB 降到 22.977 MiB，
+减少 72.2%；DMG 为 11.970 MiB，隐藏窗口完整进程树 CPU mean 为 0.15%，Rust Sidecar
+在连续播放 5→10 分钟时的 `phys_footprint` 为 8.938→8.610 MiB。详见
+[功能迁移表](docs/feature-migration.md)和[性能迁移基线](docs/performance-baseline.md)。
 
 **迷你播放器。** 把窗口压矮（高度小于 340）就会自动变成一条紧凑的播放条，
 左边小封面配歌名歌手，中间是当前这句歌词，右边是播放控制。只把窗口拖窄不会触发播放条，

@@ -360,14 +360,17 @@ test('DMG 文件名明确标记版本和 Apple Silicon 架构', () => {
   expect(tauriDmgName('0.6.0')).toBe('YesPlayMusic_0.6.0_aarch64.dmg');
 });
 
-test('README 区分 macOS 正式发布与 Windows/Linux 实验构建', () => {
+test('README 区分两次重构与各平台支持状态', () => {
   expect(readme).toContain('macOS Tauri 重构版');
+  expect(readme).toContain('## 两次桌面重构');
+  expect(readme).toContain('Electron → Tauri 2');
+  expect(readme).toContain('Bun Sidecar → Rust Sidecar');
   expect(readme).toContain('82.555 MiB');
-  expect(readme).toContain('22.976563 MiB');
-  expect(readme).toContain('减少 72.168%');
-  expect(readme).toContain('DMG 为 12,551,495 bytes（11.970038 MiB）');
+  expect(readme).toContain('22.977 MiB');
+  expect(readme).toContain('减少 72.2%');
+  expect(readme).toContain('DMG 为 11.970 MiB');
   expect(readme).toContain('Rust Sidecar');
-  expect(readme).toContain('当前桌面包不再携带 Bun runtime');
+  expect(readme).toContain('桌面包不再携带 Bun runtime');
   expect(readme).toContain('ad-hoc Hardened Runtime seal');
   expect(readme).toContain('stable 只');
   expect(readme).toContain('canary 只接收 canary 更新');
