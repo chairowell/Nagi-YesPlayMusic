@@ -218,8 +218,23 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
     let current = crate::lyrics::line_index_at(&state.lyrics, state.position);
     let rows = height.max(1) as usize;
     let anchor = current.unwrap_or(0);
-    let above = rows / 2;
-    let start = anchor.saturating_sub(above);
+    // Walk backwards in *display rows* (a translated line costs two),
+    // so the anchor really sits mid-window instead of drifting bottom.
+    let target_above = rows / 2;
+    let mut start = anchor;
+    let mut used_above = 0_usize;
+    while start > 0 {
+        let previous = start - 1;
+        let cost = 1 + state.lyrics[previous]
+            .translation
+            .as_ref()
+            .is_some_and(|text| !text.is_empty()) as usize;
+        if used_above + cost > target_above {
+            break;
+        }
+        used_above += cost;
+        start = previous;
+    }
 
     let mut lines = Vec::new();
     let mut used = 0_usize;
