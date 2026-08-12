@@ -56,6 +56,7 @@ pub struct AppState {
     pub volume: f32,
     pub status: Option<String>,
     pub generation: u64,
+    pub confirm_quit: bool,
     pending_auto_next: bool,
     should_quit: bool,
 }
@@ -100,6 +101,7 @@ impl AppState {
             volume: 1.0,
             status: None,
             generation: 0,
+            confirm_quit: false,
             pending_auto_next: false,
             should_quit: false,
         }
@@ -140,8 +142,19 @@ impl AppState {
     }
 
     fn update(&mut self, action: Action, fx: &Effects) {
+        // The quit-confirm dialog is modal: it swallows everything except
+        // confirm (Quit/Activate) and cancel (Back).
+        if self.confirm_quit {
+            match action {
+                Action::Quit | Action::Activate => self.should_quit = true,
+                Action::Back => self.confirm_quit = false,
+                Action::Player(event) => self.apply_player_event(event),
+                _ => {}
+            }
+            return;
+        }
         match action {
-            Action::Quit => self.should_quit = true,
+            Action::Quit => self.confirm_quit = true,
             Action::SwitchView(view) => self.view = view,
             Action::Back => self.view = View::NowPlaying,
             Action::ToggleZen => {
@@ -202,6 +215,17 @@ impl AppState {
             },
             Action::NextTrack => self.step_queue(fx, 1),
             Action::PrevTrack => self.step_queue(fx, -1),
+            Action::SelectIndex(index) => {
+                let len = match self.view {
+                    View::Library => self.library.len(),
+                    View::Queue => self.queue.len(),
+                    _ => 0,
+                };
+                if index < len {
+                    self.selected = index;
+                }
+            }
+            Action::Mouse(_) => {} // resolved against Hits in the event loop
             Action::StartLogin => {
                 if self.nickname.is_some() {
                     self.status = Some("已经登录了".into());
@@ -470,7 +494,9 @@ fn spawn_cover_fetch(
 
 pub async fn run(config: Config) -> Result<()> {
     let mut terminal = ratatui::init();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
     let result = event_loop(&mut terminal, &config).await;
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
     ratatui::restore();
     result
 }
@@ -520,18 +546,32 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         });
     }
     let mut state = AppState::new(config);
-    terminal.draw(|frame| ui::draw(frame, &state))?;
+    let mut hits = ui::Hits::default();
+    terminal.draw(|frame| ui::draw(frame, &state, &mut hits))?;
 
     while let Some(action) = actions.recv().await {
-        state.update(action, &fx);
+        apply(&mut state, action, &fx, &hits);
         // Coalesce whatever queued up so one draw covers the burst.
         while let Ok(action) = actions.try_recv() {
-            state.update(action, &fx);
+            apply(&mut state, action, &fx, &hits);
         }
         if state.should_quit {
             break;
         }
-        terminal.draw(|frame| ui::draw(frame, &state))?;
+        terminal.draw(|frame| ui::draw(frame, &state, &mut hits))?;
     }
     Ok(())
+}
+
+/// Mouse events need the draw-time geometry, so they resolve here and
+/// everything else goes straight to the reducer.
+fn apply(state: &mut AppState, action: Action, fx: &Effects, hits: &ui::Hits) {
+    match action {
+        Action::Mouse(mouse) => {
+            if let Some(resolved) = event::mouse_action(mouse, hits, state.selected) {
+                state.update(resolved, fx);
+            }
+        }
+        other => state.update(other, fx),
+    }
 }

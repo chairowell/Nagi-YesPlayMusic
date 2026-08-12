@@ -1,14 +1,61 @@
 //! Terminal input → Action. Arrow keys and vim keys coexist; numbers jump
 //! straight to a view (cmus model).
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 
 use crate::action::{Action, View};
+use crate::ui::Hits;
 
 pub fn action_for(event: Event) -> Option<Action> {
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => key_action(key),
+        Event::Mouse(mouse) => Some(Action::Mouse(mouse)),
         Event::Resize(_, _) => Some(Action::Resize),
+        _ => None,
+    }
+}
+
+/// Resolve a mouse event against the geometry recorded at draw time.
+/// Click a tab to switch; click a row to select, click it again to play;
+/// the wheel moves the selection. An open quit-confirm dialog is modal:
+/// only its buttons respond.
+pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<Action> {
+    let position = ratatui::layout::Position {
+        x: mouse.column,
+        y: mouse.row,
+    };
+    if !hits.confirm.is_empty() {
+        if let MouseEventKind::Down(crossterm::event::MouseButton::Left) = mouse.kind {
+            for (rect, is_confirm) in &hits.confirm {
+                if rect.contains(position) {
+                    return Some(if *is_confirm { Action::Quit } else { Action::Back });
+                }
+            }
+        }
+        return None;
+    }
+    match mouse.kind {
+        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+            for (rect, view) in &hits.tabs {
+                if rect.contains(position) {
+                    return Some(Action::SwitchView(*view));
+                }
+            }
+            for (rect, index) in &hits.rows {
+                if rect.contains(position) {
+                    return Some(if *index == selected {
+                        Action::Activate
+                    } else {
+                        Action::SelectIndex(*index)
+                    });
+                }
+            }
+            None
+        }
+        MouseEventKind::ScrollDown => Some(Action::MoveSelection(1)),
+        MouseEventKind::ScrollUp => Some(Action::MoveSelection(-1)),
         _ => None,
     }
 }

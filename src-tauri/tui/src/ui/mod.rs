@@ -15,51 +15,149 @@ use ratatui::Frame;
 use crate::action::View;
 use crate::app::AppState;
 
-pub fn draw(frame: &mut Frame, state: &AppState) {
+/// Geometry recorded at draw time so mouse events can be resolved
+/// against what is actually on screen.
+#[derive(Default)]
+pub struct Hits {
+    pub tabs: Vec<(Rect, View)>,
+    pub rows: Vec<(Rect, usize)>,
+    /// Quit-confirm buttons: true = 确定退出, false = 点错了.
+    pub confirm: Vec<(Rect, bool)>,
+}
+
+pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
+    hits.tabs.clear();
+    hits.rows.clear();
+    hits.confirm.clear();
+
     let theme = &state.theme;
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::new().bg(theme.bg)), area);
 
     if state.zen {
         now_playing::draw(frame, state, area);
-        return;
+    } else {
+        let [tabs_area, body, hints_area] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .areas(area);
+
+        draw_tabs(frame, state, tabs_area, hits);
+        match state.view {
+            View::NowPlaying => now_playing::draw(frame, state, body),
+            View::Library => library::draw(frame, state, body, hits),
+            View::Search => placeholder(frame, state, body, "搜索（下一阶段接入）"),
+            View::Queue => queue::draw(frame, state, body, hits),
+            View::Login => login::draw(frame, state, body),
+        }
+        draw_hints(frame, state, hints_area);
     }
 
-    let [tabs_area, body, hints_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .areas(area);
-
-    draw_tabs(frame, state, tabs_area);
-    match state.view {
-        View::NowPlaying => now_playing::draw(frame, state, body),
-        View::Library => library::draw(frame, state, body),
-        View::Search => placeholder(frame, state, body, "搜索（下一阶段接入）"),
-        View::Queue => queue::draw(frame, state, body),
-        View::Login => login::draw(frame, state, body),
+    if state.confirm_quit {
+        draw_quit_confirm(frame, state, area, hits);
     }
-    draw_hints(frame, state, hints_area);
 }
 
-fn draw_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
+const TABS: [(&str, View); 4] = [
+    ("1 正在播放", View::NowPlaying),
+    ("2 曲库", View::Library),
+    ("3 搜索", View::Search),
+    ("4 队列", View::Queue),
+];
+
+fn draw_tabs(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
-    let tab = |label: &str, view: View| {
+    let mut spans = Vec::new();
+    let mut x = area.x;
+    for (label, view) in TABS {
+        let text = format!("[{label}] ");
+        let width = text::display_width(&text) as u16;
         let style = if state.view == view {
             Style::new().fg(theme.accent)
         } else {
             Style::new().fg(theme.dim)
         };
-        Span::styled(format!("[{label}] "), style)
+        hits.tabs.push((
+            Rect {
+                x,
+                y: area.y,
+                width,
+                height: 1,
+            },
+            view,
+        ));
+        x = x.saturating_add(width);
+        spans.push(Span::styled(text, style));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
+    let theme = &state.theme;
+    let width = 34_u16.min(area.width);
+    let height = 5_u16.min(area.height);
+    let modal = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
     };
-    let line = Line::from(vec![
-        tab("1 正在播放", View::NowPlaying),
-        tab("2 曲库", View::Library),
-        tab("3 搜索", View::Search),
-        tab("4 队列", View::Queue),
-    ]);
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(ratatui::widgets::Clear, modal);
+    let block = Block::bordered()
+        .style(Style::new().bg(theme.bg))
+        .border_style(Style::new().fg(theme.accent));
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "退出 ypm？",
+            Style::new().fg(theme.fg),
+        )))
+        .centered(),
+        Rect { height: 1, ..inner },
+    );
+
+    let confirm_label = "[ 确定退出 ]";
+    let cancel_label = "[ 点错了 ]";
+    let gap = 3_u16;
+    let confirm_width = text::display_width(confirm_label) as u16;
+    let cancel_width = text::display_width(cancel_label) as u16;
+    let total = confirm_width + gap + cancel_width;
+    let buttons_y = inner.y + inner.height.saturating_sub(1);
+    let start_x = inner.x + (inner.width.saturating_sub(total)) / 2;
+
+    let confirm_rect = Rect {
+        x: start_x,
+        y: buttons_y,
+        width: confirm_width,
+        height: 1,
+    };
+    let cancel_rect = Rect {
+        x: start_x + confirm_width + gap,
+        y: buttons_y,
+        width: cancel_width,
+        height: 1,
+    };
+    hits.confirm.push((confirm_rect, true));
+    hits.confirm.push((cancel_rect, false));
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            confirm_label,
+            Style::new().fg(theme.bg).bg(theme.accent),
+        ))),
+        confirm_rect,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            cancel_label,
+            Style::new().fg(theme.fg),
+        ))),
+        cancel_rect,
+    );
 }
 
 fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {

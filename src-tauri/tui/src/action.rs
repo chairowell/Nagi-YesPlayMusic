@@ -28,6 +28,8 @@ pub enum Action {
     VolumeBy(f32),
     MoveSelection(i32),
     Activate,
+    SelectIndex(usize),
+    Mouse(crossterm::event::MouseEvent),
     Resize,
     Player(PlayerEvent),
     TrackResolved {

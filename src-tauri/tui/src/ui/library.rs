@@ -8,21 +8,22 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::AppState;
+use crate::ui::Hits;
 
 use super::text::pad_display;
 
 const SIDEBAR_WIDTH: u16 = 16;
 const COLLAPSE_BELOW: u16 = 50;
 
-pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
+pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     if area.width >= COLLAPSE_BELOW {
         let [sidebar, list] =
             Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(0)])
                 .areas(area);
         draw_sidebar(frame, state, sidebar);
-        draw_list(frame, state, list);
+        draw_list(frame, state, list, hits);
     } else {
-        draw_list(frame, state, area);
+        draw_list(frame, state, area, hits);
     }
 }
 
@@ -46,8 +47,23 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn draw_list(frame: &mut Frame, state: &AppState, area: Rect) {
+fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
+    for (index, _) in state.library.iter().enumerate() {
+        let y = area.y + 1 + index as u16;
+        if y >= area.y + area.height {
+            break;
+        }
+        hits.rows.push((
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+            index,
+        ));
+    }
     let mut lines = Vec::with_capacity(state.library.len() + 1);
     lines.push(Line::from(Span::styled(
         format!(

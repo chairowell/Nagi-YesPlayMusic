@@ -8,9 +8,25 @@ use ratatui::Frame;
 
 use crate::app::AppState;
 use crate::ui::text::pad_display;
+use crate::ui::Hits;
 
-pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
+pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
+    for (index, _) in state.queue.iter().enumerate() {
+        let y = area.y + index as u16;
+        if y >= area.y + area.height {
+            break;
+        }
+        hits.rows.push((
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+            index,
+        ));
+    }
     if state.queue.is_empty() {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
