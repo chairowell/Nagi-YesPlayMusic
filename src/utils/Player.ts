@@ -28,6 +28,7 @@ import {
 import { sendDesktop } from '@/services/desktopTransport';
 import { isDesktopRuntime } from '@/utils/runtime';
 import { requestUnblockedSong } from '@/services/unblockMusicTransport';
+import { reportNeteaseScrobble } from '@/utils/scrobbleReport';
 import {
   createBlobAudioSource,
   createRemoteAudioSource,
@@ -517,11 +518,14 @@ export default class Player {
     );
     const trackDuration = Math.trunc((track.dt ?? 0) / 1000);
     const listenedTime = completed ? trackDuration : Math.trunc(time ?? 0);
-    scrobble({
-      id: track.id,
-      sourceid: this.playlistSource.id,
-      time: listenedTime,
-    });
+    reportNeteaseScrobble(
+      {
+        id: track.id,
+        sourceid: this.playlistSource.id,
+        time: listenedTime,
+      },
+      scrobble
+    );
     if (
       getAppStore().lastfm['key'] !== undefined &&
       (listenedTime >= trackDuration / 2 || listenedTime >= 240)

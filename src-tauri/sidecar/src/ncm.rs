@@ -24,6 +24,7 @@ const NCM_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const CLOUD_LYRIC_PATH: &str = "/api/cloud/lyric/get";
 const CLOUD_LYRIC_CRYPTO: &str = "eapi";
 const ROUTE_MANIFEST: &str = include_str!("../../../src/sidecar-route-manifest.json");
+const CORE_ADAPTERS: &[&str] = &["ncm::scrobble"];
 
 #[derive(Debug, thiserror::Error)]
 pub enum NcmRouterError {
@@ -151,7 +152,6 @@ define_production_dispatch!(
     playmode_intelligence_list,
     recommend_resource,
     recommend_songs,
-    scrobble,
     search,
     simi_artist,
     simi_mv,
@@ -219,10 +219,12 @@ trait NcmBackend: Send + Sync {
 #[async_trait]
 impl NcmBackend for ProductionBackend {
     async fn dispatch(&self, adapter: &str, query: &Query) -> Result<ApiResponse, NcmError> {
-        if adapter == "ncm::playlist_subscribe" {
-            self.playlist_subscribe_node_compatible(query).await
-        } else {
-            self.dispatch_api(adapter, query).await
+        match adapter {
+            "ncm::playlist_subscribe" => self.playlist_subscribe_node_compatible(query).await,
+            "ncm::scrobble" => {
+                yesplaymusic_core::scrobble::scrobble(self.client.as_ref(), query).await
+            }
+            _ => self.dispatch_api(adapter, query).await,
         }
     }
 }
@@ -252,6 +254,7 @@ fn parse_manifest() -> Result<Vec<RouteManifestEntry>, NcmRouterError> {
         }
         if entry.rust_adapter != "ncm::cloud"
             && !SUPPORTED_ADAPTERS.contains(&entry.rust_adapter.as_str())
+            && !CORE_ADAPTERS.contains(&entry.rust_adapter.as_str())
         {
             return Err(NcmRouterError::InvalidManifest(format!(
                 "unsupported adapter {} for {}",
@@ -1381,6 +1384,32 @@ mod tests {
                 quality_case.setting
             );
         }
+    }
+
+    #[tokio::test]
+    async fn scrobble_route_keeps_the_frontend_http_contract() {
+        let response = ApiResponse {
+            status: 200,
+            body: json!({ "code": 200, "data": "success" }),
+            cookie: Vec::new(),
+        };
+        let (app, mut calls) = recording_router(Ok(response), false);
+        let request = Request::builder()
+            .uri("/scrobble?id=42&sourceid=7&time=31")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 200);
+        assert_eq!(body["data"], "success");
+
+        let call = calls.recv().await.unwrap();
+        assert_eq!(call.adapter, "ncm::scrobble");
+        assert_eq!(call.params["id"], "42");
+        assert_eq!(call.params["sourceid"], "7");
+        assert_eq!(call.params["time"], "31");
     }
 
     #[tokio::test]
