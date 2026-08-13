@@ -162,6 +162,7 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('y') => Some(Action::ConfirmYes),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Char('z') => Some(Action::ToggleZen),
+        KeyCode::Char('v') => Some(Action::ToggleSpectrum),
         KeyCode::Char('s') => Some(Action::ToggleShuffle),
         KeyCode::Char('r') => Some(Action::CycleRepeat),
         KeyCode::Char('*') => Some(Action::ToggleLike),
@@ -208,6 +209,7 @@ pub fn settings_key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('4') => Some(Action::SwitchView(View::Queue)),
         KeyCode::Char('5') | KeyCode::Char(',') => Some(Action::SwitchView(View::Settings)),
         KeyCode::Enter => Some(Action::SaveSettings),
+        KeyCode::Char('v') => Some(Action::ToggleSpectrum),
         KeyCode::Left | KeyCode::Char('h') => Some(Action::AdjustSetting(-1)),
         KeyCode::Right | KeyCode::Char('l') => Some(Action::AdjustSetting(1)),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::MoveSelection(1)),
@@ -245,7 +247,10 @@ mod tests {
             Some(Action::SwitchView(View::Library))
         ));
         assert!(matches!(map(KeyCode::Char('z')), Some(Action::ToggleZen)));
-        assert!(map(KeyCode::Char('v')).is_none());
+        assert!(matches!(
+            map(KeyCode::Char('v')),
+            Some(Action::ToggleSpectrum)
+        ));
         assert!(map(KeyCode::Char('i')).is_none());
         assert!(map(KeyCode::Char('f')).is_none());
         assert!(map(KeyCode::Char('x')).is_none());

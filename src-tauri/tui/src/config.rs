@@ -8,6 +8,7 @@ use tempfile::NamedTempFile;
 use yesplaymusic_core::cache::AudioQuality;
 
 use crate::pixel::CoverDetail;
+use crate::spectrum::SpectrumKind;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -62,6 +63,10 @@ pub struct Config {
     /// Pixel sampling detail (0.5 chunky … 2.0 fine). The final cell
     /// footprint is unchanged.
     pub pixel_scale: f32,
+    /// Retro spectrum visibility, renderer, and phosphor afterglow.
+    pub spectrum_enabled: bool,
+    pub spectrum_style: SpectrumKind,
+    pub spectrum_glow: bool,
 }
 
 impl Default for Config {
@@ -79,6 +84,9 @@ impl Default for Config {
             cover_mode: CoverMode::Pixel,
             cover_detail: CoverDetail::Half,
             pixel_scale: 1.0,
+            spectrum_enabled: false,
+            spectrum_style: SpectrumKind::Blocks,
+            spectrum_glow: false,
         }
     }
 }
@@ -131,6 +139,9 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 8192       # 仅显式设置时更新 ypm 进程共享的上限
 # pixel_scale = 1.0            # 像素细腻度：0.5 更复古块状，2.0 更细腻
+# spectrum_enabled = false     # v 键也可全局开关
+# spectrum_style = "blocks"   # blocks | mirror | led | braille | shade | scope | fire | waterfall | vu | reflect
+# spectrum_glow = false        # 荧光余辉残影
 "#;
 
 fn deserialize_language<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -245,6 +256,9 @@ mod tests {
         assert_eq!(config.cover_detail, CoverDetail::Half);
         assert_eq!(config.icons, IconStyle::Unicode);
         assert_eq!(config.cache_limit_mib, None);
+        assert!(!config.spectrum_enabled);
+        assert_eq!(config.spectrum_style, SpectrumKind::Blocks);
+        assert!(!config.spectrum_glow);
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
         assert_eq!(parsed.quality, AudioQuality::Lossless);
@@ -313,6 +327,9 @@ mod tests {
                 cover_mode: CoverMode::Original,
                 cover_detail: CoverDetail::Quad,
                 pixel_scale: 1.5,
+                spectrum_enabled: true,
+                spectrum_style: SpectrumKind::Fire,
+                spectrum_glow: true,
             };
 
             let encoded = toml::to_string(&config).unwrap();

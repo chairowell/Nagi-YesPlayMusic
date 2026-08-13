@@ -178,8 +178,16 @@ fn draw_cover(frame: &mut Frame, state: &mut AppState, area: Rect) {
     }
 }
 
-fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect, centered_text: bool) {
-    let theme = &state.theme;
+fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text: bool) {
+    let theme = state.theme;
+    let (text_area, spectrum_area) = if state.config.spectrum_enabled && area.height >= 10 {
+        let spectrum_height = (area.height / 3).clamp(6, 8);
+        let [text, spectrum] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(spectrum_height)]).areas(area);
+        (text, Some(spectrum))
+    } else {
+        (area, None)
+    };
     let indent = if centered_text { "" } else { "  " };
     let mut lines = Vec::new();
     if centered_text {
@@ -203,7 +211,10 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect, centered_text: boo
         if !state.lyrics.is_empty() {
             lines.push(Line::default());
             let reserved = lines.len() as u16;
-            lines.extend(lyric_window(state, area.height.saturating_sub(reserved)));
+            lines.extend(lyric_window(
+                state,
+                text_area.height.saturating_sub(reserved),
+            ));
         } else if let Some(status) = &state.status {
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
@@ -217,7 +228,16 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect, centered_text: boo
     } else {
         Paragraph::new(lines)
     };
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, text_area);
+    if let Some(spectrum_area) = spectrum_area {
+        state.spectrum.render(
+            state.config.spectrum_style,
+            state.config.spectrum_glow,
+            spectrum_area,
+            frame.buffer_mut(),
+            &theme,
+        );
+    }
 }
 
 /// Rows of synced lyrics with the current pair pinned mid-window.
@@ -557,7 +577,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                draw_meta(frame, &state, Rect::new(0, 0, 80, 5), false);
+                draw_meta(frame, &mut state, Rect::new(0, 0, 80, 5), false);
                 draw_progress(frame, &state, Rect::new(0, 6, 80, 1), &mut hits);
             })
             .unwrap();

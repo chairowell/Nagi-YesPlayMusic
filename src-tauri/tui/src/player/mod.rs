@@ -17,6 +17,7 @@ use stream_download::{Settings, StreamDownload, StreamHandle, StreamPhase};
 use tokio::sync::{mpsc, oneshot};
 use yesplaymusic_core::cache::{CacheLease, CacheMetadata};
 
+use crate::spectrum::{SampleBuffer, SampleTap};
 pub use cache_stream::CacheWritePlan;
 use cache_stream::{CacheImportReader, CacheStreamProvider};
 
@@ -65,6 +66,7 @@ pub enum PlayerEvent {
 pub struct PlayerHandle {
     commands: std_mpsc::Sender<PlayerCommand>,
     wake: std_mpsc::Sender<()>,
+    samples: Arc<SampleBuffer>,
 }
 
 impl PlayerHandle {
@@ -72,6 +74,10 @@ impl PlayerHandle {
         if self.commands.send(command).is_ok() {
             let _ = self.wake.send(());
         }
+    }
+
+    pub fn samples(&self) -> &SampleBuffer {
+        &self.samples
     }
 }
 
@@ -87,11 +93,13 @@ fn spawn_with_engine(
     runtime: tokio::runtime::Handle,
     engine_factory: EngineFactory,
 ) -> (PlayerHandle, mpsc::UnboundedReceiver<PlayerEvent>) {
+    let samples = SampleBuffer::shared();
     let (command_tx, command_rx) = std_mpsc::channel();
     let (wake_tx, wake_rx) = std_mpsc::channel();
     let (work_tx, work_rx) = std_mpsc::channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let actor_wake = wake_tx.clone();
+    let actor_samples = samples.clone();
     std::thread::Builder::new()
         .name("ypm-player".into())
         .spawn(move || {
@@ -104,6 +112,7 @@ fn spawn_with_engine(
                 work_rx,
                 events: event_tx,
                 engine_factory,
+                samples: actor_samples,
             })
         })
         .expect("spawn player thread");
@@ -111,6 +120,7 @@ fn spawn_with_engine(
         PlayerHandle {
             commands: command_tx,
             wake: wake_tx,
+            samples,
         },
         event_rx,
     )
@@ -213,6 +223,7 @@ struct ActorContext {
     work_rx: std_mpsc::Receiver<CompletedWork>,
     events: mpsc::UnboundedSender<PlayerEvent>,
     engine_factory: EngineFactory,
+    samples: Arc<SampleBuffer>,
 }
 
 fn actor(context: ActorContext) {
@@ -225,6 +236,7 @@ fn actor(context: ActorContext) {
         work_rx,
         events,
         engine_factory,
+        samples,
     } = context;
     let mut engine: Option<Engine> = None;
     let mut active_generation: Option<u64> = None;
@@ -256,6 +268,7 @@ fn actor(context: ActorContext) {
                 } => {
                     drop(pending.take());
                     stop(&engine, &mut active_cancel);
+                    samples.clear();
                     active_generation = None;
                     let request = next_request;
                     next_request += 1;
@@ -274,6 +287,7 @@ fn actor(context: ActorContext) {
                 } => {
                     drop(pending.take());
                     stop(&engine, &mut active_cancel);
+                    samples.clear();
                     active_generation = None;
                     let request = next_request;
                     next_request += 1;
@@ -323,6 +337,7 @@ fn actor(context: ActorContext) {
                 PlayerCommand::Stop => {
                     drop(pending.take());
                     stop(&engine, &mut active_cancel);
+                    samples.clear();
                     active_generation = None;
                 }
             }
@@ -372,6 +387,7 @@ fn actor(context: ActorContext) {
                         &events,
                         decoded,
                         engine_factory,
+                        samples.clone(),
                     ) {
                         active_generation = Some(completed.generation);
                         active_cancel = started.cancel;
@@ -549,6 +565,7 @@ fn start_decoded(
     events: &mpsc::UnboundedSender<PlayerEvent>,
     decoded: Decoded,
     engine_factory: EngineFactory,
+    samples: Arc<SampleBuffer>,
 ) -> Option<StartedPlayback> {
     let engine = match engine {
         Some(engine) => engine,
@@ -567,7 +584,9 @@ fn start_decoded(
 
     engine.player.stop();
     engine.player.pause();
-    engine.player.append(decoded.source);
+    engine
+        .player
+        .append(SampleTap::new(decoded.source, samples));
     let _ = events.send(PlayerEvent::Started {
         generation,
         total: decoded.total,
@@ -621,7 +640,16 @@ where
             return false;
         }
     };
-    start_decoded(engine, volume, generation, events, decoded, open_engine).is_some()
+    start_decoded(
+        engine,
+        volume,
+        generation,
+        events,
+        decoded,
+        open_engine,
+        SampleBuffer::shared(),
+    )
+    .is_some()
 }
 
 fn open_engine(volume: f32) -> anyhow::Result<Engine> {

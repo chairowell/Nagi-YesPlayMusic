@@ -925,6 +925,37 @@ async fn cover_detail_setting_rebuilds_pixel_art_immediately() {
 }
 
 #[tokio::test]
+async fn global_spectrum_key_toggles_and_persists_immediately() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(raw_key(KeyCode::Char('v')), &fx);
+
+    assert!(state.config.spectrum_enabled);
+    let saved: Config = toml::from_str(&std::fs::read_to_string(&fx.config_path).unwrap()).unwrap();
+    assert!(saved.spectrum_enabled);
+}
+
+#[tokio::test]
+async fn spectrum_key_does_not_persist_other_settings_previews() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::SwitchView(View::Settings), &fx);
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.theme, "pico8");
+    state.update(raw_key(KeyCode::Char('v')), &fx);
+    state.update(Action::CancelSettings, &fx);
+
+    let saved: Config = toml::from_str(&std::fs::read_to_string(&fx.config_path).unwrap()).unwrap();
+    assert_eq!(saved.theme, "db16");
+    assert!(saved.spectrum_enabled);
+    assert_eq!(state.config, saved);
+}
+
+#[tokio::test]
 async fn settings_save_persists_the_preview_and_updates_playback_quality() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);

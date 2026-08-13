@@ -57,6 +57,7 @@ pub enum Action {
     Back,
     Escape,
     ToggleZen,
+    ToggleSpectrum,
     TogglePlay,
     NextTrack,
     PrevTrack,

@@ -33,6 +33,7 @@ use crate::event;
 use crate::i18n::{self, Key};
 use crate::pixel::{self, PixelCover};
 use crate::player::{self, PlayerCommand, PlayerEvent, PlayerHandle};
+use crate::spectrum::SpectrumView;
 use crate::theme::Theme;
 use crate::ui;
 
@@ -426,6 +427,7 @@ pub struct AppState {
     terminal_size: (u16, u16),
     pub confirm_quit: bool,
     pub show_help: bool,
+    pub spectrum: SpectrumView,
     pending_g: bool,
     pending_auto_next: bool,
     should_quit: bool,
@@ -535,6 +537,7 @@ impl AppState {
             terminal_size,
             confirm_quit: false,
             show_help: false,
+            spectrum: SpectrumView::new(config.spectrum_style),
             pending_g: false,
             pending_auto_next: false,
             should_quit: false,
@@ -1978,6 +1981,8 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
     }
     state.reconcile_selected_cover(&fx);
     let mut hits = ui::Hits::default();
+    let mut spectrum_ticks = tokio::time::interval(Duration::from_millis(50));
+    spectrum_ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     terminal.draw(|frame| ui::draw(frame, &mut state, &mut hits))?;
     let mut ui_tick = tokio::time::interval_at(
         tokio::time::Instant::now() + Duration::from_millis(120),
@@ -2009,6 +2014,12 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
             }
             _ = ui_tick.tick(), if state.marquee_active() => {
                 state.update(Action::UiTick, &fx);
+            }
+            _ = spectrum_ticks.tick(), if state.config.spectrum_enabled || state.view == View::Settings => {
+                state.spectrum.tick(
+                    fx.player.samples(),
+                    state.now.is_some() && !state.paused,
+                );
             }
         }
         if state.should_quit {

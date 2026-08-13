@@ -11,6 +11,7 @@ mod icons;
 mod lyrics;
 pub mod pixel;
 mod player;
+mod spectrum;
 mod store;
 mod theme;
 mod ui;

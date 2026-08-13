@@ -148,6 +148,7 @@ impl AppState {
                     self.view = View::NowPlaying;
                 }
             }
+            Action::ToggleSpectrum => self.toggle_spectrum(fx),
             Action::TogglePlay => self.toggle_play(fx),
             Action::SeekBy(seconds) => {
                 let step = Duration::from_secs(seconds.unsigned_abs());

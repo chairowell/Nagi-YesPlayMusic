@@ -11,10 +11,13 @@ use crate::i18n::{self, Key};
 
 use super::{text::display_width, Hits};
 
-pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
-    let theme = &state.theme;
+pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
+    let theme = state.theme;
+    let show_preview =
+        SettingField::ALL.get(state.settings.selected) == Some(&SettingField::SpectrumStyle);
+    let preview_height = if show_preview { 7 } else { 0 };
     let width = 62_u16.min(area.width);
-    let height = (SettingField::ALL.len() as u16 + 8).min(area.height);
+    let height = (SettingField::ALL.len() as u16 + 8 + preview_height).min(area.height);
     let panel = Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
         y: area.y + area.height.saturating_sub(height) / 2,
@@ -31,9 +34,10 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         return;
     }
 
-    let [hint_area, rows_area, status_area, buttons_area] = Layout::vertical([
+    let [hint_area, rows_area, preview_area, status_area, buttons_area] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(SettingField::ALL.len() as u16),
+        Constraint::Length(preview_height),
         Constraint::Length(1),
         Constraint::Length(2),
     ])
@@ -125,6 +129,21 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         }
     }
 
+    if show_preview && preview_area.height >= 3 {
+        let preview = Block::bordered()
+            .title(format!(" {} ", i18n::t(Key::SpectrumPreview)))
+            .border_style(Style::new().fg(theme.faint));
+        let preview_inner = preview.inner(preview_area);
+        frame.render_widget(preview, preview_area);
+        state.spectrum.render(
+            state.config.spectrum_style,
+            state.config.spectrum_glow,
+            preview_inner,
+            frame.buffer_mut(),
+            &theme,
+        );
+    }
+
     if let Some(status) = &state.status {
         frame.render_widget(
             Paragraph::new(status.as_str()).style(Style::new().fg(theme.accent2)),
@@ -165,6 +184,7 @@ mod tests {
 
     use super::*;
     use crate::config::Config;
+    use crate::spectrum::SampleBuffer;
 
     fn rendered_settings(
         width: u16,
@@ -177,7 +197,7 @@ mod tests {
         state.settings.selected = selected;
         let mut hits = Hits::default();
         terminal
-            .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
             .unwrap();
         (terminal.backend().buffer().clone(), hits)
     }
@@ -233,7 +253,7 @@ mod tests {
         let mut hits = Hits::default();
 
         terminal
-            .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
             .unwrap();
 
         let rendered = terminal
@@ -273,5 +293,26 @@ mod tests {
                 crate::theme::Theme::db16().accent2
             ]
         );
+    }
+
+    #[test]
+    fn spectrum_style_row_embeds_an_animated_preview() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new(&Config::default());
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::SpectrumStyle)
+            .unwrap();
+        state.spectrum.tick(&SampleBuffer::default(), false);
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        assert!(terminal.backend().buffer().content().iter().any(|cell| {
+            matches!(cell.symbol(), "▁" | "▂" | "▃" | "▄" | "▅" | "▆" | "▇" | "█")
+        }));
     }
 }

@@ -109,6 +109,7 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
         ("*", Key::LabelLike),
         ("/", Key::Filter),
         ("z", Key::Zen),
+        ("v", Key::Spectrum),
         ("?", Key::LabelHelp),
         (",", Key::Settings),
         ("q", Key::Quit),
@@ -293,7 +294,7 @@ const PLAYBACK_HINTS: &[(&str, Key)] = &[
     ("Space", Key::Pause),
     ("←/→", Key::Seek),
     ("*", Key::LabelLike),
-    ("/", Key::Filter),
+    ("v", Key::Spectrum),
     ("q", Key::Quit),
     ("?", Key::LabelHelp),
 ];
@@ -313,6 +314,7 @@ fn footer_hints(state: &AppState) -> &'static [(&'static str, Key)] {
         View::Settings => &[
             ("j/k", Key::Select),
             ("h/l", Key::SettingAdjust),
+            ("v", Key::Spectrum),
             ("Enter", Key::Save),
             ("Esc/q", Key::Cancel),
         ],
@@ -374,6 +376,7 @@ mod tests {
             "m",
             "s",
             "r",
+            "v",
             "*",
             "/",
         ] {
@@ -399,7 +402,7 @@ mod tests {
             .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
             .collect::<String>();
 
-        for key in ["Space", "←/→", "*", "/", "q", "?"] {
+        for key in ["Space", "←/→", "*", "v", "q", "?"] {
             assert!(
                 rendered.contains(key),
                 "missing footer key {key}: {rendered}"

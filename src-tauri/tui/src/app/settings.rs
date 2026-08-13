@@ -4,6 +4,7 @@ use crate::action::View;
 use crate::config::{Config, CoverMode, IconStyle};
 use crate::i18n::{self, Key};
 use crate::pixel::CoverDetail;
+use crate::spectrum::SpectrumKind;
 use crate::theme::{Theme, BUILTIN_NAMES};
 
 use super::{spawn_render_idle, AppState, Effects, PlayLayout, PREVIEW_CELLS};
@@ -20,10 +21,13 @@ pub(crate) enum SettingField {
     PixelDetail,
     QueueBehavior,
     Icons,
+    SpectrumEnabled,
+    SpectrumStyle,
+    SpectrumGlow,
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::Theme,
         Self::Language,
         Self::Quality,
@@ -34,6 +38,9 @@ impl SettingField {
         Self::PixelDetail,
         Self::QueueBehavior,
         Self::Icons,
+        Self::SpectrumEnabled,
+        Self::SpectrumStyle,
+        Self::SpectrumGlow,
     ];
 
     pub(crate) const fn label(self) -> Key {
@@ -48,6 +55,9 @@ impl SettingField {
             Self::PixelDetail => Key::SettingPixelDetail,
             Self::QueueBehavior => Key::SettingQueueBehavior,
             Self::Icons => Key::SettingIcons,
+            Self::SpectrumEnabled => Key::SettingSpectrumEnabled,
+            Self::SpectrumStyle => Key::SettingSpectrumStyle,
+            Self::SpectrumGlow => Key::SettingSpectrumGlow,
         }
     }
 }
@@ -147,6 +157,16 @@ impl AppState {
                 const VALUES: &[f32] = &[0.5, 1.0, 1.5, 2.0];
                 self.config.pixel_scale = cycle_f32(VALUES, self.config.pixel_scale, delta);
             }
+            SettingField::SpectrumEnabled => {
+                self.config.spectrum_enabled = !self.config.spectrum_enabled;
+            }
+            SettingField::SpectrumStyle => {
+                self.config.spectrum_style =
+                    cycle(&SpectrumKind::ALL, &self.config.spectrum_style, delta);
+            }
+            SettingField::SpectrumGlow => {
+                self.config.spectrum_glow = !self.config.spectrum_glow;
+            }
             SettingField::QueueBehavior => {
                 self.config.enter_replaces_queue = !self.config.enter_replaces_queue;
             }
@@ -223,6 +243,11 @@ impl AppState {
             }
             .to_owned(),
             SettingField::PixelDetail => format!("{:.1}×", self.config.pixel_scale),
+            SettingField::SpectrumEnabled => self.on_off(self.config.spectrum_enabled),
+            SettingField::SpectrumStyle => {
+                i18n::t_spectrum_style(self.config.spectrum_style).to_owned()
+            }
+            SettingField::SpectrumGlow => self.on_off(self.config.spectrum_glow),
             SettingField::QueueBehavior => if self.config.enter_replaces_queue {
                 i18n::t(Key::SettingQueueList)
             } else {
@@ -234,6 +259,23 @@ impl AppState {
                 IconStyle::Nerd => "Nerd Font",
             }
             .to_owned(),
+        }
+    }
+
+    fn on_off(&self, enabled: bool) -> String {
+        i18n::t(if enabled { Key::On } else { Key::Off }).to_owned()
+    }
+
+    pub(crate) fn toggle_spectrum(&mut self, fx: &Effects) {
+        self.config.spectrum_enabled = !self.config.spectrum_enabled;
+        let persistent = if let Some(original) = &mut self.settings.original {
+            original.spectrum_enabled = self.config.spectrum_enabled;
+            original.clone()
+        } else {
+            self.config.clone()
+        };
+        if let Err(error) = persistent.save_to(&fx.config_path) {
+            self.status = Some(format!("{}: {error}", i18n::t(Key::SettingsSaveFailed)));
         }
     }
 

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::sync::OnceLock;
 
+use crate::spectrum::SpectrumKind;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Lang {
     Zh,
@@ -42,11 +44,16 @@ pub enum Key {
     SettingLayout,
     SettingProgressStyle,
     SettingPixelDetail,
+    SettingSpectrumEnabled,
+    SettingSpectrumStyle,
+    SettingSpectrumGlow,
     SettingQueueBehavior,
     SettingIcons,
     SettingQueueList,
     SettingQueueSingle,
     SettingAdjust,
+    On,
+    Off,
     SettingsHint,
     NerdFontHint,
     SettingsSaved,
@@ -74,6 +81,8 @@ pub enum Key {
     Seek,
     Volume,
     Zen,
+    Spectrum,
+    SpectrumPreview,
     LoginTitle,
     LoginInstruction,
     NotLoggedInMenu,
@@ -157,6 +166,41 @@ pub fn t_playing(kind: &str) -> String {
         Lang::Zh => format!("播放中 · {kind}"),
         Lang::En => format!("Playing · {kind}"),
         Lang::Ja => format!("再生中 · {kind}"),
+    }
+}
+
+pub fn t_spectrum_style(kind: SpectrumKind) -> &'static str {
+    match (language(), kind) {
+        (Lang::Zh, SpectrumKind::Blocks) => "经典块条",
+        (Lang::Zh, SpectrumKind::Mirror) => "镜像双向",
+        (Lang::Zh, SpectrumKind::Led) => "LED 段条",
+        (Lang::Zh, SpectrumKind::Braille) => "盲文高清",
+        (Lang::Zh, SpectrumKind::Shade) => "热浪层",
+        (Lang::Zh, SpectrumKind::Scope) => "示波器",
+        (Lang::Zh, SpectrumKind::Fire) => "火焰频谱",
+        (Lang::Zh, SpectrumKind::Waterfall) => "瀑布频谱",
+        (Lang::Zh, SpectrumKind::Vu) => "VU 表盘",
+        (Lang::Zh, SpectrumKind::Reflect) => "水面倒影",
+        (Lang::En, SpectrumKind::Blocks) => "Classic blocks",
+        (Lang::En, SpectrumKind::Mirror) => "Mirror",
+        (Lang::En, SpectrumKind::Led) => "LED segments",
+        (Lang::En, SpectrumKind::Braille) => "Braille ridge",
+        (Lang::En, SpectrumKind::Shade) => "Heat haze",
+        (Lang::En, SpectrumKind::Scope) => "Oscilloscope",
+        (Lang::En, SpectrumKind::Fire) => "Fire",
+        (Lang::En, SpectrumKind::Waterfall) => "Waterfall",
+        (Lang::En, SpectrumKind::Vu) => "VU meters",
+        (Lang::En, SpectrumKind::Reflect) => "Reflection",
+        (Lang::Ja, SpectrumKind::Blocks) => "クラシックブロック",
+        (Lang::Ja, SpectrumKind::Mirror) => "ミラー",
+        (Lang::Ja, SpectrumKind::Led) => "LED セグメント",
+        (Lang::Ja, SpectrumKind::Braille) => "ブライユ表示",
+        (Lang::Ja, SpectrumKind::Shade) => "ヒートウェーブ",
+        (Lang::Ja, SpectrumKind::Scope) => "オシロスコープ",
+        (Lang::Ja, SpectrumKind::Fire) => "炎スペクトラム",
+        (Lang::Ja, SpectrumKind::Waterfall) => "ウォーターフォール",
+        (Lang::Ja, SpectrumKind::Vu) => "VU メーター",
+        (Lang::Ja, SpectrumKind::Reflect) => "水面反射",
     }
 }
 
@@ -245,11 +289,16 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingLayout => "播放布局",
             Key::SettingProgressStyle => "进度条",
             Key::SettingPixelDetail => "像素细节",
+            Key::SettingSpectrumEnabled => "频谱开关",
+            Key::SettingSpectrumStyle => "频谱样式",
+            Key::SettingSpectrumGlow => "荧光余辉",
             Key::SettingQueueBehavior => "Enter 行为",
             Key::SettingIcons => "图标",
             Key::SettingQueueList => "整列入队",
             Key::SettingQueueSingle => "只播单曲",
             Key::SettingAdjust => "调整",
+            Key::On => "开",
+            Key::Off => "关",
             Key::SettingsHint => "j/k 选择 · h/l 即时预览 · Enter 保存 · Esc 取消",
             Key::NerdFontHint => {
                 "终端字体需支持 Nerd Font\nmacOS：brew install font-symbols-only-nerd-font"
@@ -279,6 +328,8 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Seek => "快进",
             Key::Volume => "音量",
             Key::Zen => "纯净",
+            Key::Spectrum => "频谱开 / 关",
+            Key::SpectrumPreview => "实时预览",
             Key::SearchPrompt => "搜索网易云曲库",
             Key::HelpTitle => "快捷键",
             Key::HelpAnyKey => "按任意键关闭",
@@ -352,11 +403,16 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingLayout => "Player layout",
             Key::SettingProgressStyle => "Progress style",
             Key::SettingPixelDetail => "Pixel detail",
+            Key::SettingSpectrumEnabled => "Spectrum",
+            Key::SettingSpectrumStyle => "Spectrum style",
+            Key::SettingSpectrumGlow => "Phosphor glow",
             Key::SettingQueueBehavior => "Enter behavior",
             Key::SettingIcons => "Icons",
             Key::SettingQueueList => "Queue the list",
             Key::SettingQueueSingle => "Play one track",
             Key::SettingAdjust => "Adjust",
+            Key::On => "On",
+            Key::Off => "Off",
             Key::SettingsHint => "j/k select · h/l preview · Enter save · Esc cancel",
             Key::NerdFontHint => {
                 "Your terminal font must support Nerd Font\nmacOS: brew install font-symbols-only-nerd-font"
@@ -386,6 +442,8 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Seek => "Seek",
             Key::Volume => "Volume",
             Key::Zen => "Zen",
+            Key::Spectrum => "Spectrum on / off",
+            Key::SpectrumPreview => "Live preview",
             Key::SearchPrompt => "Search NCM",
             Key::HelpTitle => "Keyboard",
             Key::HelpAnyKey => "Press any key to close",
@@ -459,11 +517,16 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingLayout => "再生レイアウト",
             Key::SettingProgressStyle => "進行表示",
             Key::SettingPixelDetail => "ピクセル詳細",
+            Key::SettingSpectrumEnabled => "スペクトラム",
+            Key::SettingSpectrumStyle => "スペクトラム表示",
+            Key::SettingSpectrumGlow => "蛍光残像",
             Key::SettingQueueBehavior => "Enter の動作",
             Key::SettingIcons => "アイコン",
             Key::SettingQueueList => "一覧をキューへ",
             Key::SettingQueueSingle => "1曲だけ再生",
             Key::SettingAdjust => "調整",
+            Key::On => "オン",
+            Key::Off => "オフ",
             Key::SettingsHint => "j/k 選択 · h/l プレビュー · Enter 保存 · Esc キャンセル",
             Key::NerdFontHint => {
                 "端末のフォントはNerd Font対応が必要です\nmacOS: brew install font-symbols-only-nerd-font"
@@ -493,6 +556,8 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Seek => "シーク",
             Key::Volume => "音量",
             Key::Zen => "集中表示",
+            Key::Spectrum => "スペクトラム切替",
+            Key::SpectrumPreview => "ライブプレビュー",
             Key::SearchPrompt => "検索",
             Key::HelpTitle => "キー操作",
             Key::HelpAnyKey => "任意のキーで閉じる",
