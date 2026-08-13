@@ -14,6 +14,8 @@ use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 
 use crate::i18n::{self, Key};
 
+const PLAYLIST_PAGE_SIZE: usize = 500;
+
 #[derive(Clone, Debug)]
 pub struct ResolvedTrack {
     pub id: i64,
@@ -182,9 +184,20 @@ impl Ncm {
         playlist_id: i64,
         session: Option<&Session>,
     ) -> Result<Vec<SongRow>> {
+        collect_playlist_pages(|offset| self.playlist_songs_page(playlist_id, session, offset))
+            .await
+    }
+
+    async fn playlist_songs_page(
+        &self,
+        playlist_id: i64,
+        session: Option<&Session>,
+        offset: usize,
+    ) -> Result<Vec<SongRow>> {
         let query = Self::query_with_session(session)
             .param("id", &playlist_id.to_string())
-            .param("limit", "500");
+            .param("limit", &PLAYLIST_PAGE_SIZE.to_string())
+            .param("offset", &offset.to_string());
         let response = self
             .client
             .playlist_track_all(&query)
@@ -201,14 +214,10 @@ impl Ncm {
         let query = Self::query_with_session(session)
             .param("id", &id.to_string())
             .param("like", if like { "true" } else { "false" });
-        let response = self
-            .client
-            .like(&query)
-            .await
-            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))?;
+        let response = self.client.like(&query).await.map_err(|_| like_error())?;
         match response.body["code"].as_i64() {
             Some(200) => Ok(()),
-            other => Err(anyhow!("{} ({other:?})", i18n::t(Key::LikeFailed))),
+            _ => Err(like_error()),
         }
     }
 
@@ -256,16 +265,28 @@ impl Ncm {
     }
 
     pub async fn cloud_songs(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
+        collect_cloud_pages(|offset| self.cloud_songs_page(session, offset)).await
+    }
+
+    async fn cloud_songs_page(
+        &self,
+        session: Option<&Session>,
+        offset: usize,
+    ) -> Result<(Vec<SongRow>, Option<bool>)> {
+        let query = Self::query_with_session(session)
+            .param("limit", &PLAYLIST_PAGE_SIZE.to_string())
+            .param("offset", &offset.to_string());
         let response = self
             .client
-            .user_cloud(&Self::query_with_session(session))
+            .user_cloud(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
+        let has_more = response.body["hasMore"].as_bool();
         let items = response.body["data"]
             .as_array()
             .cloned()
             .unwrap_or_default();
-        Ok(items
+        let rows = items
             .iter()
             .map(|item| {
                 let mut row = song_row_flex(&item["simpleSong"]);
@@ -280,7 +301,8 @@ impl Ncm {
                 }
                 row
             })
-            .collect())
+            .collect();
+        Ok((rows, has_more))
     }
 
     // ── playback resolution ──────────────────────────────────────────
@@ -392,6 +414,42 @@ impl Ncm {
             pic_url: row.pic_url,
         }
     }
+}
+
+async fn collect_playlist_pages<F, Fut>(mut fetch: F) -> Result<Vec<SongRow>>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<SongRow>>>,
+{
+    let mut rows = Vec::new();
+    loop {
+        let page = fetch(rows.len()).await?;
+        let complete = page.len() < PLAYLIST_PAGE_SIZE;
+        rows.extend(page);
+        if complete {
+            return Ok(rows);
+        }
+    }
+}
+
+async fn collect_cloud_pages<F, Fut>(mut fetch: F) -> Result<Vec<SongRow>>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: std::future::Future<Output = Result<(Vec<SongRow>, Option<bool>)>>,
+{
+    let mut rows = Vec::new();
+    loop {
+        let (page, has_more) = fetch(rows.len()).await?;
+        let page_len = page.len();
+        rows.extend(page);
+        if page_len == 0 || !has_more.unwrap_or(page_len == PLAYLIST_PAGE_SIZE) {
+            return Ok(rows);
+        }
+    }
+}
+
+fn like_error() -> anyhow::Error {
+    anyhow!(i18n::t(Key::LikeFailed))
 }
 
 fn parse_playback_source(data: &Value) -> Result<PlaybackSource> {
@@ -542,6 +600,107 @@ mod tests {
         for (quality, expected) in cases {
             assert_eq!(ncm(quality).bitrate(), expected);
         }
+    }
+
+    fn rows(range: std::ops::Range<usize>) -> Vec<SongRow> {
+        range
+            .map(|id| SongRow {
+                id: id as i64,
+                title: format!("Track {id}"),
+                artist: "Artist".into(),
+                duration_ms: 180_000,
+                pic_url: None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn playlist_paging_keeps_all_rows_in_order() {
+        let pages = [rows(0..500), rows(500..1000), Vec::new()];
+        let mut calls = Vec::new();
+
+        let result = collect_playlist_pages(|offset| {
+            calls.push(offset);
+            let page = pages[calls.len() - 1].clone();
+            async move { Ok(page) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls, vec![0, 500, 1000]);
+        assert_eq!(result.len(), 1000);
+        assert!(result
+            .iter()
+            .enumerate()
+            .all(|(index, row)| row.id == index as i64));
+    }
+
+    #[tokio::test]
+    async fn playlist_paging_fetches_the_partial_second_page() {
+        let pages = [rows(0..500), rows(500..501)];
+        let mut calls = Vec::new();
+
+        let result = collect_playlist_pages(|offset| {
+            calls.push(offset);
+            let page = pages[calls.len() - 1].clone();
+            async move { Ok(page) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls, vec![0, 500]);
+        assert_eq!(result.len(), 501);
+        assert_eq!(result[500].id, 500);
+    }
+
+    #[tokio::test]
+    async fn cloud_paging_follows_has_more_and_preserves_order() {
+        let pages = [(rows(0..500), Some(true)), (rows(500..501), Some(false))];
+        let mut calls = Vec::new();
+
+        let result = collect_cloud_pages(|offset| {
+            calls.push(offset);
+            let page = pages[calls.len() - 1].clone();
+            async move { Ok(page) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls, vec![0, 500]);
+        assert_eq!(result.len(), 501);
+        assert_eq!(result[500].id, 500);
+    }
+
+    #[tokio::test]
+    async fn cloud_paging_falls_back_to_page_length_without_has_more() {
+        let pages = [(rows(0..500), None), (rows(500..501), None)];
+        let mut calls = Vec::new();
+
+        let result = collect_cloud_pages(|offset| {
+            calls.push(offset);
+            let page = pages[calls.len() - 1].clone();
+            async move { Ok(page) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls, vec![0, 500]);
+        assert_eq!(result.len(), 501);
+    }
+
+    #[tokio::test]
+    async fn empty_cloud_page_stops_even_when_has_more_is_true() {
+        let mut calls = Vec::new();
+
+        let result = collect_cloud_pages(|offset| {
+            calls.push(offset);
+            async { Ok((Vec::new(), Some(true))) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls, vec![0]);
+        assert!(result.is_empty());
     }
 
     #[test]

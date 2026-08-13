@@ -184,6 +184,9 @@ impl AppState {
         self.library_source = Source::Liked;
         self.library_synced = false;
         self.pending_fm_next = false;
+        self.fm_request_pending = false;
+        self.like_mutations.clear();
+        self.like_in_flight.clear();
         self.liked.clear();
         self.library = fx
             .store
@@ -258,8 +261,21 @@ impl AppState {
         session: SessionStamp,
         ids: std::collections::HashSet<i64>,
     ) {
-        if self.session.matches(session) {
-            self.liked = ids;
+        if !self.session.matches(session) {
+            return;
+        }
+        let touched = self
+            .like_mutations
+            .keys()
+            .map(|id| (*id, self.liked.contains(id)))
+            .collect::<Vec<_>>();
+        self.liked = ids;
+        for (id, liked) in touched {
+            if liked {
+                self.liked.insert(id);
+            } else {
+                self.liked.remove(&id);
+            }
         }
     }
 
@@ -272,6 +288,12 @@ impl AppState {
         if !self.session.matches(session) {
             return;
         }
+        self.fm_request_pending = false;
+        if rows.is_empty() {
+            self.pending_fm_next = false;
+            self.status = Some(i18n::t(Key::QueueFinished).into());
+            return;
+        }
         if self.queue_source == Source::Fm {
             self.queue.extend(rows.iter().cloned());
         }
@@ -279,15 +301,29 @@ impl AppState {
             self.library.extend(rows.iter().cloned());
             self.library_synced = true;
         }
-        if self.pending_fm_next {
+        if self.pending_fm_next && self.queue_source == Source::Fm {
             self.pending_fm_next = false;
             self.step_queue(fx, 1, true);
+        } else if self.queue_source != Source::Fm {
+            self.pending_fm_next = false;
         }
     }
 
-    pub(super) fn fetch_fm_more(&self, fx: &Effects) {
+    pub(super) fn fetch_fm_more(&mut self, fx: &Effects) {
+        if self.fm_request_pending {
+            return;
+        }
         if let Some((stamp, session)) = self.personal_request(fx) {
+            self.fm_request_pending = true;
             spawn_fm_more(fx, stamp, session);
+        }
+    }
+
+    pub(super) fn apply_fm_load_failed(&mut self, session: SessionStamp, message: String) {
+        if self.session.matches(session) {
+            self.fm_request_pending = false;
+            self.pending_fm_next = false;
+            self.status = Some(message);
         }
     }
 
@@ -297,13 +333,26 @@ impl AppState {
             return;
         };
         let like = !self.liked.contains(&id);
+        let mutation = self.begin_like_mutation(id, like);
+        self.status = Some(i18n::t(if like { Key::Liked } else { Key::Unliked }).to_owned());
+        self.start_like_request(fx, stamp, session, id, mutation, like);
+    }
+
+    fn begin_like_mutation(&mut self, id: i64, like: bool) -> u64 {
+        let mutation = self.like_mutations.entry(id).or_default();
+        *mutation += 1;
+        let mutation = *mutation;
         if like {
             self.liked.insert(id);
         } else {
             self.liked.remove(&id);
         }
-        self.status = Some(i18n::t(if like { Key::Liked } else { Key::Unliked }).to_owned());
-        spawn_toggle_like(fx, stamp, session, id, like);
+        mutation
+    }
+
+    #[cfg(test)]
+    fn begin_like_request_for_test(&mut self, id: i64, mutation: u64) {
+        self.like_in_flight.insert(id, mutation);
     }
 
     pub(super) fn apply_personal_notice(&mut self, session: SessionStamp, message: String) {
@@ -312,22 +361,53 @@ impl AppState {
         }
     }
 
-    pub(super) fn apply_like_failed(
+    fn start_like_request(
         &mut self,
+        fx: &Effects,
         session: SessionStamp,
+        auth: Session,
         id: i64,
-        attempted_like: bool,
-        message: String,
+        mutation: u64,
+        like: bool,
     ) {
-        if !self.session.matches(session) || self.liked.contains(&id) != attempted_like {
+        if self.like_in_flight.contains_key(&id) {
             return;
         }
-        if attempted_like {
-            self.liked.remove(&id);
-        } else {
-            self.liked.insert(id);
+        self.like_in_flight.insert(id, mutation);
+        spawn_toggle_like(fx, session, auth, id, mutation, like);
+    }
+
+    pub(super) fn apply_like_finished(
+        &mut self,
+        fx: &Effects,
+        session: SessionStamp,
+        id: i64,
+        mutation: u64,
+        attempted_like: bool,
+        error: Option<String>,
+    ) {
+        if !self.session.matches(session) || self.like_in_flight.get(&id) != Some(&mutation) {
+            return;
         }
-        self.status = Some(message);
+        self.like_in_flight.remove(&id);
+        let latest = self.like_mutations.get(&id).copied();
+        if latest != Some(mutation) {
+            let Some((stamp, auth)) = self.personal_request(fx) else {
+                return;
+            };
+            let latest = latest.expect("like mutation exists while request is active");
+            let like = self.liked.contains(&id);
+            self.start_like_request(fx, stamp, auth, id, latest, like);
+            return;
+        }
+        if let Some(message) = error {
+            if attempted_like {
+                self.liked.remove(&id);
+            } else {
+                self.liked.insert(id);
+            }
+            self.status = Some(message);
+        }
     }
 }
 
@@ -501,27 +581,43 @@ fn spawn_fm_more(fx: &Effects, stamp: SessionStamp, session: Session) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        if let Ok(rows) = ncm.personal_fm(Some(&session)).await {
-            let _ = actions.send(Action::FmMore {
+        let action = match ncm.personal_fm(Some(&session)).await {
+            Ok(rows) => Action::FmMore {
                 session: stamp,
                 rows,
-            });
-        }
+            },
+            Err(error) => Action::FmLoadFailed {
+                session: stamp,
+                message: i18n::t_library_load_failed(error),
+            },
+        };
+        let _ = actions.send(action);
     });
 }
 
-fn spawn_toggle_like(fx: &Effects, stamp: SessionStamp, session: Session, id: i64, like: bool) {
+fn spawn_toggle_like(
+    fx: &Effects,
+    stamp: SessionStamp,
+    session: Session,
+    id: i64,
+    mutation: u64,
+    like: bool,
+) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        if let Err(error) = ncm.set_like(id, like, Some(&session)).await {
-            let _ = actions.send(Action::LikeFailed {
-                session: stamp,
-                id,
-                attempted_like: like,
-                message: error.to_string(),
-            });
-        }
+        let error = ncm
+            .set_like(id, like, Some(&session))
+            .await
+            .err()
+            .map(|error| error.to_string());
+        let _ = actions.send(Action::LikeFinished {
+            session: stamp,
+            id,
+            mutation,
+            attempted_like: like,
+            error,
+        });
     });
 }
 

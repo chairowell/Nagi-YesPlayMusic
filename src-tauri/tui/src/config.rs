@@ -22,9 +22,9 @@ pub struct Config {
     /// NCM quality level: 128 | 192 | 320/exhigh | lossless | hires
     #[serde(deserialize_with = "deserialize_quality")]
     pub quality: AudioQuality,
-    /// Built-in theme name; later also a file in themes/.
+    /// Built-in theme name or a TOML file in themes/.
     pub theme: String,
-    /// Explicit shared song-cache cap in MiB. None keeps the database policy.
+    /// Explicit ypm process cache cap in MiB. None keeps the database value.
     pub cache_limit_mib: Option<u64>,
     /// Enter on a list: true = the list becomes the queue from that song
     /// (desktop/NCM semantics), false = play just that one song.
@@ -88,7 +88,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都�
 # cover_mode = "pixel"        # pixel（主题像素画）| original（终端原图协议，不支持时回退 pixel）
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
-# cache_limit_mib = 8192       # 仅显式设置时更新 GUI/TUI 共用上限
+# cache_limit_mib = 8192       # 仅显式设置时更新 ypm 进程共享的上限
 # pixel_scale = 1.0            # 像素细腻度：0.5 更复古块状，2.0 更细腻
 "#;
 
@@ -146,8 +146,7 @@ fn write_template(path: &std::path::Path) -> std::io::Result<()> {
     std::fs::write(path, TEMPLATE)
 }
 
-/// All platforms use the ~/.config style directory — that is the TUI
-/// user's muscle memory, and later the GUI shares ~/.cache/ypm.
+/// All platforms use the ~/.config style directory expected by TUI users.
 pub fn config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))

@@ -171,12 +171,15 @@ pub struct AppState {
     queue_source: Source,
     pub play_mode: PlayMode,
     pub liked: std::collections::HashSet<i64>,
+    like_mutations: std::collections::HashMap<i64, u64>,
+    like_in_flight: std::collections::HashMap<i64, u64>,
     pub current_track_id: Option<i64>,
     active_row: Option<SongRow>,
     pub library_source: Source,
     pub sidebar_focus: bool,
     pub sidebar_selected: usize,
     pending_fm_next: bool,
+    fm_request_pending: bool,
     cover_prefetched: bool,
     /// Next queue item resolved ahead of time — track switches feel instant.
     prefetched: Option<(usize, api::ResolvedTrack)>,
@@ -205,6 +208,7 @@ pub struct AppState {
     pub volume: f32,
     pub status: Option<String>,
     pub generation: u64,
+    terminal_size: (u16, u16),
     pub confirm_quit: bool,
     pub show_help: bool,
     pending_g: bool,
@@ -215,7 +219,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: &Config) -> Self {
         let theme = Theme::by_name(&config.theme);
-        let idle_cells = desired_idle_cells();
+        let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
+        let idle_cells = desired_idle_cells(terminal_size);
         let idle_path = config.idle_art.as_deref().map(shellexpand_home);
         let idle_bytes = idle_path.is_none().then(|| LOGO_BYTES.to_vec());
         Self {
@@ -246,12 +251,15 @@ impl AppState {
             queue_source: Source::Liked,
             play_mode: PlayMode::Sequential,
             liked: std::collections::HashSet::new(),
+            like_mutations: std::collections::HashMap::new(),
+            like_in_flight: std::collections::HashMap::new(),
             current_track_id: None,
             active_row: None,
             library_source: Source::Liked,
             sidebar_focus: false,
             sidebar_selected: 0,
             pending_fm_next: false,
+            fm_request_pending: false,
             cover_prefetched: false,
             prefetched: None,
             enter_replaces_queue: config.enter_replaces_queue,
@@ -276,6 +284,7 @@ impl AppState {
             volume: 1.0,
             status: None,
             generation: 0,
+            terminal_size,
             confirm_quit: false,
             show_help: false,
             pending_g: false,
@@ -287,7 +296,7 @@ impl AppState {
     /// The cover cell grid that fits the current terminal and layout.
     /// Height-driven in Side layout, width-bounded in Stacked.
     fn desired_cover_cells(&self) -> (u16, u16) {
-        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        let (cols, rows) = self.terminal_size;
         let body_rows = rows.saturating_sub(if self.zen { 2 } else { 4 });
         let height = match self.layout {
             PlayLayout::Side => body_rows.saturating_sub(2),
@@ -299,6 +308,14 @@ impl AppState {
             PlayLayout::Stacked => cols.saturating_sub(4).max(16),
         });
         (width, width / 2)
+    }
+
+    fn sidebar_visible(&self) -> bool {
+        self.terminal_size.0 >= ui::library::COLLAPSE_BELOW
+    }
+
+    fn desired_idle_cells(&self) -> (u16, u16) {
+        desired_idle_cells(self.terminal_size)
     }
 
     fn ensure_placeholder(&mut self) {
@@ -329,7 +346,7 @@ impl AppState {
                 bytes,
                 self.theme.palette,
                 self.theme.bg,
-                desired_idle_cells(),
+                self.desired_idle_cells(),
                 self.pixel_detail_scale,
             );
         } else if let Some(path) = self.idle_path.clone() {
@@ -829,8 +846,7 @@ fn spawn_idle_load(fx: &Effects, path: std::path::PathBuf) {
 }
 
 /// Idle art scales with the terminal like covers do.
-fn desired_idle_cells() -> (u16, u16) {
-    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+fn desired_idle_cells((cols, rows): (u16, u16)) -> (u16, u16) {
     let height = (rows * 2 / 5).clamp(12, 24);
     let width = (height * 2).min(cols.saturating_sub(4).max(16));
     (width, width / 2)
@@ -955,7 +971,9 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
 fn apply(state: &mut AppState, action: Action, fx: &Effects, hits: &ui::Hits) {
     match action {
         Action::Mouse(mouse) => {
-            let selected = if state.view == View::Search && state.search.input {
+            let selected = if state.view == View::Search && state.search.input
+                || state.view == View::Library && state.sidebar_focus
+            {
                 usize::MAX
             } else {
                 state.selected

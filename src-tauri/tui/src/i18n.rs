@@ -49,7 +49,7 @@ pub enum Key {
     Zen,
     LoginTitle,
     LoginInstruction,
-    NotLoggedInPressG,
+    NotLoggedInPressI,
     LikedSongs,
     DailyRecommendations,
     PersonalFm,
@@ -135,9 +135,9 @@ pub fn t_playing(kind: &str) -> String {
 
 pub fn t_login_interrupted(error: impl fmt::Display) -> String {
     match language() {
-        Lang::Zh => format!("网络不稳定，登录中断（{error}）；按 g 重试"),
-        Lang::En => format!("Login interrupted by an unstable network ({error}); press g to retry"),
-        Lang::Ja => format!("通信が不安定なためログインを中断しました（{error}）。gで再試行"),
+        Lang::Zh => format!("网络不稳定，登录中断（{error}）；按 i 重试"),
+        Lang::En => format!("Login interrupted by an unstable network ({error}); press i to retry"),
+        Lang::Ja => format!("通信が不安定なためログインを中断しました（{error}）。iで再試行"),
     }
 }
 
@@ -202,9 +202,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::FetchingQr => "正在获取二维码…",
             Key::ScanQr => "用网易云音乐 App 扫码",
             Key::QrScannedConfirm => "已扫码，在手机上确认…",
-            Key::QrExpired => "二维码已过期，按 g 重新获取",
+            Key::QrExpired => "二维码已过期，按 i 重新获取",
             Key::NetworkRetrying => "网络抖动，重试中…",
-            Key::SessionExpired => "登录态已失效，按 g 重新扫码",
+            Key::SessionExpired => "登录态已失效，按 i 重新扫码",
             Key::NowPlaying => "正在播放",
             Key::Library => "曲库",
             Key::Search => "搜索",
@@ -240,7 +240,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "请用网易云音乐 App 里的「扫一扫」（系统相机扫会提示无效）"
             }
-            Key::NotLoggedInPressG => "未登录 · 按 g",
+            Key::NotLoggedInPressI => "未登录 · 按 i",
             Key::LikedSongs => "我喜欢的音乐",
             Key::DailyRecommendations => "每日推荐",
             Key::PersonalFm => "私人FM",
@@ -280,9 +280,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::FetchingQr => "Getting QR code…",
             Key::ScanQr => "Scan with the NetEase Cloud Music app",
             Key::QrScannedConfirm => "Scanned—confirm on your phone…",
-            Key::QrExpired => "QR code expired; press g for a new one",
+            Key::QrExpired => "QR code expired; press i for a new one",
             Key::NetworkRetrying => "Network hiccup—retrying…",
-            Key::SessionExpired => "Session expired; press g to scan again",
+            Key::SessionExpired => "Session expired; press i to scan again",
             Key::NowPlaying => "Now Playing",
             Key::Library => "Library",
             Key::Search => "Search",
@@ -318,7 +318,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "Use Scan in the NetEase Cloud Music app (the camera app will not work)"
             }
-            Key::NotLoggedInPressG => "Signed out · press g",
+            Key::NotLoggedInPressI => "Signed out · press i",
             Key::LikedSongs => "Liked Songs",
             Key::DailyRecommendations => "Daily Picks",
             Key::PersonalFm => "Personal FM",
@@ -358,9 +358,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::FetchingQr => "QRコードを取得中…",
             Key::ScanQr => "NetEase Cloud Musicアプリでスキャン",
             Key::QrScannedConfirm => "スキャン済みです。スマートフォンで確認してください…",
-            Key::QrExpired => "QRコードの期限切れです。gで再取得",
+            Key::QrExpired => "QRコードの期限切れです。iで再取得",
             Key::NetworkRetrying => "通信が不安定です。再試行中…",
-            Key::SessionExpired => "ログイン期限切れです。gで再スキャン",
+            Key::SessionExpired => "ログイン期限切れです。iで再スキャン",
             Key::NowPlaying => "再生中",
             Key::Library => "ライブラリ",
             Key::Search => "検索",
@@ -396,7 +396,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "NetEase Cloud Musicアプリのスキャン機能を使用してください（カメラアプリは使用不可）"
             }
-            Key::NotLoggedInPressG => "未ログイン · gを押す",
+            Key::NotLoggedInPressI => "未ログイン · iを押す",
             Key::LikedSongs => "お気に入り",
             Key::DailyRecommendations => "デイリーレコメンド",
             Key::PersonalFm => "パーソナルFM",
@@ -435,7 +435,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{init, songs_ready_for, t, t_for, t_songs_ready, Key, Lang};
+    use super::{init, songs_ready_for, t, t_for, t_login_interrupted, t_songs_ready, Key, Lang};
 
     #[test]
     fn comparable_keys_are_complete_and_distinct_in_all_languages() {
@@ -465,6 +465,21 @@ mod tests {
         assert_eq!(songs_ready_for(Lang::Zh, 12), "12 首已就绪");
         assert_eq!(songs_ready_for(Lang::En, 12), "12 tracks ready");
         assert_eq!(songs_ready_for(Lang::Ja, 12), "12曲を同期済み");
+    }
+
+    #[test]
+    fn login_retry_messages_point_to_the_login_key() {
+        for lang in [Lang::Zh, Lang::En, Lang::Ja] {
+            for message in [
+                t_for(lang, Key::NotLoggedInPressI).to_owned(),
+                t_for(lang, Key::QrExpired).to_owned(),
+                t_for(lang, Key::SessionExpired).to_owned(),
+            ] {
+                assert!(message.contains('i'), "{lang:?}: {message}");
+            }
+        }
+        let interrupted = t_login_interrupted("offline");
+        assert!(interrupted.contains('i'));
     }
 
     #[test]

@@ -65,7 +65,10 @@ pub enum Action {
     Mouse(crossterm::event::MouseEvent),
     RawKey(crossterm::event::KeyEvent),
     Paste(String),
-    Resize,
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Player(PlayerEvent),
     TrackResolved {
         generation: u64,
@@ -145,6 +148,10 @@ pub enum Action {
         session: SessionStamp,
         rows: Vec<SongRow>,
     },
+    FmLoadFailed {
+        session: SessionStamp,
+        message: String,
+    },
     PrefetchReady {
         index: usize,
         track: ResolvedTrack,
@@ -163,11 +170,12 @@ pub enum Action {
         session: SessionStamp,
         ids: std::collections::HashSet<i64>,
     },
-    LikeFailed {
+    LikeFinished {
         session: SessionStamp,
         id: i64,
+        mutation: u64,
         attempted_like: bool,
-        message: String,
+        error: Option<String>,
     },
     PersonalNotice {
         session: SessionStamp,

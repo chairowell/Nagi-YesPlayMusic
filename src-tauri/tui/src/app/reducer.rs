@@ -4,29 +4,39 @@ use crate::event;
 use crate::player::PlayerCommand;
 
 use super::{
-    apply_pixel_cover, desired_idle_cells, song_row_from_resolved, spawn_decode_cover,
-    spawn_render_cover, spawn_render_idle, spawn_resolve, AppState, Effects,
+    apply_pixel_cover, song_row_from_resolved, spawn_decode_cover, spawn_render_cover,
+    spawn_render_idle, spawn_resolve, AppState, Effects,
 };
 
 impl AppState {
     pub(super) fn update(&mut self, action: Action, fx: &Effects) {
-        // The quit-confirm dialog is modal: y/Enter/q confirm, n/Esc cancel.
-        if self.confirm_quit {
-            let action = match action {
-                Action::RawKey(key) => match event::key_action(key) {
-                    Some(action) => action,
-                    None => return,
-                },
-                action => action,
-            };
+        // The quit dialog owns keyboard input, while background results
+        // keep flowing through the normal reducer.
+        let action = if self.confirm_quit {
             match action {
-                Action::ConfirmYes | Action::Quit | Action::Activate => self.should_quit = true,
-                Action::Back | Action::NextTrack => self.confirm_quit = false,
-                Action::Player(event) => self.apply_player_event(fx, event),
-                _ => {}
+                Action::RawKey(key) => {
+                    match event::key_action(key) {
+                        Some(Action::ConfirmYes | Action::Quit | Action::Activate) => {
+                            self.should_quit = true;
+                        }
+                        Some(Action::Back | Action::NextTrack) => self.confirm_quit = false,
+                        _ => {}
+                    }
+                    return;
+                }
+                Action::ConfirmYes | Action::Quit | Action::Activate => {
+                    self.should_quit = true;
+                    return;
+                }
+                Action::Back | Action::NextTrack => {
+                    self.confirm_quit = false;
+                    return;
+                }
+                action => action,
             }
-            return;
-        }
+        } else {
+            action
+        };
         // The help overlay is modal: any key dismisses it.
         if self.show_help && matches!(action, Action::RawKey(_) | Action::Mouse(_)) {
             self.show_help = false;
@@ -64,6 +74,7 @@ impl AppState {
             Action::JumpBottom => {
                 let len = match self.view {
                     View::Library => self.library.len(),
+                    View::Search => self.search.results.len(),
                     View::Queue => self.queue.len(),
                     _ => 0,
                 };
@@ -80,7 +91,10 @@ impl AppState {
             Action::Back => {
                 if self.view == View::Search && !self.search.input {
                     self.search.input = true;
-                } else if self.view == View::Library && !self.sidebar_focus {
+                } else if self.view == View::Library
+                    && !self.sidebar_focus
+                    && self.sidebar_visible()
+                {
                     self.sidebar_focus = true;
                     self.sidebar_selected = self.source_index();
                 } else {
@@ -141,6 +155,10 @@ impl AppState {
                             self.queue_pos = Some(0);
                         }
                         self.queue_source = self.library_source;
+                        if self.queue_source != Source::Fm {
+                            self.pending_fm_next = false;
+                            self.fm_request_pending = false;
+                        }
                         self.play_row(fx, row);
                         self.view = View::NowPlaying;
                     }
@@ -157,6 +175,8 @@ impl AppState {
                         self.queue = self.search.results.clone();
                         self.queue_pos = Some(self.selected);
                         self.queue_source = Source::Search;
+                        self.pending_fm_next = false;
+                        self.fm_request_pending = false;
                         self.play_row(fx, row);
                         self.view = View::NowPlaying;
                     }
@@ -177,6 +197,9 @@ impl AppState {
             Action::OpenSource(index) => self.open_source(fx, index),
             Action::LikedIds { session, ids } => self.apply_liked_ids(session, ids),
             Action::FmMore { session, rows } => self.apply_fm_more(fx, session, rows),
+            Action::FmLoadFailed { session, message } => {
+                self.apply_fm_load_failed(session, message);
+            }
             Action::SelectIndex(index) => {
                 let len = match self.view {
                     View::Library => self.library.len(),
@@ -186,8 +209,10 @@ impl AppState {
                 };
                 if index < len {
                     self.selected = index;
-                    if self.view == View::Search {
-                        self.search.input = false;
+                    match self.view {
+                        View::Library => self.sidebar_focus = false,
+                        View::Search => self.search.input = false,
+                        _ => {}
                     }
                 }
             }
@@ -232,12 +257,13 @@ impl AppState {
             } => {
                 self.search.fail(seq, &query, message);
             }
-            Action::LikeFailed {
+            Action::LikeFinished {
                 session,
                 id,
+                mutation,
                 attempted_like,
-                message,
-            } => self.apply_like_failed(session, id, attempted_like, message),
+                error,
+            } => self.apply_like_finished(fx, session, id, mutation, attempted_like, error),
             Action::PersonalNotice { session, message } => {
                 self.apply_personal_notice(session, message);
             }
@@ -337,12 +363,12 @@ impl AppState {
                     bytes,
                     self.theme.palette,
                     self.theme.bg,
-                    desired_idle_cells(),
+                    self.desired_idle_cells(),
                     self.pixel_detail_scale,
                 );
             }
             Action::IdleArtLoaded { cells, cover } => {
-                if cells == desired_idle_cells() {
+                if cells == self.desired_idle_cells() {
                     self.idle_art = cover;
                 }
             }
@@ -353,7 +379,11 @@ impl AppState {
                     self.step_queue(fx, 1, true);
                 }
             }
-            Action::Resize => {
+            Action::Resize { cols, rows } => {
+                self.terminal_size = (cols, rows);
+                if !self.sidebar_visible() {
+                    self.sidebar_focus = false;
+                }
                 // Layout-dependent resolution: re-render cover and idle art
                 // from their kept source bytes when the desired grid changed.
                 if let Some(bytes) = &self.cover_bytes {
@@ -373,7 +403,7 @@ impl AppState {
                         );
                     }
                 }
-                let desired = desired_idle_cells();
+                let desired = self.desired_idle_cells();
                 if (self.idle_art.width, self.idle_art.height) != desired {
                     if let Some(bytes) = self.idle_bytes.clone() {
                         spawn_render_idle(

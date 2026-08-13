@@ -66,6 +66,48 @@ async fn quit_dialog_handles_raw_confirm_and_cancel_keys() {
 }
 
 #[tokio::test]
+async fn quit_dialog_keeps_processing_async_state_updates() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.update(Action::Quit, &fx);
+
+    state.update(
+        Action::LyricsLoaded {
+            generation: 0,
+            lines: vec![crate::lyrics::LyricLine {
+                time: Duration::from_secs(1),
+                text: "new lyric".into(),
+                translation: None,
+            }],
+        },
+        &fx,
+    );
+
+    assert!(state.confirm_quit);
+    assert_eq!(state.lyrics[0].text, "new lyric");
+}
+
+#[tokio::test]
+async fn track_end_advances_the_queue_while_quit_dialog_is_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+    state.update(Action::Quit, &fx);
+
+    state.update(Action::Player(PlayerEvent::Ended { generation: 0 }), &fx);
+
+    assert!(state.confirm_quit);
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 2")
+    );
+}
+
+#[tokio::test]
 async fn editing_search_rejects_results_and_failures_for_the_previous_query() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);
@@ -163,6 +205,102 @@ async fn selecting_a_different_search_row_focuses_the_result_list() {
 
     assert_eq!(state.selected, 1);
     assert!(!state.search.input);
+}
+
+#[tokio::test]
+async fn jump_bottom_reaches_the_last_search_result() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.results = vec![row(1), row(2), row(3)];
+
+    state.update(Action::JumpBottom, &fx);
+
+    assert_eq!(state.selected, 2);
+}
+
+#[tokio::test]
+async fn selecting_a_library_row_moves_focus_from_the_sidebar_before_activation() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.library = vec![row(1), row(2)];
+    state.sidebar_focus = true;
+
+    state.update(Action::SelectIndex(1), &fx);
+    state.update(Action::Activate, &fx);
+
+    assert_eq!(state.view, View::NowPlaying);
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 2")
+    );
+}
+
+#[tokio::test]
+async fn first_click_on_the_selected_library_row_only_moves_focus_from_the_sidebar() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.library = vec![row(1), row(2)];
+    state.selected = 0;
+    state.sidebar_focus = true;
+    let mut hits = ui::Hits::default();
+    hits.rows.push((Rect::new(4, 5, 20, 1), 0));
+    let click = || {
+        Action::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+
+    apply(&mut state, click(), &fx, &hits);
+
+    assert_eq!(state.view, View::Library);
+    assert!(!state.sidebar_focus);
+    assert!(state.queue.is_empty());
+
+    apply(&mut state, click(), &fx, &hits);
+
+    assert_eq!(state.view, View::NowPlaying);
+    assert_eq!(state.queue_pos, Some(0));
+}
+
+#[tokio::test]
+async fn narrowing_the_terminal_clears_hidden_sidebar_focus() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.update(Action::Resize { cols: 80, rows: 24 }, &fx);
+    state.update(Action::Back, &fx);
+    assert!(state.sidebar_focus);
+
+    state.update(Action::Resize { cols: 40, rows: 24 }, &fx);
+
+    assert!(!state.sidebar_focus);
+    assert_eq!(state.view, View::Library);
+}
+
+#[tokio::test]
+async fn back_leaves_library_when_the_sidebar_is_hidden() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.update(Action::Resize { cols: 40, rows: 24 }, &fx);
+
+    state.update(Action::Back, &fx);
+
+    assert_eq!(state.view, View::NowPlaying);
+    assert!(!state.sidebar_focus);
 }
 
 #[test]

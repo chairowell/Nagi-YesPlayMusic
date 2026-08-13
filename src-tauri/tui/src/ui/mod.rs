@@ -1,6 +1,6 @@
 //! Pure view layer: reads AppState, writes the frame. No side effects.
 
-mod library;
+pub(crate) mod library;
 mod login;
 mod now_playing;
 mod queue;

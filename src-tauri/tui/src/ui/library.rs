@@ -14,7 +14,7 @@ use crate::ui::Hits;
 use super::text::pad_display;
 
 const SIDEBAR_WIDTH: u16 = 16;
-const COLLAPSE_BELOW: u16 = 50;
+pub const COLLAPSE_BELOW: u16 = 50;
 
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     if area.width >= COLLAPSE_BELOW {
@@ -42,7 +42,7 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits
             Style::new().fg(theme.accent2),
         )),
         None => Line::from(Span::styled(
-            i18n::t(Key::NotLoggedInPressG),
+            i18n::t(Key::NotLoggedInPressI),
             Style::new().fg(theme.accent2),
         )),
     };

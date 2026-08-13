@@ -14,7 +14,7 @@ pub fn action_for(event: Event) -> Option<Action> {
         // input owns the keyboard right now.
         Event::Key(key) if key.kind != KeyEventKind::Release => Some(Action::RawKey(key)),
         Event::Mouse(mouse) => Some(Action::Mouse(mouse)),
-        Event::Resize(_, _) => Some(Action::Resize),
+        Event::Resize(cols, rows) => Some(Action::Resize { cols, rows }),
         Event::Paste(text) => Some(Action::Paste(text)),
         _ => None,
     }
@@ -170,5 +170,6 @@ mod tests {
             Some(Action::SwitchView(View::Library))
         ));
         assert!(matches!(map(KeyCode::Char('z')), Some(Action::ToggleZen)));
+        assert!(matches!(map(KeyCode::Char('i')), Some(Action::StartLogin)));
     }
 }
