@@ -177,6 +177,14 @@ struct FileRoles {
 }
 
 impl Theme {
+    pub const fn selection_fg(&self) -> Color {
+        if matches!(self.bg, Color::Reset) {
+            Color::Black
+        } else {
+            self.bg
+        }
+    }
+
     pub fn by_name(name: &str) -> Self {
         if let Some(theme) = Self::builtin(name) {
             return theme;
@@ -494,6 +502,7 @@ mod tests {
 
         assert_eq!(transparent.bg, Color::Reset);
         assert_eq!(transparent.fg, Color::Reset);
+        assert_eq!(transparent.selection_fg(), Color::Black);
         assert_ne!(transparent.accent, Color::Reset);
         assert_eq!(transparent.palette, DB16);
     }

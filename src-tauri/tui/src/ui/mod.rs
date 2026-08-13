@@ -211,7 +211,7 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             confirm_label,
-            Style::new().fg(theme.bg).bg(theme.accent),
+            Style::new().fg(theme.selection_fg()).bg(theme.accent),
         ))),
         confirm_rect,
     );

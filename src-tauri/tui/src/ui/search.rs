@@ -92,7 +92,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         ));
         let selected = index == state.selected && !state.search.input;
         let style = if selected {
-            Style::new().fg(theme.bg).bg(theme.sel)
+            Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else {
             Style::new().fg(theme.fg)
         };

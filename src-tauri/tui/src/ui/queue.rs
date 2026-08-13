@@ -42,7 +42,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         let selected = index == state.selected;
         let marker = if playing { "▶" } else { " " };
         let style = if selected {
-            Style::new().fg(theme.bg).bg(theme.sel)
+            Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else if playing {
             Style::new().fg(theme.accent)
         } else {

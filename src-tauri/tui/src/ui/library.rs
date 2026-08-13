@@ -64,7 +64,7 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits
         let is_cursor = state.sidebar_focus && index == state.sidebar_selected;
         let marker = if is_current { "▸" } else { " " };
         let style = if is_cursor {
-            Style::new().fg(theme.bg).bg(theme.sel)
+            Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else if is_current {
             Style::new().fg(theme.accent)
         } else {
@@ -122,7 +122,7 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         ));
         let selected = index == state.selected;
         let style = if selected {
-            Style::new().fg(theme.bg).bg(theme.sel)
+            Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else {
             Style::new().fg(theme.fg)
         };
