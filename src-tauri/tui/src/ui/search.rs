@@ -20,8 +20,8 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     ])
     .areas(area);
 
-    let cursor = if state.search_input { "▎" } else { "" };
-    let query_style = if state.search_input {
+    let cursor = if state.search.input { "▎" } else { "" };
+    let query_style = if state.search.input {
         Style::new().fg(theme.fg)
     } else {
         Style::new().fg(theme.dim)
@@ -29,9 +29,9 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("  / ", Style::new().fg(theme.accent)),
-            Span::styled(format!("{}{cursor}", state.search_query), query_style),
+            Span::styled(format!("{}{cursor}", state.search.query), query_style),
             Span::styled(
-                if state.search_query.is_empty() && state.search_input {
+                if state.search.query.is_empty() && state.search.input {
                     format!("  {}", i18n::t(Key::TypeToSearch))
                 } else {
                     String::new()
@@ -42,7 +42,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         input_area,
     );
 
-    if state.searching {
+    if state.search.searching {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 i18n::t(Key::Searching),
@@ -53,8 +53,8 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         );
         return;
     }
-    if state.search_results.is_empty() {
-        let message = if state.search_query.is_empty() {
+    if state.search.results.is_empty() {
+        let message = if state.search.query.is_empty() {
             i18n::t(Key::SearchPrompt)
         } else {
             i18n::t(Key::NoResults)
@@ -71,10 +71,11 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     }
 
     let visible = list_area.height as usize;
-    let offset = super::scroll_offset(state.selected, state.search_results.len(), visible);
+    let offset = super::scroll_offset(state.selected, state.search.results.len(), visible);
     let mut lines = Vec::with_capacity(visible);
     for (index, row) in state
-        .search_results
+        .search
+        .results
         .iter()
         .enumerate()
         .skip(offset)
@@ -89,7 +90,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
             },
             index,
         ));
-        let selected = index == state.selected && !state.search_input;
+        let selected = index == state.selected && !state.search.input;
         let style = if selected {
             Style::new().fg(theme.bg).bg(theme.sel)
         } else {

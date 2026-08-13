@@ -23,7 +23,6 @@ impl Lang {
 pub enum Key {
     Resolving,
     QueueFinished,
-    AlreadyLoggedIn,
     FetchingQr,
     ScanQr,
     QrScannedConfirm,
@@ -201,7 +200,6 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
         Lang::Zh => match key {
             Key::Resolving => "解析中…",
             Key::QueueFinished => "队列播完了",
-            Key::AlreadyLoggedIn => "已经登录了",
             Key::FetchingQr => "正在获取二维码…",
             Key::ScanQr => "用网易云音乐 App 扫码",
             Key::QrScannedConfirm => "已扫码，在手机上确认…",
@@ -280,7 +278,6 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
         Lang::En => match key {
             Key::Resolving => "Resolving…",
             Key::QueueFinished => "End of queue",
-            Key::AlreadyLoggedIn => "Already signed in",
             Key::FetchingQr => "Getting QR code…",
             Key::ScanQr => "Scan with the NetEase Cloud Music app",
             Key::QrScannedConfirm => "Scanned—confirm on your phone…",
@@ -359,7 +356,6 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
         Lang::Ja => match key {
             Key::Resolving => "読み込み中…",
             Key::QueueFinished => "キューの再生が終了しました",
-            Key::AlreadyLoggedIn => "ログイン済みです",
             Key::FetchingQr => "QRコードを取得中…",
             Key::ScanQr => "NetEase Cloud Musicアプリでスキャン",
             Key::QrScannedConfirm => "スキャン済みです。スマートフォンで確認してください…",

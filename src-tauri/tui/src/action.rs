@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use yesplaymusic_core::auth::Session;
+
 use crate::api::{ResolvedTrack, SongRow, Source};
 use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
@@ -22,6 +24,12 @@ pub enum View {
     Search,
     Queue,
     Login,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionStamp {
+    pub epoch: u64,
+    pub uid: i64,
 }
 
 #[derive(Debug)]
@@ -70,23 +78,39 @@ pub enum Action {
     },
     StartLogin,
     LoginQrReady {
+        attempt: u64,
         art: String,
     },
     LoginProgress {
+        attempt: u64,
         message: String,
     },
     LoginFailed {
+        attempt: u64,
         message: String,
     },
-    LoggedIn {
+    LoginSucceeded {
+        attempt: u64,
+        session: Session,
         uid: i64,
         nickname: String,
     },
+    SessionRestored {
+        epoch: u64,
+        uid: i64,
+        nickname: String,
+    },
+    SessionRestoreFailed {
+        epoch: u64,
+        message: String,
+    },
     LibraryLoaded {
+        session: SessionStamp,
         source: Source,
         rows: Vec<SongRow>,
     },
     FmMore {
+        session: SessionStamp,
         rows: Vec<SongRow>,
     },
     PrefetchReady {
@@ -95,12 +119,15 @@ pub enum Action {
     },
     SearchResults {
         seq: u64,
+        query: String,
         rows: Vec<SongRow>,
     },
     LikedIds {
+        session: SessionStamp,
         ids: std::collections::HashSet<i64>,
     },
-    Notice {
+    PersonalNotice {
+        session: SessionStamp,
         message: String,
     },
     LyricsLoaded {

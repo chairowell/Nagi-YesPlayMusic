@@ -43,12 +43,12 @@ pub enum Source {
     Search,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QrStatus {
     Waiting,
     Scanned,
     Expired,
-    Success,
+    Success(Session),
 }
 
 pub struct Ncm {
@@ -70,8 +70,16 @@ impl Ncm {
         }
     }
 
-    pub fn is_logged_in(&self) -> bool {
-        self.session.read().is_ok_and(|session| session.is_some())
+    pub fn session_snapshot(&self) -> Option<Session> {
+        self.session.read().ok().and_then(|session| session.clone())
+    }
+
+    pub fn commit_session(&self, session: &Session) -> Result<()> {
+        self.store
+            .save(session)
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPersistSession, error)))?;
+        *self.session.write().expect("session lock") = Some(session.clone());
+        Ok(())
     }
 
     #[allow(dead_code)] // wired by the future `:` command palette
@@ -83,11 +91,12 @@ impl Ncm {
     }
 
     fn query(&self) -> Query {
-        let cookie = self
-            .session
-            .read()
-            .ok()
-            .and_then(|session| session.as_ref().map(Session::cookie_header));
+        let session = self.session_snapshot();
+        Self::query_with_session(session.as_ref())
+    }
+
+    fn query_with_session(session: Option<&Session>) -> Query {
+        let cookie = session.map(Session::cookie_header);
         match cookie {
             Some(cookie) => Query::new().cookie(&cookie),
             None => Query::new(),
@@ -132,47 +141,23 @@ impl Ncm {
             .login_qr_check(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpQrCheck, error)))?;
-        let code = response.body["code"].as_i64().unwrap_or(0);
-        match code {
-            800 => Ok(QrStatus::Expired),
-            801 => Ok(QrStatus::Waiting),
-            802 => Ok(QrStatus::Scanned),
-            803 => {
-                let session = Session::from_set_cookies(&response.cookie)
-                    .ok_or_else(|| anyhow!(i18n::t(Key::ApiLoginCookieMissing)))?;
-                self.store
-                    .save(&session)
-                    .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPersistSession, error)))?;
-                *self.session.write().expect("session lock") = Some(session);
-                Ok(QrStatus::Success)
-            }
-            other => Err(anyhow!(i18n::t_unknown_qr_status(other))),
-        }
+        parse_qr_status(&response.body, &response.cookie)
     }
 
     // ── account & library ────────────────────────────────────────────
 
-    pub async fn account(&self) -> Result<(i64, String)> {
+    pub async fn account(&self, session: Option<&Session>) -> Result<(i64, String)> {
         let response = self
             .client
-            .user_account(&self.query())
+            .user_account(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpAccount, error)))?;
-        let body = &response.body;
-        let uid = body["account"]["id"]
-            .as_i64()
-            .ok_or_else(|| anyhow!(i18n::t(Key::ApiInvalidSession)))?;
-        let nickname = body["profile"]["nickname"]
-            .as_str()
-            .unwrap_or("")
-            .to_owned();
-        Ok((uid, nickname))
+        parse_account(&response.body)
     }
 
     /// The user's "我喜欢的音乐" — by NCM convention the first playlist.
-    pub async fn liked_songs(&self, uid: i64) -> Result<Vec<SongRow>> {
-        let query = self
-            .query()
+    pub async fn liked_songs(&self, uid: i64, session: Option<&Session>) -> Result<Vec<SongRow>> {
+        let query = Self::query_with_session(session)
             .param("uid", &uid.to_string())
             .param("limit", "1");
         let response = self
@@ -183,12 +168,15 @@ impl Ncm {
         let playlist_id = response.body["playlist"][0]["id"]
             .as_i64()
             .ok_or_else(|| anyhow!(i18n::t(Key::ApiLikedPlaylistMissing)))?;
-        self.playlist_songs(playlist_id).await
+        self.playlist_songs(playlist_id, session).await
     }
 
-    pub async fn playlist_songs(&self, playlist_id: i64) -> Result<Vec<SongRow>> {
-        let query = self
-            .query()
+    pub async fn playlist_songs(
+        &self,
+        playlist_id: i64,
+        session: Option<&Session>,
+    ) -> Result<Vec<SongRow>> {
+        let query = Self::query_with_session(session)
             .param("id", &playlist_id.to_string())
             .param("limit", "500");
         let response = self
@@ -203,9 +191,8 @@ impl Ncm {
         Ok(songs.iter().map(song_row).collect())
     }
 
-    pub async fn set_like(&self, id: i64, like: bool) -> Result<()> {
-        let query = self
-            .query()
+    pub async fn set_like(&self, id: i64, like: bool, session: Option<&Session>) -> Result<()> {
+        let query = Self::query_with_session(session)
             .param("id", &id.to_string())
             .param("like", if like { "true" } else { "false" });
         let response = self
@@ -219,8 +206,12 @@ impl Ncm {
         }
     }
 
-    pub async fn liked_ids(&self, uid: i64) -> Result<std::collections::HashSet<i64>> {
-        let query = self.query().param("uid", &uid.to_string());
+    pub async fn liked_ids(
+        &self,
+        uid: i64,
+        session: Option<&Session>,
+    ) -> Result<std::collections::HashSet<i64>> {
+        let query = Self::query_with_session(session).param("uid", &uid.to_string());
         let response = self
             .client
             .likelist(&query)
@@ -232,10 +223,10 @@ impl Ncm {
             .unwrap_or_default())
     }
 
-    pub async fn daily_songs(&self) -> Result<Vec<SongRow>> {
+    pub async fn daily_songs(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
         let response = self
             .client
-            .recommend_songs(&self.query())
+            .recommend_songs(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
         let songs = response.body["data"]["dailySongs"]
@@ -245,10 +236,10 @@ impl Ncm {
         Ok(songs.iter().map(song_row_flex).collect())
     }
 
-    pub async fn personal_fm(&self) -> Result<Vec<SongRow>> {
+    pub async fn personal_fm(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
         let response = self
             .client
-            .personal_fm(&self.query())
+            .personal_fm(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
         let songs = response.body["data"]
@@ -258,10 +249,10 @@ impl Ncm {
         Ok(songs.iter().map(song_row_flex).collect())
     }
 
-    pub async fn cloud_songs(&self) -> Result<Vec<SongRow>> {
+    pub async fn cloud_songs(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
         let response = self
             .client
-            .user_cloud(&self.query())
+            .user_cloud(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
         let items = response.body["data"]
@@ -394,6 +385,29 @@ impl Ncm {
     }
 }
 
+fn parse_qr_status(body: &Value, cookies: &[String]) -> Result<QrStatus> {
+    match body["code"].as_i64().unwrap_or(0) {
+        800 => Ok(QrStatus::Expired),
+        801 => Ok(QrStatus::Waiting),
+        802 => Ok(QrStatus::Scanned),
+        803 => Session::from_set_cookies(cookies)
+            .map(QrStatus::Success)
+            .ok_or_else(|| anyhow!(i18n::t(Key::ApiLoginCookieMissing))),
+        other => Err(anyhow!(i18n::t_unknown_qr_status(other))),
+    }
+}
+
+fn parse_account(body: &Value) -> Result<(i64, String)> {
+    let uid = body["account"]["id"]
+        .as_i64()
+        .ok_or_else(|| anyhow!(i18n::t(Key::ApiInvalidSession)))?;
+    let nickname = body["profile"]["nickname"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    Ok((uid, nickname))
+}
+
 fn song_row(song: &Value) -> SongRow {
     SongRow {
         id: song["id"].as_i64().unwrap_or(0),
@@ -473,7 +487,7 @@ mod tests {
     #[test]
     fn missing_session_means_logged_out_and_cookieless_queries() {
         let ncm = ncm("exhigh");
-        assert!(!ncm.is_logged_in());
+        assert!(ncm.session_snapshot().is_none());
         assert!(ncm.query().cookie.is_none());
     }
 
@@ -483,5 +497,30 @@ mod tests {
         assert_eq!(url, "https://music.163.com/login?codekey=abc123");
         let art = qr_unicode(&url).unwrap();
         assert!(art.lines().count() > 10);
+    }
+
+    #[test]
+    fn qr_success_returns_a_candidate_without_committing_it() {
+        let ncm = ncm("exhigh");
+        let cookies = vec![
+            "MUSIC_U=candidate-token; Path=/; HttpOnly".into(),
+            "__csrf=candidate-csrf; Path=/".into(),
+        ];
+
+        let status = parse_qr_status(&serde_json::json!({ "code": 803 }), &cookies).unwrap();
+
+        assert!(matches!(status, QrStatus::Success(_)));
+        assert!(ncm.session_snapshot().is_none());
+        assert!(ncm.query().cookie.is_none());
+    }
+
+    #[test]
+    fn invalid_account_response_is_an_error_instead_of_uid_zero() {
+        let error = parse_account(&serde_json::json!({
+            "account": {},
+            "profile": { "nickname": "unknown" }
+        }));
+
+        assert!(error.is_err());
     }
 }

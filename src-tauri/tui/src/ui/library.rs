@@ -36,7 +36,7 @@ pub const SOURCES: [Key; 4] = [
 
 fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
-    let account = match &state.nickname {
+    let account = match &state.session.nickname {
         Some(nickname) => Line::from(Span::styled(
             format!("♪ {nickname}"),
             Style::new().fg(theme.accent2),
@@ -81,7 +81,7 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits
 fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     if state.library.is_empty() {
-        let message = if state.nickname.is_some() && !state.library_synced {
+        let message = if state.session.nickname.is_some() && !state.library_synced {
             i18n::t(Key::SyncingLibrary)
         } else {
             i18n::t(Key::EmptyLibrary)

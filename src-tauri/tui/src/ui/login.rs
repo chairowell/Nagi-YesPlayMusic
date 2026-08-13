@@ -12,6 +12,7 @@ use crate::i18n::{self, Key};
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
     let qr_lines: Vec<Line> = state
+        .session
         .login_qr
         .as_deref()
         .map(|art| {
@@ -42,7 +43,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect) {
     if !qr_lines.is_empty() {
         frame.render_widget(Paragraph::new(qr_lines).centered(), qr_area);
     }
-    if let Some(message) = &state.login_message {
+    if let Some(message) = &state.session.login_message {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(message.clone(), Style::new().fg(theme.dim))),

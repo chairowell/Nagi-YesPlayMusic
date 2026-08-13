@@ -115,7 +115,7 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
         frame.render_widget(Paragraph::new(line), row);
     }
 
-    let footer = match (&state.nickname, state.library.len()) {
+    let footer = match (&state.session.nickname, state.library.len()) {
         (Some(nickname), n) if state.library_synced => {
             format!("♪ {nickname} · {}", i18n::t_songs_ready(n))
         }
@@ -137,7 +137,7 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
 fn menu_entries(state: &AppState) -> Vec<(String, &'static str, MenuEntry)> {
     let mut entries = vec![(i18n::t(Key::LikedSongs).to_owned(), "2", MenuEntry::Library)];
     entries.push((i18n::t(Key::Search).to_owned(), "f", MenuEntry::Search));
-    entries.push(match &state.nickname {
+    entries.push(match &state.session.nickname {
         Some(_) => (i18n::t(Key::Relogin).to_owned(), "i", MenuEntry::Login),
         None => (i18n::t(Key::ScanLogin).to_owned(), "i", MenuEntry::Login),
     });
