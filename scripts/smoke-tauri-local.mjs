@@ -93,12 +93,23 @@ async function waitForReady(timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${baseUrl}/api/login/status`, {
+      const response = await fetch(`${baseUrl}/__yesplaymusic/health`, {
         signal: AbortSignal.timeout(1_000),
       });
-      if (response.ok) return response.json();
+      if (
+        response.ok &&
+        response.headers.get('x-yesplaymusic-backend') === 'rust'
+      ) {
+        const health = await response.json();
+        if (
+          health?.service === 'yesplaymusic-sidecar' &&
+          health?.protocol === 1
+        ) {
+          return health;
+        }
+      }
     } catch (_) {
-      // Connection failures are expected while the sidecar loads its modules.
+      // Connection failures are expected while the sidecar starts listening.
     }
     await sleep(100);
   }
@@ -170,7 +181,7 @@ async function main() {
   );
   const stderrTask = forwardOutput(tauriProcess.stderr, process.stderr);
 
-  const loginStatus = await waitForReady();
+  await waitForReady();
   const apiReadyAt = performance.now();
   const home = await fetch(baseUrl, {
     signal: AbortSignal.timeout(5_000),
@@ -185,9 +196,6 @@ async function main() {
   ]);
   if (!home.includes('<div id="app"></div>')) {
     throw new Error('Tauri 首页没有返回 Vue 挂载点');
-  }
-  if (loginStatus?.data?.code !== 200) {
-    throw new Error('Tauri 同源 API 没有返回 200');
   }
   if (
     typeof playerInfo !== 'object' ||

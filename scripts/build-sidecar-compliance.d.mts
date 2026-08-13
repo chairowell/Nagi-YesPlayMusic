@@ -29,6 +29,7 @@ export interface ComplianceBuildOptions {
   outputDirectory?: string;
   completeSourceDirectory?: string;
   metadata?: CargoMetadata;
+  sourceMetadata?: CargoMetadata;
   binaryProvenance?: {
     targetTriple: string;
     fileName: string;

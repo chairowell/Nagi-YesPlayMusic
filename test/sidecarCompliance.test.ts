@@ -81,8 +81,10 @@ async function createFixture(): Promise<{
   const root = await mkdtemp(path.join(os.tmpdir(), 'ypm-compliance-test-'));
   temporaryDirectories.push(root);
   const sidecarRoot = path.join(root, 'src-tauri', 'sidecar');
+  const coreRoot = path.join(root, 'src-tauri', 'core');
   const registryRoot = path.join(root, 'registry');
   await mkdir(path.join(sidecarRoot, 'src'), { recursive: true });
+  await mkdir(path.join(coreRoot, 'src'), { recursive: true });
   await mkdir(path.join(root, 'src-tauri', 'src'), { recursive: true });
   await mkdir(path.join(root, 'src'), { recursive: true });
   await mkdir(path.join(root, 'legal'), { recursive: true });
@@ -103,7 +105,7 @@ async function createFixture(): Promise<{
   await writeFile(path.join(root, 'src-tauri', 'build.rs'), 'fn main() {}\n');
   await writeFile(
     path.join(root, 'src-tauri', 'Cargo.toml'),
-    '[workspace]\nmembers = ["sidecar"]\nresolver = "2"\n\n[profile.release]\ncodegen-units = 1\nlto = true\nopt-level = "s"\npanic = "abort"\nstrip = true\n',
+    '[workspace]\nmembers = ["core", "sidecar"]\nresolver = "2"\n\n[profile.release]\ncodegen-units = 1\nlto = true\nopt-level = "s"\npanic = "abort"\nstrip = true\n',
     'utf8'
   );
   await writeFile(
@@ -118,12 +120,22 @@ async function createFixture(): Promise<{
   ];
   await writeFile(
     path.join(sidecarRoot, 'Cargo.toml'),
-    `[package]\nname = "yesplaymusic-sidecar"\nversion = "0.7.0"\nedition = "2021"\nrust-version = "1.89"\nlicense = "GPL-3.0-only"\n\n[dependencies]\n${dependencyLines.join(
+    `[package]\nname = "yesplaymusic-sidecar"\nversion = "0.7.0"\nedition = "2021"\nrust-version = "1.89"\nlicense = "GPL-3.0-only"\n\n[dependencies]\nyesplaymusic-core = { path = "../core" }\n${dependencyLines.join(
       '\n'
     )}\n`,
     'utf8'
   );
   await writeFile(path.join(sidecarRoot, 'src', 'main.rs'), 'fn main() {}\n');
+  await writeFile(
+    path.join(coreRoot, 'Cargo.toml'),
+    '[package]\nname = "yesplaymusic-core"\nversion = "0.7.0"\nedition = "2021"\nrust-version = "1.89"\nlicense = "GPL-3.0-only"\n',
+    'utf8'
+  );
+  await writeFile(
+    path.join(coreRoot, 'src', 'lib.rs'),
+    'pub const FIXTURE: &str = "core";\n',
+    'utf8'
+  );
 
   const unmRepository = 'https://github.com/UnblockNeteaseMusic/server-rust';
   const dependencies = await Promise.all([
@@ -154,6 +166,16 @@ async function createFixture(): Promise<{
     manifest_path: path.join(sidecarRoot, 'Cargo.toml'),
     rust_version: '1.89',
   };
+  const corePackage: CargoPackageMetadata = {
+    id: 'yesplaymusic-core 0.7.0',
+    name: 'yesplaymusic-core',
+    version: '0.7.0',
+    license: 'GPL-3.0-only',
+    authors: [],
+    repository: null,
+    manifest_path: path.join(coreRoot, 'Cargo.toml'),
+    rust_version: '1.89',
+  };
 
   const lockPackages = dependencies
     .map(
@@ -165,20 +187,24 @@ async function createFixture(): Promise<{
     .join('\n');
   await writeFile(
     path.join(root, 'src-tauri', 'Cargo.lock'),
-    `# fixture lock\nversion = 4\n\n${lockPackages}`,
+    `# fixture lock\nversion = 4\n\n[[package]]\nname = "yesplaymusic-core"\nversion = "0.7.0"\n\n${lockPackages}`,
     'utf8'
   );
 
   return {
     root,
     metadata: {
-      packages: [rootPackage, ...dependencies],
+      packages: [rootPackage, corePackage, ...dependencies],
       resolve: {
         nodes: [
           {
             id: rootPackage.id,
-            deps: dependencies.map(({ id }) => ({ pkg: id })),
+            deps: [
+              { pkg: corePackage.id },
+              ...dependencies.map(({ id }) => ({ pkg: id })),
+            ],
           },
+          { id: corePackage.id, deps: [] },
           ...dependencies.map(({ id }) => ({ id, deps: [] })),
         ],
       },
@@ -186,7 +212,106 @@ async function createFixture(): Promise<{
   };
 }
 
+async function createOptionalDependencyFixture(): Promise<{
+  root: string;
+  metadata: CargoMetadata;
+  sourceMetadata: CargoMetadata;
+}> {
+  const fixture = await createFixture();
+  const coreManifest = path.join(
+    fixture.root,
+    'src-tauri',
+    'core',
+    'Cargo.toml'
+  );
+  await writeFile(
+    coreManifest,
+    `${await readFile(coreManifest, 'utf8')}\n[features]\ndefault = []\nfixture-cache = ["dep:optional-fixture"]\n\n[dependencies]\noptional-fixture = { version = "=1.0.0", optional = true }\n`,
+    'utf8'
+  );
+
+  const optionalPackage = await createPackage(
+    path.join(fixture.root, 'registry'),
+    'optional-fixture',
+    '1.0.0',
+    'MIT',
+    'https://example.invalid/optional-fixture'
+  );
+  await writeFile(
+    path.join(fixture.root, 'src-tauri', 'Cargo.lock'),
+    `${await readFile(
+      path.join(fixture.root, 'src-tauri', 'Cargo.lock'),
+      'utf8'
+    )}\n[[package]]\nname = "optional-fixture"\nversion = "1.0.0"\nchecksum = "${'b'.repeat(64)}"\n`,
+    'utf8'
+  );
+
+  const corePackage = fixture.metadata.packages.find(
+    candidate => candidate.name === 'yesplaymusic-core'
+  );
+  if (!corePackage) throw new Error('missing core fixture package');
+  const sourceMetadata: CargoMetadata = {
+    packages: [...fixture.metadata.packages, optionalPackage],
+    resolve: {
+      nodes: [
+        ...fixture.metadata.resolve.nodes.map(node =>
+          node.id === corePackage.id
+            ? {
+                ...node,
+                deps: [
+                  ...node.deps,
+                  { pkg: optionalPackage.id, dep_kinds: [{ kind: null }] },
+                ],
+              }
+            : node
+        ),
+        { id: optionalPackage.id, deps: [] },
+      ],
+    },
+  };
+  return { ...fixture, sourceMetadata };
+}
+
 describe('Rust Sidecar copyleft distribution bundle', () => {
+  test('complete source rebuild resolves disabled optional dependencies offline', async () => {
+    const fixture = await createOptionalDependencyFixture();
+    const { stdout } = await execFileAsync('rustc', ['-vV']);
+    const targetTriple = stdout.match(/^host: (.+)$/m)?.[1];
+    if (!targetTriple) throw new Error('rustc did not report its host triple');
+
+    const outputDirectory = path.join(fixture.root, 'optional-output');
+    const completeSourceDirectory = path.join(
+      fixture.root,
+      'optional-complete-source'
+    );
+    const result = await buildSidecarCompliance({
+      projectRoot: fixture.root,
+      outputDirectory,
+      completeSourceDirectory,
+      metadata: fixture.metadata,
+      sourceMetadata: fixture.sourceMetadata,
+      binaryProvenance: {
+        targetTriple,
+        fileName: `yesplaymusic-sidecar-${targetTriple}`,
+        sha256: 'c'.repeat(64),
+        rustMarker: 'YPM_RUST_SIDECAR_V1',
+        machOUuid: null,
+      },
+    });
+
+    expect(result.dependencyCount).toBe(13);
+    const manifest = JSON.parse(
+      await readFile(path.join(outputDirectory, 'SOURCE-MANIFEST.json'), 'utf8')
+    ) as {
+      completeSource: { offlineRebuildVerified: boolean };
+      dependencySourcePackages: Array<{ name: string }>;
+    };
+    expect(manifest.completeSource.offlineRebuildVerified).toBe(true);
+    expect(
+      manifest.dependencySourcePackages.map(({ name }) => name)
+    ).not.toContain('optional-fixture');
+  });
+
   test('refuses linked output ancestors without deleting the external target', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'ypm-compliance-link-'));
     temporaryDirectories.push(root);
@@ -269,6 +394,9 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
       ...EXPECTED_UNM_CRATES,
     ]);
     expect(manifest.dependencySourcePackages).toHaveLength(13);
+    expect(
+      manifest.dependencySourcePackages.map(({ name }) => name)
+    ).not.toContain('yesplaymusic-core');
     expect(manifest.completeSource).toEqual(
       expect.objectContaining({
         dependencySourceCount: 13,
@@ -308,12 +436,36 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
     expect(
       await readFile(path.join(outputDirectory, 'LGPL-3.0.txt'), 'utf8')
     ).toContain('GNU LESSER GENERAL PUBLIC LICENSE');
-    expect(
-      await readFile(
-        path.join(outputDirectory, 'THIRD-PARTY-NOTICES.md'),
-        'utf8'
-      )
-    ).toContain('random-string');
+    const thirdPartyNotices = await readFile(
+      path.join(outputDirectory, 'THIRD-PARTY-NOTICES.md'),
+      'utf8'
+    );
+    expect(thirdPartyNotices).toContain('random-string');
+    expect(thirdPartyNotices).not.toContain('yesplaymusic-core');
+    const standaloneManifest = await readFile(
+      path.join(
+        completeSourceDirectory,
+        'source',
+        'application',
+        'src-tauri',
+        'Cargo.toml'
+      ),
+      'utf8'
+    );
+    expect(standaloneManifest).toContain('members = ["core", "sidecar"]');
+    expect(standaloneManifest).toContain('lto = true');
+    const bundledCoreManifest = await readFile(
+      path.join(
+        completeSourceDirectory,
+        'source',
+        'application',
+        'src-tauri',
+        'core',
+        'Cargo.toml'
+      ),
+      'utf8'
+    );
+    expect(bundledCoreManifest).toContain('name = "yesplaymusic-core"');
     expect(
       await readFile(
         path.join(
@@ -321,11 +473,38 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
           'source',
           'application',
           'src-tauri',
+          'core',
+          'Cargo.toml.release'
+        ),
+        'utf8'
+      )
+    ).toBe(bundledCoreManifest);
+    expect(
+      await readFile(
+        path.join(
+          completeSourceDirectory,
+          'source',
+          'application',
+          'src-tauri',
+          'core',
+          'src',
+          'lib.rs'
+        ),
+        'utf8'
+      )
+    ).toContain('FIXTURE');
+    await expect(
+      readFile(
+        path.join(
+          completeSourceDirectory,
+          'source',
+          'vendor',
+          'yesplaymusic-core-0.7.0',
           'Cargo.toml'
         ),
         'utf8'
       )
-    ).toContain('lto = true');
+    ).rejects.toThrow();
     expect(
       await readFile(
         path.join(completeSourceDirectory, '.cargo', 'config.toml'),

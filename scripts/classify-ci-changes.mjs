@@ -67,11 +67,27 @@ export function changedFiles({
   return run(baseSha, headSha, cwd);
 }
 
+// Strip hook-injected repo bindings (a pre-commit hook exports GIT_DIR,
+// absolute inside a worktree) so `cwd` alone decides which repo git sees.
+export function envWithoutGitBindings(env = process.env) {
+  const scrubbed = { ...env };
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_COMMON_DIR',
+  ]) {
+    delete scrubbed[key];
+  }
+  return scrubbed;
+}
+
 function gitDiff(baseSha, headSha, cwd) {
   const result = spawnSync(
     'git',
     ['diff', '--no-renames', '--name-only', '-z', `${baseSha}...${headSha}`],
-    { cwd, encoding: 'utf8' }
+    { cwd, encoding: 'utf8', env: envWithoutGitBindings() }
   );
   if (result.status !== 0) return null;
   return result.stdout.split('\0').filter(Boolean);

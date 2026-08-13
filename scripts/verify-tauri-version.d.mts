@@ -2,8 +2,10 @@ export interface TauriVersionFields {
   packageVersion: string;
   tauriVersion: string;
   cargoVersion: string | undefined;
+  coreVersion: string | undefined;
   sidecarVersion: string | undefined;
   lockCargoVersion: string | undefined;
+  lockCoreVersion: string | undefined;
   lockSidecarVersion: string | undefined;
   tag?: string;
 }

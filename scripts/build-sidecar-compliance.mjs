@@ -65,7 +65,24 @@ const GPL_DEPENDENCY = Object.freeze({
   license: 'GPL-3.0-only',
 });
 const SIDECAR_PACKAGE = 'yesplaymusic-sidecar';
+const WORKSPACE_APPLICATION_PACKAGES = Object.freeze([
+  SIDECAR_PACKAGE,
+  'yesplaymusic-core',
+]);
+const WORKSPACE_APPLICATION_PACKAGE_NAMES = new Set(
+  WORKSPACE_APPLICATION_PACKAGES
+);
 const SIDECAR_BINARY_LICENSE = 'GPL-3.0-only';
+
+function isWorkspaceApplicationPackage(candidate) {
+  return WORKSPACE_APPLICATION_PACKAGE_NAMES.has(candidate.name);
+}
+
+function thirdPartyPackages(packages) {
+  return packages.filter(
+    candidate => !isWorkspaceApplicationPackage(candidate)
+  );
+}
 
 export function sidecarSourceArchiveName(version) {
   return `YesPlayMusic_${version}_sidecar-source.tar.gz`;
@@ -197,23 +214,25 @@ async function assertSafeOutput(outputDirectory, projectRoot) {
   }
 }
 
-async function runCargoMetadata(projectRoot) {
+async function runCargoMetadata(projectRoot, allFeatures = false) {
   const manifestPath = path.join(
     projectRoot,
     'src-tauri',
     'sidecar',
     'Cargo.toml'
   );
+  const arguments_ = [
+    'metadata',
+    '--manifest-path',
+    manifestPath,
+    '--format-version',
+    '1',
+    '--locked',
+  ];
+  if (allFeatures) arguments_.push('--all-features');
   const { stdout } = await execFileAsync(
     'cargo',
-    [
-      'metadata',
-      '--manifest-path',
-      manifestPath,
-      '--format-version',
-      '1',
-      '--locked',
-    ],
+    arguments_,
     { cwd: projectRoot, maxBuffer: 64 * 1024 * 1024 }
   );
   return JSON.parse(stdout);
@@ -316,7 +335,7 @@ function validateCopyleftClosure(packages) {
   }
 
   const expectedCopyleft = new Set([
-    SIDECAR_PACKAGE,
+    ...WORKSPACE_APPLICATION_PACKAGES,
     GPL_DEPENDENCY.name,
     ...EXPECTED_UNM_CRATES,
   ]);
@@ -393,8 +412,7 @@ async function listFiles(root, directory = root) {
 }
 
 function dependencyCoordinates(packages) {
-  return packages
-    .filter(candidate => candidate.name !== SIDECAR_PACKAGE)
+  return thirdPartyPackages(packages)
     .map(({ name, version }) => `${name}@${version}`)
     .sort();
 }
@@ -402,14 +420,21 @@ function dependencyCoordinates(packages) {
 function assertExactDependencyResolution(expectedPackages, actualMetadata) {
   const expected = dependencyCoordinates(expectedPackages);
   const actualPackages = reachablePackages(actualMetadata);
-  const expectedRoot = expectedPackages.find(
-    candidate => candidate.name === SIDECAR_PACKAGE
-  );
-  const actualRoot = actualPackages.find(
-    candidate => candidate.name === SIDECAR_PACKAGE
-  );
-  if (!expectedRoot || actualRoot?.version !== expectedRoot.version) {
-    throw new Error('Offline relinking resolved a different Sidecar package');
+  for (const packageName of WORKSPACE_APPLICATION_PACKAGES) {
+    const expectedApplicationPackage = expectedPackages.find(
+      candidate => candidate.name === packageName
+    );
+    const actualApplicationPackage = actualPackages.find(
+      candidate => candidate.name === packageName
+    );
+    if (
+      !expectedApplicationPackage ||
+      actualApplicationPackage?.version !== expectedApplicationPackage.version
+    ) {
+      throw new Error(
+        `Offline relinking resolved a different ${packageName} package`
+      );
+    }
   }
   const actual = dependencyCoordinates(actualPackages);
   const expectedSet = new Set(expected);
@@ -451,9 +476,7 @@ async function writeCargoVendorChecksum(
 }
 
 async function vendorDependencySources(packages, lockText, vendorDirectory) {
-  const dependencies = packages.filter(
-    candidate => candidate.name !== SIDECAR_PACKAGE
-  );
+  const dependencies = thirdPartyPackages(packages);
   const seenDirectories = new Set();
   const manifestPackages = [];
   await mkdir(vendorDirectory, { recursive: true });
@@ -507,8 +530,7 @@ async function copyDependencyNotices(packages, outputDirectory) {
   const records = [];
   const copiedByDigest = new Map();
 
-  for (const candidate of packages) {
-    if (candidate.name === SIDECAR_PACKAGE) continue;
+  for (const candidate of thirdPartyPackages(packages)) {
     const sourceDirectory = manifestDirectory(candidate);
     const sourceFiles = await listFiles(sourceDirectory);
     const candidates = sourceFiles.filter(isLicenseOrNotice);
@@ -571,7 +593,8 @@ this statically linked executable.
 
 The twelve UnblockNeteaseMusic crates listed below are published as
 \`LGPL-3.0-or-later\`. The companion complete-source archive contains the
-application source and every registry dependency source in \`source/vendor/\`.
+application workspace source and every registry dependency source in
+\`source/vendor/\`.
 Canonical GPLv3 and LGPLv3 texts are included with both distributions.
 
 | Package | Version | SPDX license | Authors | Upstream | Included notice/license files |
@@ -587,7 +610,7 @@ function standaloneWorkspaceManifest(releaseWorkspaceManifest) {
   if (!releaseProfile) {
     throw new Error('Release workspace manifest has no [profile.release]');
   }
-  return `[workspace]\nmembers = ["sidecar"]\nresolver = "2"\n\n${releaseProfile.trim()}\n`;
+  return `[workspace]\nmembers = ["core", "sidecar"]\nresolver = "2"\n\n${releaseProfile.trim()}\n`;
 }
 
 function sourceOffer({ packageVersion, sourceArchiveName }) {
@@ -622,10 +645,10 @@ preferred source needed to modify and rebuild/relink the Sidecar executable.
 
 - \`source/vendor/\`: all ${dependencyCount} exact registry dependency sources
   reachable from the release Sidecar after excluding development-only edges.
-- \`source/application/\`: the exact YesPlayMusic Sidecar source, route
-  manifest, original release workspace manifest/lock, and a standalone
-  workspace whose resolved dependency coordinates are checked against the
-  release graph.
+- \`source/application/\`: the exact YesPlayMusic Sidecar and shared core
+  source, route manifest, original release workspace manifest/lock, and a
+  standalone workspace whose resolved dependency coordinates are checked
+  against the release graph.
 - \`.cargo/config.toml\`: replaces crates.io with \`source/vendor/\` and forces
   Cargo offline, so rebuilding cannot silently fetch missing source.
 - \`THIRD-PARTY-NOTICES.md\` and \`third-party-license-files/\`: the complete
@@ -657,9 +680,10 @@ is downloaded during the build.
   \`./rebuild.sh --target x86_64-unknown-linux-gnu\`.
 
 The executable is written below
-\`source/application/src-tauri/target/<profile>/\`. Modify any local
-crate below \`source/vendor/\`, rerun the script, and Cargo relinks the
-Sidecar against that modified source.
+\`source/application/src-tauri/target/<profile>/\`. Modify the application
+crates below \`source/application/src-tauri/\` or a registry crate below
+\`source/vendor/\`, rerun the script, and Cargo relinks the Sidecar against
+that modified source.
 
 ## Install or test the replacement
 
@@ -868,6 +892,7 @@ export async function buildSidecarCompliance({
     ? defaultCompleteSourceOutput
     : `${outputDirectory}-complete-source`,
   metadata,
+  sourceMetadata,
   binaryProvenance,
   skipOfflineRebuild = false,
   noticesOnly = false,
@@ -883,6 +908,10 @@ export async function buildSidecarCompliance({
   }
   const cargoMetadata = metadata ?? (await runCargoMetadata(projectRoot));
   const workspacePackages = reachablePackages(cargoMetadata);
+  const sourcePackages = reachablePackages(
+    sourceMetadata ??
+      (metadata ? cargoMetadata : await runCargoMetadata(projectRoot, true))
+  );
   const { gplDependency, unmPackages } =
     validateCopyleftClosure(workspacePackages);
   const rootPackage = workspacePackages.find(
@@ -892,9 +921,7 @@ export async function buildSidecarCompliance({
   if (!rootPackage || !rustVersion) {
     throw new Error(`${SIDECAR_PACKAGE} must declare rust-version`);
   }
-  const dependencyPackages = workspacePackages.filter(
-    candidate => candidate.name !== SIDECAR_PACKAGE
-  );
+  const dependencyPackages = thirdPartyPackages(workspacePackages);
   let distributionPackages = workspacePackages;
   const provenance =
     binaryProvenance ?? (await builtSidecarProvenance(projectRoot));
@@ -954,29 +981,46 @@ export async function buildSidecarCompliance({
         'src-tauri',
         'sidecar'
       );
+      const bundledCoreDirectory = path.join(
+        applicationDirectory,
+        'src-tauri',
+        'core'
+      );
       const vendorDirectory = path.join(sourceDirectory, 'vendor');
       await Promise.all([
         mkdir(bundledSidecarDirectory, { recursive: true }),
+        mkdir(bundledCoreDirectory, { recursive: true }),
         mkdir(path.join(applicationDirectory, 'src'), { recursive: true }),
         mkdir(path.join(sourceStaging, '.cargo'), { recursive: true }),
       ]);
 
-      await copyTree(
-        path.join(projectRoot, 'src-tauri', 'sidecar', 'src'),
-        path.join(bundledSidecarDirectory, 'src')
-      );
-      await cp(
-        path.join(projectRoot, 'src', 'sidecar-route-manifest.json'),
-        path.join(applicationDirectory, 'src', 'sidecar-route-manifest.json')
-      );
-
-      const [sidecarManifest, releaseWorkspaceManifest] = await Promise.all([
-        readFile(
-          path.join(projectRoot, 'src-tauri', 'sidecar', 'Cargo.toml'),
-          'utf8'
+      await Promise.all([
+        copyTree(
+          path.join(projectRoot, 'src-tauri', 'sidecar', 'src'),
+          path.join(bundledSidecarDirectory, 'src')
         ),
-        readFile(path.join(projectRoot, 'src-tauri', 'Cargo.toml'), 'utf8'),
+        copyTree(
+          path.join(projectRoot, 'src-tauri', 'core', 'src'),
+          path.join(bundledCoreDirectory, 'src')
+        ),
+        cp(
+          path.join(projectRoot, 'src', 'sidecar-route-manifest.json'),
+          path.join(applicationDirectory, 'src', 'sidecar-route-manifest.json')
+        ),
       ]);
+
+      const [sidecarManifest, coreManifest, releaseWorkspaceManifest] =
+        await Promise.all([
+          readFile(
+            path.join(projectRoot, 'src-tauri', 'sidecar', 'Cargo.toml'),
+            'utf8'
+          ),
+          readFile(
+            path.join(projectRoot, 'src-tauri', 'core', 'Cargo.toml'),
+            'utf8'
+          ),
+          readFile(path.join(projectRoot, 'src-tauri', 'Cargo.toml'), 'utf8'),
+        ]);
       await Promise.all([
         writeFile(
           path.join(bundledSidecarDirectory, 'Cargo.toml'),
@@ -986,6 +1030,16 @@ export async function buildSidecarCompliance({
         writeFile(
           path.join(bundledSidecarDirectory, 'Cargo.toml.release'),
           sidecarManifest,
+          'utf8'
+        ),
+        writeFile(
+          path.join(bundledCoreDirectory, 'Cargo.toml'),
+          coreManifest,
+          'utf8'
+        ),
+        writeFile(
+          path.join(bundledCoreDirectory, 'Cargo.toml.release'),
+          coreManifest,
           'utf8'
         ),
         writeFile(
@@ -1014,13 +1068,14 @@ export async function buildSidecarCompliance({
       ]);
 
       sourceManifestPackages = await vendorDependencySources(
-        workspacePackages,
+        sourcePackages,
         lockText,
         vendorDirectory
       );
-      if (sourceManifestPackages.length !== dependencyPackages.length) {
+      const sourceDependencies = thirdPartyPackages(sourcePackages);
+      if (sourceManifestPackages.length !== sourceDependencies.length) {
         throw new Error(
-          `Complete source closure has ${sourceManifestPackages.length} packages; expected ${dependencyPackages.length}`
+          `Complete source closure has ${sourceManifestPackages.length} packages; expected ${sourceDependencies.length}`
         );
       }
       if (!skipOfflineRebuild) {
@@ -1033,7 +1088,7 @@ export async function buildSidecarCompliance({
           dependencyCoordinates(distributionPackages)
         );
         await Promise.all(
-          dependencyPackages
+          sourceDependencies
             .filter(
               ({ name, version }) =>
                 !resolvedCoordinates.has(`${name}@${version}`)
@@ -1051,9 +1106,7 @@ export async function buildSidecarCompliance({
       }
     }
 
-    const distributionDependencies = distributionPackages.filter(
-      candidate => candidate.name !== SIDECAR_PACKAGE
-    );
+    const distributionDependencies = thirdPartyPackages(distributionPackages);
     const notices = await copyDependencyNotices(
       distributionPackages,
       workingDirectory
@@ -1202,7 +1255,7 @@ export async function buildSidecarCompliance({
   return {
     outputDirectory,
     completeSourceDirectory: noticesOnly ? null : completeSourceDirectory,
-    dependencyCount: distributionPackages.length - 1,
+    dependencyCount: thirdPartyPackages(distributionPackages).length,
     copyleftSourceCount: EXPECTED_UNM_CRATES.length + 1,
   };
 }
