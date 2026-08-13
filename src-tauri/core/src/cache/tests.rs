@@ -132,6 +132,40 @@ fn an_open_lease_blocks_eviction_until_the_reader_drops_it() {
 }
 
 #[test]
+fn replacing_a_leased_generation_preserves_the_old_entry_until_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("cache");
+    let first = TrackCache::open(&root).unwrap();
+    let second = TrackCache::open(&root).unwrap();
+    let key = CacheKey::new(70, AudioQuality::High320);
+    let original = write_entry(&first, request(70, AudioQuality::High320), b"original");
+    let mut lease = first.lookup(key).unwrap().unwrap();
+
+    let mut blocked = second
+        .begin_write(request(70, AudioQuality::High320))
+        .unwrap();
+    blocked.write_all(b"replacement").unwrap();
+    assert!(matches!(
+        blocked.finish(),
+        Err(CacheError::ExistingFileLeased)
+    ));
+
+    let current = second.lookup(key).unwrap().unwrap();
+    assert_eq!(current.metadata(), &original);
+    drop(current);
+    assert_eq!(file_count(&root.join("tracks")), 1);
+    let mut audio = Vec::new();
+    lease.read_to_end(&mut audio).unwrap();
+    assert_eq!(audio, b"original");
+
+    drop(lease);
+    let replacement = write_entry(&second, request(70, AudioQuality::High320), b"replacement");
+    assert!(replacement.generation > original.generation);
+    assert_eq!(read_entry(&first, key), Some(b"replacement".to_vec()));
+    assert_eq!(file_count(&root.join("tracks")), 1);
+}
+
+#[test]
 fn invalidation_is_generation_cas_and_waits_for_active_leases() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("cache");

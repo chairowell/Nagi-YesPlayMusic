@@ -293,6 +293,23 @@ impl TrackCache {
         let final_path = self.entry_path(&metadata);
         let transaction = self.immediate_transaction()?;
         let previous = query_entry(&transaction, metadata.key)?;
+        let replaced_file = match previous.as_ref() {
+            Some(previous) if self.entry_path(&previous.metadata) != final_path => {
+                let path = self.entry_path(&previous.metadata);
+                let file = match OpenOptions::new().read(true).write(true).open(&path) {
+                    Ok(file) => Some(file),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(error.into()),
+                };
+                if let Some(file) = file.as_ref() {
+                    if !try_lock_exclusive(file)? {
+                        return Err(CacheError::ExistingFileLeased);
+                    }
+                }
+                file.map(|file| (path, file))
+            }
+            _ => None,
+        };
         let generation = allocate_generation(&transaction)?;
         metadata.generation =
             u64::try_from(generation).map_err(|_| CacheError::CorruptIndex("generation"))?;
@@ -336,10 +353,14 @@ impl TrackCache {
         transaction.commit()?;
         drop(published);
 
-        if let Some(previous) = previous {
-            if self.entry_path(&previous.metadata) != final_path {
-                self.cleanup_replaced_file(&previous, generation)?;
+        if let Some((path, locked_file)) = replaced_file {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
+            drop(locked_file);
+            sync_directory(self.tracks_dir())?;
         }
         self.evict_to_cap()?;
         Ok(metadata)
@@ -390,24 +411,6 @@ impl TrackCache {
                 remove_file_if_unlocked(&item.path())?;
             }
         }
-        Ok(())
-    }
-
-    fn cleanup_replaced_file(
-        &self,
-        previous: &IndexedEntry,
-        replacement_generation: i64,
-    ) -> Result<(), CacheError> {
-        let transaction = self.immediate_transaction()?;
-        let current = query_entry(&transaction, previous.metadata.key)?;
-        let still_replaced = current.as_ref().is_some_and(|entry| {
-            entry.generation == replacement_generation
-                && self.entry_path(&entry.metadata) != self.entry_path(&previous.metadata)
-        });
-        if still_replaced {
-            remove_file_if_unlocked(&self.entry_path(&previous.metadata))?;
-        }
-        transaction.commit()?;
         Ok(())
     }
 
