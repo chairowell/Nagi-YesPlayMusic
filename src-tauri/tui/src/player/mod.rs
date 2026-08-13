@@ -9,7 +9,7 @@
 mod cache_stream;
 
 use std::io::{Read, Seek};
-use std::sync::mpsc as std_mpsc;
+use std::sync::{mpsc as std_mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use rodio::{Decoder, Player};
@@ -33,7 +33,6 @@ pub enum PlayerCommand {
     TogglePause,
     SeekTo(Duration),
     SetVolume(f32),
-    #[allow(dead_code)] // stop control lands with the command palette
     Stop,
 }
 
@@ -78,17 +77,33 @@ impl PlayerHandle {
 pub fn spawn(
     runtime: tokio::runtime::Handle,
 ) -> (PlayerHandle, mpsc::UnboundedReceiver<PlayerEvent>) {
+    spawn_with_engine(runtime, open_engine)
+}
+
+type EngineFactory = fn(f32) -> anyhow::Result<Engine>;
+
+fn spawn_with_engine(
+    runtime: tokio::runtime::Handle,
+    engine_factory: EngineFactory,
+) -> (PlayerHandle, mpsc::UnboundedReceiver<PlayerEvent>) {
     let (command_tx, command_rx) = std_mpsc::channel();
     let (wake_tx, wake_rx) = std_mpsc::channel();
-    let (opened_tx, opened_rx) = std_mpsc::channel();
+    let (work_tx, work_rx) = std_mpsc::channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let actor_wake = wake_tx.clone();
     std::thread::Builder::new()
         .name("ypm-player".into())
         .spawn(move || {
-            actor(
-                runtime, command_rx, wake_rx, actor_wake, opened_tx, opened_rx, event_tx,
-            )
+            actor(ActorContext {
+                runtime,
+                commands: command_rx,
+                wake: wake_rx,
+                wake_tx: actor_wake,
+                work_tx,
+                work_rx,
+                events: event_tx,
+                engine_factory,
+            })
         })
         .expect("spawn player thread");
     (
@@ -110,46 +125,111 @@ struct Media {
     reader: Box<dyn MediaSource>,
     byte_len: Option<u64>,
     cached: Option<CacheMetadata>,
+    cancel: Option<StreamCancel>,
 }
 
-struct Opened {
+type StreamCancel = Arc<dyn Fn() + Send + Sync>;
+type AudioDecoder = Decoder<Box<dyn MediaSource>>;
+
+struct Decoded {
+    source: AudioDecoder,
+    total: Option<Duration>,
+    cancel: Option<StreamCancel>,
+}
+
+struct StartedPlayback {
+    cancel: Option<StreamCancel>,
+}
+
+struct DecodeFailure {
+    message: String,
+    cached: Option<CacheMetadata>,
+}
+
+enum WorkResult {
+    Opened(anyhow::Result<Media>),
+    Decoded(Result<Decoded, DecodeFailure>),
+}
+
+struct CompletedWork {
     request: u64,
     generation: u64,
-    result: anyhow::Result<Media>,
+    result: WorkResult,
 }
 
-struct PendingOpen {
+enum PendingTask {
+    Open(tokio::task::JoinHandle<()>),
+    Decode { _task: std::thread::JoinHandle<()> },
+}
+
+struct PendingWork {
     request: u64,
     generation: u64,
-    task: tokio::task::JoinHandle<()>,
+    cancel: Option<StreamCancel>,
+    task: PendingTask,
 }
 
-impl Drop for PendingOpen {
+impl PendingWork {
+    fn finish(mut self) {
+        self.cancel = None;
+    }
+}
+
+impl Drop for PendingWork {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(cancel) = self.cancel.take() {
+            cancel();
+        }
+        if let PendingTask::Open(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
 const TICK: Duration = Duration::from_millis(250);
 
 struct Engine {
-    _device: rodio::MixerDeviceSink,
+    _output: EngineOutput,
     player: Player,
 }
 
-fn actor(
+enum EngineOutput {
+    Device {
+        _sink: rodio::MixerDeviceSink,
+    },
+    #[cfg(test)]
+    Silent {
+        _source: rodio::queue::SourcesQueueOutput,
+    },
+}
+
+struct ActorContext {
     runtime: tokio::runtime::Handle,
     commands: std_mpsc::Receiver<PlayerCommand>,
     wake: std_mpsc::Receiver<()>,
     wake_tx: std_mpsc::Sender<()>,
-    opened_tx: std_mpsc::Sender<Opened>,
-    opened_rx: std_mpsc::Receiver<Opened>,
+    work_tx: std_mpsc::Sender<CompletedWork>,
+    work_rx: std_mpsc::Receiver<CompletedWork>,
     events: mpsc::UnboundedSender<PlayerEvent>,
-) {
+    engine_factory: EngineFactory,
+}
+
+fn actor(context: ActorContext) {
+    let ActorContext {
+        runtime,
+        commands,
+        wake,
+        wake_tx,
+        work_tx,
+        work_rx,
+        events,
+        engine_factory,
+    } = context;
     let mut engine: Option<Engine> = None;
     let mut active_generation: Option<u64> = None;
     let mut volume = 1.0_f32;
-    let mut pending: Option<PendingOpen> = None;
+    let mut pending: Option<PendingWork> = None;
+    let mut active_cancel: Option<StreamCancel> = None;
     let mut next_request = 1_u64;
     let mut last_tick = Instant::now();
 
@@ -174,10 +254,17 @@ fn actor(
                     lease,
                 } => {
                     drop(pending.take());
-                    stop(&engine);
-                    active_generation =
-                        start(&mut engine, volume, g, &events, || Ok(open_cached(lease)))
-                            .then_some(g);
+                    stop(&engine, &mut active_cancel);
+                    active_generation = None;
+                    let request = next_request;
+                    next_request += 1;
+                    pending = Some(spawn_decode(
+                        request,
+                        g,
+                        open_cached(lease),
+                        work_tx.clone(),
+                        wake_tx.clone(),
+                    ));
                 }
                 PlayerCommand::PlayUrl {
                     generation: g,
@@ -185,7 +272,7 @@ fn actor(
                     cache,
                 } => {
                     drop(pending.take());
-                    stop(&engine);
+                    stop(&engine, &mut active_cancel);
                     active_generation = None;
                     let request = next_request;
                     next_request += 1;
@@ -195,7 +282,7 @@ fn actor(
                         g,
                         url,
                         cache,
-                        opened_tx.clone(),
+                        work_tx.clone(),
                         wake_tx.clone(),
                     ));
                 }
@@ -229,29 +316,65 @@ fn actor(
                 }
                 PlayerCommand::Stop => {
                     drop(pending.take());
-                    stop(&engine);
+                    stop(&engine, &mut active_cancel);
                     active_generation = None;
                 }
             }
         }
 
         if disconnected {
+            drop(pending.take());
+            stop(&engine, &mut active_cancel);
             break;
         }
 
-        while let Ok(opened) = opened_rx.try_recv() {
+        while let Ok(completed) = work_rx.try_recv() {
             let is_current = pending.as_ref().is_some_and(|candidate| {
-                candidate.request == opened.request && candidate.generation == opened.generation
+                candidate.request == completed.request
+                    && candidate.generation == completed.generation
             });
             if !is_current {
                 continue;
             }
 
-            drop(pending.take());
-            active_generation = start(&mut engine, volume, opened.generation, &events, || {
-                opened.result
-            })
-            .then_some(opened.generation);
+            pending.take().expect("current player work").finish();
+            match completed.result {
+                WorkResult::Opened(Ok(media)) => {
+                    pending = Some(spawn_decode(
+                        completed.request,
+                        completed.generation,
+                        media,
+                        work_tx.clone(),
+                        wake_tx.clone(),
+                    ));
+                }
+                WorkResult::Opened(Err(error)) => {
+                    report_failure(
+                        &events,
+                        completed.generation,
+                        DecodeFailure {
+                            message: error.to_string(),
+                            cached: None,
+                        },
+                    );
+                }
+                WorkResult::Decoded(Ok(decoded)) => {
+                    if let Some(started) = start_decoded(
+                        &mut engine,
+                        volume,
+                        completed.generation,
+                        &events,
+                        decoded,
+                        engine_factory,
+                    ) {
+                        active_generation = Some(completed.generation);
+                        active_cancel = started.cancel;
+                    }
+                }
+                WorkResult::Decoded(Err(error)) => {
+                    report_failure(&events, completed.generation, error);
+                }
+            }
         }
 
         if last_tick.elapsed() >= TICK {
@@ -259,6 +382,7 @@ fn actor(
             if let (Some(engine), Some(generation)) = (&engine, active_generation) {
                 if engine.player.empty() {
                     active_generation = None;
+                    active_cancel = None;
                     let _ = events.send(PlayerEvent::Ended { generation });
                 } else if !engine.player.is_paused() {
                     let _ = events.send(PlayerEvent::Position {
@@ -271,7 +395,10 @@ fn actor(
     }
 }
 
-fn stop(engine: &Option<Engine>) {
+fn stop(engine: &Option<Engine>, active_cancel: &mut Option<StreamCancel>) {
+    if let Some(cancel) = active_cancel.take() {
+        cancel();
+    }
     if let Some(engine) = engine {
         engine.player.stop();
     }
@@ -283,22 +410,51 @@ fn spawn_open(
     generation: u64,
     url: String,
     cache: Option<CacheWritePlan>,
-    opened: std_mpsc::Sender<Opened>,
+    completed: std_mpsc::Sender<CompletedWork>,
     wake: std_mpsc::Sender<()>,
-) -> PendingOpen {
+) -> PendingWork {
     let task = runtime.spawn(async move {
         let result = open_url(&url, cache).await;
-        let _ = opened.send(Opened {
+        let _ = completed.send(CompletedWork {
             request,
             generation,
-            result,
+            result: WorkResult::Opened(result),
         });
         let _ = wake.send(());
     });
-    PendingOpen {
+    PendingWork {
         request,
         generation,
-        task,
+        cancel: None,
+        task: PendingTask::Open(task),
+    }
+}
+
+fn spawn_decode(
+    request: u64,
+    generation: u64,
+    media: Media,
+    completed: std_mpsc::Sender<CompletedWork>,
+    wake: std_mpsc::Sender<()>,
+) -> PendingWork {
+    let cancel = media.cancel.clone();
+    let task = std::thread::Builder::new()
+        .name("ypm-decoder".into())
+        .spawn(move || {
+            let result = decode(media);
+            let _ = completed.send(CompletedWork {
+                request,
+                generation,
+                result: WorkResult::Decoded(result),
+            });
+            let _ = wake.send(());
+        })
+        .expect("spawn decoder thread");
+    PendingWork {
+        request,
+        generation,
+        cancel,
+        task: PendingTask::Decode { _task: task },
     }
 }
 
@@ -308,6 +464,7 @@ fn open_cached(lease: CacheLease) -> Media {
         reader: Box::new(lease),
         byte_len: Some(metadata.bytes),
         cached: Some(metadata),
+        cancel: None,
     }
 }
 
@@ -324,6 +481,8 @@ async fn open_url(url: &str, cache: Option<CacheWritePlan>) -> anyhow::Result<Me
     });
     let reader = StreamDownload::new_http(url.parse()?, provider, settings).await?;
     let byte_len = reader.content_length();
+    let cancellation = reader.cancellation_token();
+    let cancel: StreamCancel = Arc::new(move || cancellation.cancel());
     if let Some(plan) = cache {
         spawn_cache_publish(reader.handle(), complete_rx, import, plan);
     }
@@ -331,6 +490,7 @@ async fn open_url(url: &str, cache: Option<CacheWritePlan>) -> anyhow::Result<Me
         reader: Box::new(reader),
         byte_len,
         cached: None,
+        cancel: Some(cancel),
     })
 }
 
@@ -353,6 +513,77 @@ fn spawn_cache_publish(
     });
 }
 
+fn decode(media: Media) -> Result<Decoded, DecodeFailure> {
+    let Media {
+        reader,
+        byte_len,
+        cached,
+        cancel,
+    } = media;
+    let mut builder = Decoder::builder().with_data(reader).with_seekable(true);
+    if let Some(byte_len) = byte_len {
+        builder = builder.with_byte_len(byte_len);
+    }
+    let source = builder.build().map_err(|error| DecodeFailure {
+        message: error.to_string(),
+        cached,
+    })?;
+    let total = rodio::Source::total_duration(&source);
+    Ok(Decoded {
+        source,
+        total,
+        cancel,
+    })
+}
+
+fn start_decoded(
+    engine: &mut Option<Engine>,
+    volume: f32,
+    generation: u64,
+    events: &mpsc::UnboundedSender<PlayerEvent>,
+    decoded: Decoded,
+    engine_factory: EngineFactory,
+) -> Option<StartedPlayback> {
+    let engine = match engine {
+        Some(engine) => engine,
+        None => match engine_factory(volume) {
+            Ok(opened) => engine.insert(opened),
+            Err(error) => {
+                let _ = events.send(PlayerEvent::Failed {
+                    generation,
+                    message: format!("audio device unavailable: {error}"),
+                    cached: None,
+                });
+                return None;
+            }
+        },
+    };
+
+    engine.player.stop();
+    engine.player.append(decoded.source);
+    engine.player.play();
+    let _ = events.send(PlayerEvent::Started {
+        generation,
+        total: decoded.total,
+    });
+    Some(StartedPlayback {
+        cancel: decoded.cancel,
+    })
+}
+
+fn report_failure(
+    events: &mpsc::UnboundedSender<PlayerEvent>,
+    generation: u64,
+    failure: DecodeFailure,
+) {
+    let _ = events.send(PlayerEvent::Failed {
+        generation,
+        message: failure.message,
+        cached: failure.cached,
+    });
+}
+
+#[cfg(test)]
 fn start<F>(
     engine: &mut Option<Engine>,
     volume: f32,
@@ -366,55 +597,25 @@ where
     let media = match open() {
         Ok(media) => media,
         Err(error) => {
-            let _ = events.send(PlayerEvent::Failed {
+            report_failure(
+                events,
                 generation,
-                message: error.to_string(),
-                cached: None,
-            });
-            return false;
-        }
-    };
-    let cached = media.cached;
-    let mut builder = Decoder::builder()
-        .with_data(media.reader)
-        .with_seekable(true);
-    if let Some(byte_len) = media.byte_len {
-        builder = builder.with_byte_len(byte_len);
-    }
-    let decoder = builder.build().map_err(anyhow::Error::from);
-    let decoder = match decoder {
-        Ok(decoder) => decoder,
-        Err(error) => {
-            let _ = events.send(PlayerEvent::Failed {
-                generation,
-                message: error.to_string(),
-                cached,
-            });
-            return false;
-        }
-    };
-
-    let engine = match engine {
-        Some(engine) => engine,
-        None => match open_engine(volume) {
-            Ok(opened) => engine.insert(opened),
-            Err(error) => {
-                let _ = events.send(PlayerEvent::Failed {
-                    generation,
-                    message: format!("audio device unavailable: {error}"),
+                DecodeFailure {
+                    message: error.to_string(),
                     cached: None,
-                });
-                return false;
-            }
-        },
+                },
+            );
+            return false;
+        }
     };
-
-    engine.player.stop();
-    let total = rodio::Source::total_duration(&decoder);
-    engine.player.append(decoder);
-    engine.player.play();
-    let _ = events.send(PlayerEvent::Started { generation, total });
-    true
+    let decoded = match decode(media) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            report_failure(events, generation, error);
+            return false;
+        }
+    };
+    start_decoded(engine, volume, generation, events, decoded, open_engine).is_some()
 }
 
 fn open_engine(volume: f32) -> anyhow::Result<Engine> {
@@ -423,7 +624,17 @@ fn open_engine(volume: f32) -> anyhow::Result<Engine> {
     let player = Player::connect_new(device.mixer());
     player.set_volume(volume);
     Ok(Engine {
-        _device: device,
+        _output: EngineOutput::Device { _sink: device },
+        player,
+    })
+}
+
+#[cfg(test)]
+fn open_silent_engine(volume: f32) -> anyhow::Result<Engine> {
+    let (player, source) = Player::new();
+    player.set_volume(volume);
+    Ok(Engine {
+        _output: EngineOutput::Silent { _source: source },
         player,
     })
 }
@@ -442,9 +653,13 @@ mod tests {
         AudioCodec, AudioQuality, CacheKey, CacheWriteRequest, TrackCache,
     };
 
-    use super::{open_cached, open_url, spawn, start, CacheWritePlan, PlayerCommand, PlayerEvent};
+    use super::{
+        open_cached, open_silent_engine, open_url, spawn, spawn_with_engine, start, CacheWritePlan,
+        PlayerCommand, PlayerEvent,
+    };
 
     const AUDIO_BODY: &[u8] = b"complete cache body";
+    const WAV_BODY: &[u8] = b"RIFF,\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0@\x1f\0\0\x80>\0\0\x02\0\x10\0data\x08\0\0\0\0\0\0\0\0\0\0\0";
 
     fn cache_request(track_id: i64, expected_bytes: u64) -> CacheWriteRequest {
         CacheWriteRequest::new(
@@ -569,6 +784,17 @@ mod tests {
             let (closed_tx, closed) = std_mpsc::channel();
             let thread = thread::spawn(move || {
                 let (mut socket, _) = listener.accept().expect("accept player request");
+                read_request(&mut socket);
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    WAV_BODY.len()
+                )
+                .expect("write stalled response headers");
+                socket
+                    .write_all(&WAV_BODY[..16])
+                    .expect("write stalled response prefix");
+                socket.flush().expect("flush stalled response prefix");
                 socket
                     .set_read_timeout(Some(Duration::from_millis(20)))
                     .expect("set socket timeout");
@@ -610,9 +836,9 @@ mod tests {
                 .expect("stalled server should report the connection");
         }
 
-        fn wait_until_closed(&self) {
+        fn wait_until_closed(&self, timeout: Duration) {
             self.closed
-                .recv_timeout(Duration::from_millis(500))
+                .recv_timeout(timeout)
                 .expect("cancelling the open should close its HTTP connection");
         }
 
@@ -622,7 +848,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn stop_cancels_a_stalled_initial_connection() {
+    async fn stop_cancels_a_stalled_decoder() {
         let mut server = StalledServer::spawn();
         let (player, mut events) = spawn(tokio::runtime::Handle::current());
         player.send(PlayerCommand::PlayUrl {
@@ -631,9 +857,10 @@ mod tests {
             cache: None,
         });
         server.wait_until_requested().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         player.send(PlayerCommand::Stop);
-        server.wait_until_closed();
+        server.wait_until_closed(Duration::from_millis(500));
         assert!(
             tokio::time::timeout(Duration::from_millis(100), events.recv())
                 .await
@@ -646,36 +873,53 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_new_play_replaces_a_stalled_open_without_starting_it() {
-        let mut server = StalledServer::spawn();
-        let (player, mut events) = spawn(tokio::runtime::Handle::current());
+    async fn a_new_play_replaces_a_stalled_decoder_without_starting_it() {
+        let mut stalled = StalledServer::spawn();
+        let replacement = HttpServer::complete(WAV_BODY);
+        let (player, mut events) =
+            spawn_with_engine(tokio::runtime::Handle::current(), open_silent_engine);
         player.send(PlayerCommand::PlayUrl {
             generation: 1,
-            url: server.url.clone(),
+            url: stalled.url.clone(),
             cache: None,
         });
-        server.wait_until_requested().await;
+        stalled.wait_until_requested().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
         player.send(PlayerCommand::PlayUrl {
             generation: 2,
-            url: "not a url".into(),
+            url: replacement.url.clone(),
             cache: None,
         });
-        let event = tokio::time::timeout(Duration::from_millis(500), events.recv())
-            .await
-            .expect("replacement should complete without waiting for the first connection")
-            .expect("player event channel should remain open");
-        assert!(matches!(event, PlayerEvent::Failed { generation: 2, .. }));
-        server.wait_until_closed();
-        assert!(
-            tokio::time::timeout(Duration::from_millis(100), events.recv())
-                .await
-                .is_err(),
-            "the replaced track must not emit a playback event"
-        );
+        let event = tokio::time::timeout(
+            deadline.saturating_duration_since(std::time::Instant::now()),
+            events.recv(),
+        )
+        .await
+        .expect("replacement should start without waiting for the first connection")
+        .expect("player event channel should remain open");
+        assert!(matches!(event, PlayerEvent::Started { generation: 2, .. }));
+        stalled.wait_until_closed(deadline.saturating_duration_since(std::time::Instant::now()));
+        while let Ok(Some(event)) =
+            tokio::time::timeout(Duration::from_millis(100), events.recv()).await
+        {
+            assert!(
+                !matches!(
+                    event,
+                    PlayerEvent::Started { generation: 1, .. }
+                        | PlayerEvent::Position { generation: 1, .. }
+                        | PlayerEvent::Paused { generation: 1, .. }
+                        | PlayerEvent::Ended { generation: 1 }
+                        | PlayerEvent::Failed { generation: 1, .. }
+                ),
+                "the replaced track must not emit a playback event"
+            );
+        }
 
         drop(player);
-        server.join();
+        stalled.join();
+        replacement.join();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
