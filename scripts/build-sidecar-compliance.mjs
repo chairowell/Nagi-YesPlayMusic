@@ -761,6 +761,14 @@ off for that local test copy.`
       : `No publisher private signing key is required to build or run a locally
 modified ${displayName}. Published release checksums and signatures do not cover
 the user-built replacement.`;
+  const linuxBuildPrerequisites =
+    targetSpec.package === TUI_PACKAGE
+      ? `On Debian/Ubuntu Linux, install the native build dependencies first:
+
+\`sudo apt-get install pkg-config libasound2-dev\`
+
+`
+      : '';
   return `# YesPlayMusic ${displayName} source and relinking kit
 
 This directory accompanies YesPlayMusic ${packageVersion}. It contains the
@@ -800,7 +808,7 @@ selects Rust ${rustVersion}, derived from the ${displayName} manifest's minimum
 Rust version. The rebuild scripts pass \`--offline --locked\`; no dependency
 source is downloaded during the build.
 
-- macOS/Linux: \`./rebuild.sh\`
+${linuxBuildPrerequisites}- macOS/Linux: \`./rebuild.sh\`
 - Windows PowerShell: \`.\\rebuild.ps1\`
 - Cross target: pass Cargo flags, for example
   \`./rebuild.sh --target x86_64-unknown-linux-gnu\`.

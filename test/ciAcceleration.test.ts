@@ -265,6 +265,11 @@ test('纯文档改动跳打包，但门禁照跑', () => {
     rust: false,
     tuiOnly: false,
   });
+  expect(classifyChangedFiles(['images/screenshots/player.png'])).toEqual({
+    docsOnly: true,
+    rust: false,
+    tuiOnly: false,
+  });
   expect(workflow).toContain('docs-gates');
   const docsJob = jobBody('  docs-gates:', '  build-tauri-arm64:');
   expect(docsJob).toContain("if: needs.changes.outputs.docs-only == 'true'");
@@ -275,6 +280,14 @@ test('纯文档改动跳打包，但门禁照跑', () => {
       "if: needs.changes.outputs.docs-only != 'true'"
     );
   }
+});
+
+test('嵌入 ypm 的 logo 改动触发 TUI 构建', () => {
+  expect(classifyChangedFiles(['images/logo.png'])).toEqual({
+    docsOnly: false,
+    rust: false,
+    tuiOnly: true,
+  });
 });
 
 test('TUI、文档与桌面 Rust 路径按三分类矩阵分流', () => {

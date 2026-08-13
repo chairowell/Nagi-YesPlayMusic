@@ -584,6 +584,12 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
     expect(
       await readFile(path.join(completeSourceDirectory, 'rebuild.sh'), 'utf8')
     ).toContain('--offline --locked');
+    expect(
+      await readFile(
+        path.join(completeSourceDirectory, 'README-RELINKING.md'),
+        'utf8'
+      )
+    ).not.toContain('libasound2-dev');
     const powershellVerifier = await readFile(
       path.join(completeSourceDirectory, 'verify-sources.ps1'),
       'utf8'
@@ -740,12 +746,14 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
     );
     expect(rebuildShell).toContain('src-tauri/tui/Cargo.toml');
     expect(rebuildShell).toContain('--package yesplaymusic-tui');
-    expect(
-      await readFile(
-        path.join(completeSourceDirectory, 'README-RELINKING.md'),
-        'utf8'
-      )
-    ).toContain('ypm');
+    const relinkingReadme = await readFile(
+      path.join(completeSourceDirectory, 'README-RELINKING.md'),
+      'utf8'
+    );
+    expect(relinkingReadme).toContain('ypm');
+    expect(relinkingReadme).toContain(
+      'sudo apt-get install pkg-config libasound2-dev'
+    );
     expect(
       await readFile(path.join(outputDirectory, 'SOURCE-OFFER.md'), 'utf8')
     ).toContain('YesPlayMusic_0.7.0_ypm-source.tar.gz');

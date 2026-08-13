@@ -7,6 +7,7 @@
 import { spawnSync } from 'node:child_process';
 
 const TUI_PATTERN = /^src-tauri\/tui(?:\/|$)/;
+const TUI_ASSET_PATTERN = /^images\/logo\.png$/;
 
 // Touching these outside the standalone TUI can change desktop Rust behaviour.
 const RUST_PATTERNS = [
@@ -48,17 +49,23 @@ function matches(file, patterns) {
   return patterns.some(pattern => pattern.test(file));
 }
 
+function isTuiInput(file) {
+  return TUI_PATTERN.test(file) || TUI_ASSET_PATTERN.test(file);
+}
+
 export function classifyChangedFiles(files) {
   if (files.length === 0) {
     return { docsOnly: false, rust: true, tuiOnly: false };
   }
-  const docsOnly = files.every(file => matches(file, DOCS_PATTERNS));
+  const docsOnly = files.every(
+    file => matches(file, DOCS_PATTERNS) && !TUI_ASSET_PATTERN.test(file)
+  );
   const tuiOnly =
-    files.some(file => TUI_PATTERN.test(file)) &&
-    files.every(file => TUI_PATTERN.test(file) || matches(file, DOCS_PATTERNS));
+    files.some(isTuiInput) &&
+    files.every(file => isTuiInput(file) || matches(file, DOCS_PATTERNS));
   const rust = files.some(
     file =>
-      !TUI_PATTERN.test(file) &&
+      !isTuiInput(file) &&
       (matches(file, RUST_PATTERNS) || !matches(file, KNOWN_NON_RUST_PATTERNS))
   );
   return { docsOnly, rust, tuiOnly };
