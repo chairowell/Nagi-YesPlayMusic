@@ -16,7 +16,7 @@ fn effects(directory: &TempDir) -> Effects {
         player,
         ncm: Arc::new(Ncm::new(
             directory.path().join("session.json"),
-            "exhigh".into(),
+            yesplaymusic_core::cache::AudioQuality::High320,
         )),
         store: Arc::new(crate::store::LibraryStore::new(
             directory.path().join("library"),

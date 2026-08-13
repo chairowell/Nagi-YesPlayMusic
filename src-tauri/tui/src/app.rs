@@ -713,7 +713,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
 
     let fx = Effects {
         player,
-        ncm: Arc::new(Ncm::new(config::session_path(), config.quality.clone())),
+        ncm: Arc::new(Ncm::new(config::session_path(), config.quality)),
         store: Arc::new(crate::store::LibraryStore::new(
             config::cache_dir().join("library"),
         )),

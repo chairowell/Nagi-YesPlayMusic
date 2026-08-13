@@ -10,18 +10,37 @@ use ncm_api_rs::api::Query;
 use ncm_api_rs::ApiClient;
 use serde_json::Value;
 use yesplaymusic_core::auth::{Session, SessionStore};
+use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 
 use crate::i18n::{self, Key};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "consumed by the cache playback integration")
+)]
 pub struct ResolvedTrack {
     pub id: i64,
     pub title: String,
     pub artist: String,
     pub url: String,
     pub kind: String,
+    pub cache_key: CacheKey,
+    pub codec: AudioCodec,
+    pub actual_bitrate: u32,
+    pub expected_bytes: Option<u64>,
+    pub expected_md5: Option<[u8; 16]>,
     pub duration_ms: i64,
     pub pic_url: Option<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PlaybackSource {
+    url: String,
+    codec: AudioCodec,
+    actual_bitrate: u32,
+    expected_bytes: Option<u64>,
+    expected_md5: Option<[u8; 16]>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,11 +74,11 @@ pub struct Ncm {
     client: ApiClient,
     store: SessionStore,
     session: RwLock<Option<Session>>,
-    quality: String,
+    quality: AudioQuality,
 }
 
 impl Ncm {
-    pub fn new(session_path: PathBuf, quality: String) -> Self {
+    pub fn new(session_path: PathBuf, quality: AudioQuality) -> Self {
         let store = SessionStore::new(session_path);
         let session = RwLock::new(store.load());
         Self {
@@ -105,13 +124,8 @@ impl Ncm {
 
     /// NCM `br` parameter for the configured quality; the server
     /// downgrades automatically when VIP or licensing says no.
-    fn bitrate(&self) -> &'static str {
-        match self.quality.as_str() {
-            "128" => "128000",
-            "320" => "320000",
-            "lossless" | "hires" => "999000",
-            _ => "320000", // exhigh
-        }
+    fn bitrate(&self) -> u32 {
+        self.quality.bitrate()
     }
 
     // ── login ────────────────────────────────────────────────────────
@@ -279,23 +293,18 @@ impl Ncm {
 
     // ── playback resolution ──────────────────────────────────────────
 
-    pub async fn song_url(&self, id: i64) -> Result<(String, String)> {
+    async fn song_url(&self, id: i64) -> Result<PlaybackSource> {
+        let bitrate = self.bitrate().to_string();
         let query = self
             .query()
             .param("id", &id.to_string())
-            .param("br", self.bitrate());
+            .param("br", &bitrate);
         let response = self
             .client
             .song_url(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))?;
-        let data = &response.body["data"][0];
-        let url = data["url"]
-            .as_str()
-            .filter(|url| !url.is_empty())
-            .ok_or_else(|| anyhow!(i18n::t(Key::ApiPlaybackUrlUnavailable)))?;
-        let kind = data["type"].as_str().unwrap_or("mp3").to_lowercase();
-        Ok((url.to_owned(), kind))
+        parse_playback_source(&response.body["data"][0])
     }
 
     /// Raw LRC text pair (original, translation) for a song.
@@ -344,16 +353,8 @@ impl Ncm {
 
     /// Resolve a known song id straight to a playable track.
     pub async fn resolve_by_id(&self, row: &SongRow) -> Result<ResolvedTrack> {
-        let (url, kind) = self.song_url(row.id).await?;
-        Ok(ResolvedTrack {
-            id: row.id,
-            title: row.title.clone(),
-            artist: row.artist.clone(),
-            url,
-            kind,
-            duration_ms: row.duration_ms,
-            pic_url: row.pic_url.clone(),
-        })
+        let source = self.song_url(row.id).await?;
+        Ok(self.resolved_track(row.clone(), source))
     }
 
     /// Search by "title artist" and resolve the first *playable* match —
@@ -368,21 +369,79 @@ impl Ncm {
             let Some(id) = song["id"].as_i64() else {
                 continue;
             };
-            let Ok((url, kind)) = self.song_url(id).await else {
+            let Ok(source) = self.song_url(id).await else {
                 continue;
             };
-            return Ok(ResolvedTrack {
+            let row = SongRow {
                 id,
                 title: song["name"].as_str().unwrap_or(title).to_owned(),
                 artist: song["ar"][0]["name"].as_str().unwrap_or(artist).to_owned(),
-                url,
-                kind,
                 duration_ms: song["dt"].as_i64().unwrap_or(0),
                 pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
-            });
+            };
+            return Ok(self.resolved_track(row, source));
         }
         Err(anyhow!(i18n::t_candidates_unavailable(&keywords)))
     }
+
+    fn resolved_track(&self, row: SongRow, source: PlaybackSource) -> ResolvedTrack {
+        ResolvedTrack {
+            id: row.id,
+            title: row.title,
+            artist: row.artist,
+            kind: source.codec.extension().to_owned(),
+            cache_key: CacheKey::new(row.id, self.quality),
+            codec: source.codec,
+            actual_bitrate: source.actual_bitrate,
+            expected_bytes: source.expected_bytes,
+            expected_md5: source.expected_md5,
+            url: source.url,
+            duration_ms: row.duration_ms,
+            pic_url: row.pic_url,
+        }
+    }
+}
+
+fn parse_playback_source(data: &Value) -> Result<PlaybackSource> {
+    let url = data["url"]
+        .as_str()
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| anyhow!(i18n::t(Key::ApiPlaybackUrlUnavailable)))?;
+    let codec = data["type"]
+        .as_str()
+        .ok_or_else(|| anyhow!("playback response is missing its audio codec"))?
+        .parse::<AudioCodec>()?;
+    let actual_bitrate = data["br"]
+        .as_u64()
+        .and_then(|bitrate| u32::try_from(bitrate).ok())
+        .ok_or_else(|| anyhow!("playback response is missing its actual bitrate"))?;
+    let expected_bytes = data["size"].as_u64().filter(|size| *size > 0);
+    let expected_md5 = parse_md5(data["md5"].as_str())?;
+
+    Ok(PlaybackSource {
+        url: url.to_owned(),
+        codec,
+        actual_bitrate,
+        expected_bytes,
+        expected_md5,
+    })
+}
+
+fn parse_md5(value: Option<&str>) -> Result<Option<[u8; 16]>> {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if value.len() != 32 || !value.is_ascii() {
+        return Err(anyhow!("playback response contains an invalid MD5"));
+    }
+
+    let mut digest = [0_u8; 16];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        let offset = index * 2;
+        *byte = u8::from_str_radix(&value[offset..offset + 2], 16)
+            .map_err(|_| anyhow!("playback response contains an invalid MD5"))?;
+    }
+    Ok(Some(digest))
 }
 
 fn parse_qr_status(body: &Value, cookies: &[String]) -> Result<QrStatus> {
@@ -474,22 +533,93 @@ mod tests {
 
     use super::*;
 
-    fn ncm(quality: &str) -> Ncm {
+    fn ncm(quality: AudioQuality) -> Ncm {
         let dir = tempfile::tempdir().unwrap();
-        Ncm::new(dir.path().join("session.json"), quality.into())
+        Ncm::new(dir.path().join("session.json"), quality)
     }
 
     #[test]
-    fn quality_maps_to_ncm_bitrates_with_exhigh_default() {
-        assert_eq!(ncm("128").bitrate(), "128000");
-        assert_eq!(ncm("exhigh").bitrate(), "320000");
-        assert_eq!(ncm("lossless").bitrate(), "999000");
-        assert_eq!(ncm("weird").bitrate(), "320000");
+    fn every_quality_maps_to_its_exact_ncm_bitrate() {
+        let cases = [
+            (AudioQuality::Low128, 128_000),
+            (AudioQuality::Medium192, 192_000),
+            (AudioQuality::High320, 320_000),
+            (AudioQuality::Lossless, 350_000),
+            (AudioQuality::HiRes, 999_000),
+        ];
+        for (quality, expected) in cases {
+            assert_eq!(ncm(quality).bitrate(), expected);
+        }
+    }
+
+    #[test]
+    fn playback_response_preserves_actual_cache_metadata() {
+        let source = parse_playback_source(&serde_json::json!({
+            "url": "https://example.test/audio.flac",
+            "type": "FLAC",
+            "br": 850_321,
+            "size": 12_345_678,
+            "md5": "00112233445566778899AABBCCDDEEFF"
+        }))
+        .unwrap();
+
+        assert_eq!(source.url, "https://example.test/audio.flac");
+        assert_eq!(source.codec, AudioCodec::Flac);
+        assert_eq!(source.actual_bitrate, 850_321);
+        assert_eq!(source.expected_bytes, Some(12_345_678));
+        assert_eq!(
+            source.expected_md5,
+            Some([
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ])
+        );
+    }
+
+    #[test]
+    fn resolved_track_keeps_requested_quality_separate_from_actual_audio() {
+        let ncm = ncm(AudioQuality::HiRes);
+        let track = ncm.resolved_track(
+            SongRow {
+                id: 42,
+                title: "Track".into(),
+                artist: "Artist".into(),
+                duration_ms: 180_000,
+                pic_url: None,
+            },
+            PlaybackSource {
+                url: "https://example.test/audio.mp3".into(),
+                codec: AudioCodec::Mp3,
+                actual_bitrate: 320_000,
+                expected_bytes: Some(7_654_321),
+                expected_md5: Some([0x11; 16]),
+            },
+        );
+
+        assert_eq!(track.cache_key, CacheKey::new(42, AudioQuality::HiRes));
+        assert_eq!(track.codec, AudioCodec::Mp3);
+        assert_eq!(track.kind, "mp3");
+        assert_eq!(track.actual_bitrate, 320_000);
+        assert_eq!(track.expected_bytes, Some(7_654_321));
+        assert_eq!(track.expected_md5, Some([0x11; 16]));
+    }
+
+    #[test]
+    fn playback_response_rejects_malformed_md5() {
+        let result = parse_playback_source(&serde_json::json!({
+            "url": "https://example.test/audio.mp3",
+            "type": "mp3",
+            "br": 320_000,
+            "size": 1_024,
+            "md5": "not-a-digest"
+        }));
+
+        assert!(result.is_err());
     }
 
     #[test]
     fn missing_session_means_logged_out_and_cookieless_queries() {
-        let ncm = ncm("exhigh");
+        let ncm = ncm(AudioQuality::High320);
         assert!(ncm.session_snapshot().is_none());
         assert!(ncm.query().cookie.is_none());
     }
@@ -504,7 +634,7 @@ mod tests {
 
     #[test]
     fn qr_success_returns_a_candidate_without_committing_it() {
-        let ncm = ncm("exhigh");
+        let ncm = ncm(AudioQuality::High320);
         let cookies = vec![
             "MUSIC_U=candidate-token; Path=/; HttpOnly".into(),
             "__csrf=candidate-csrf; Path=/".into(),

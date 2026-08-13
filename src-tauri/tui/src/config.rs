@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Deserializer};
+use yesplaymusic_core::cache::AudioQuality;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -18,8 +19,9 @@ pub struct Config {
     /// UI language: zh | en | ja
     #[serde(deserialize_with = "deserialize_language")]
     pub language: String,
-    /// NCM quality level: 128 | 320 | exhigh | lossless | hires
-    pub quality: String,
+    /// NCM quality level: 128 | 192 | 320/exhigh | lossless | hires
+    #[serde(deserialize_with = "deserialize_quality")]
+    pub quality: AudioQuality,
     /// Built-in theme name; later also a file in themes/.
     pub theme: String,
     /// Song cache cap in MiB.
@@ -47,7 +49,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             language: "zh".into(),
-            quality: "exhigh".into(),
+            quality: AudioQuality::High320,
             theme: "db16".into(),
             cache_limit_mib: 2048,
             enter_replaces_queue: true,
@@ -79,7 +81,7 @@ impl Config {
 const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都可省略（用默认值）。
 
 # language = "zh"            # zh | en | ja
-# quality = "exhigh"          # 128 | 320 | exhigh | lossless | hires
+# quality = "exhigh"          # 128 | 192 | 320/exhigh | lossless | hires
 # theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm | one-dark | transparent
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
@@ -99,6 +101,39 @@ where
         "zh" | "en" | "ja" => value,
         _ => "zh".into(),
     })
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum QualitySetting {
+    Name(String),
+    Number(u32),
+}
+
+fn deserialize_quality<'de, D>(deserializer: D) -> Result<AudioQuality, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    let setting = QualitySetting::deserialize(deserializer)?;
+    let quality = match setting {
+        QualitySetting::Name(name) => match name.as_str() {
+            "128" => Some(AudioQuality::Low128),
+            "192" => Some(AudioQuality::Medium192),
+            "320" | "exhigh" => Some(AudioQuality::High320),
+            "lossless" => Some(AudioQuality::Lossless),
+            "hires" => Some(AudioQuality::HiRes),
+            _ => None,
+        },
+        QualitySetting::Number(number) => match number {
+            128 => Some(AudioQuality::Low128),
+            192 => Some(AudioQuality::Medium192),
+            320 => Some(AudioQuality::High320),
+            _ => None,
+        },
+    };
+    quality.ok_or_else(|| D::Error::custom("unsupported audio quality"))
 }
 
 fn write_template(path: &std::path::Path) -> std::io::Result<()> {
@@ -141,12 +176,12 @@ mod tests {
     fn defaults_hold_when_config_is_missing_or_broken() {
         let config = Config::default();
         assert_eq!(config.language, "zh");
-        assert_eq!(config.quality, "exhigh");
+        assert_eq!(config.quality, AudioQuality::High320);
         assert_eq!(config.theme, "db16");
         assert_eq!(config.cover_mode, CoverMode::Pixel);
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
-        assert_eq!(parsed.quality, "lossless");
+        assert_eq!(parsed.quality, AudioQuality::Lossless);
         assert_eq!(parsed.theme, "db16");
 
         let parsed: Config = toml::from_str("language = \"ja\"").unwrap();
@@ -156,5 +191,26 @@ mod tests {
 
         let parsed: Config = toml::from_str("cover_mode = \"original\"").unwrap();
         assert_eq!(parsed.cover_mode, CoverMode::Original);
+    }
+
+    #[test]
+    fn every_supported_quality_maps_to_the_shared_wire_value() {
+        let cases = [
+            ("\"128\"", AudioQuality::Low128, 128_000),
+            ("\"192\"", AudioQuality::Medium192, 192_000),
+            ("\"320\"", AudioQuality::High320, 320_000),
+            ("\"exhigh\"", AudioQuality::High320, 320_000),
+            ("\"lossless\"", AudioQuality::Lossless, 350_000),
+            ("\"hires\"", AudioQuality::HiRes, 999_000),
+        ];
+
+        for (setting, expected, wire) in cases {
+            let parsed: Config = toml::from_str(&format!("quality = {setting}")).unwrap();
+            assert_eq!(parsed.quality, expected);
+            assert_eq!(parsed.quality.bitrate(), wire);
+        }
+
+        let numeric: Config = toml::from_str("quality = 192").unwrap();
+        assert_eq!(numeric.quality, AudioQuality::Medium192);
     }
 }
