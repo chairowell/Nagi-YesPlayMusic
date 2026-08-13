@@ -9,6 +9,7 @@ type Rgb = (u8, u8, u8);
 
 const BAYER_4X4: [[i16; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 const DITHER_RANGE: i16 = 14;
+const VISIBLE_ALPHA: u8 = 128;
 // Below this squared distance the undithered match is faithful enough;
 // dithering there would only speckle smooth gradients (the dirty-logo bug).
 const CLEAN_MATCH_SQ: i32 = 2800;
@@ -96,7 +97,13 @@ pub fn from_image_bytes(
         "pixel cover dimensions must be non-zero"
     );
 
-    let source = image::load_from_memory(bytes)?.to_rgb8();
+    let mut source = image::load_from_memory(bytes)?.to_rgba8();
+    for pixel in source.pixels_mut() {
+        let alpha = pixel.0[3];
+        pixel.0[0] = premultiply_channel(pixel.0[0], alpha);
+        pixel.0[1] = premultiply_channel(pixel.0[1], alpha);
+        pixel.0[2] = premultiply_channel(pixel.0[2], alpha);
+    }
     let target_width = u32::from(cell_width);
     let target_height = u32::from(cell_height) * 2;
     let detail_scale = detail_scale.clamp(0.5, 2.0);
@@ -111,10 +118,16 @@ pub fn from_image_bytes(
     let mut detail_pixels = vec![background; detail_width as usize * detail_height as usize];
     for y in 0..resized_height {
         for x in 0..resized_width {
-            let [red, green, blue] = resized.get_pixel(x, y).0;
+            let [red, green, blue, alpha] = resized.get_pixel(x, y).0;
             let target_x = x + offset_x;
             let target_y = y + offset_y;
             let index = target_y as usize * detail_width as usize + target_x as usize;
+            let Some((red, green, blue)) =
+                flatten_premultiplied((red, green, blue), alpha, background)
+            else {
+                detail_pixels[index] = background;
+                continue;
+            };
             let plain = nearest_color((red, green, blue), palette);
             let error = color_distance_sq((red, green, blue), plain);
             detail_pixels[index] = if error <= CLEAN_MATCH_SQ {
@@ -166,6 +179,40 @@ pub fn from_image_bytes(
     })
 }
 
+fn premultiply_channel(channel: u8, alpha: u8) -> u8 {
+    ((u32::from(channel) * u32::from(alpha) + 127) / 255) as u8
+}
+
+fn flatten_premultiplied(foreground: Rgb, alpha: u8, background: Color) -> Option<Rgb> {
+    if alpha == 0 {
+        return None;
+    }
+    if let Color::Rgb(red, green, blue) = background {
+        return Some((
+            composite_channel(foreground.0, red, alpha),
+            composite_channel(foreground.1, green, alpha),
+            composite_channel(foreground.2, blue, alpha),
+        ));
+    }
+    (alpha >= VISIBLE_ALPHA).then(|| {
+        (
+            unpremultiply_channel(foreground.0, alpha),
+            unpremultiply_channel(foreground.1, alpha),
+            unpremultiply_channel(foreground.2, alpha),
+        )
+    })
+}
+
+fn composite_channel(foreground: u8, background: u8, alpha: u8) -> u8 {
+    let alpha = u32::from(alpha);
+    ((u32::from(foreground) * 255 + u32::from(background) * (255 - alpha) + 127) / 255).min(255)
+        as u8
+}
+
+fn unpremultiply_channel(channel: u8, alpha: u8) -> u8 {
+    ((u32::from(channel) * 255 + u32::from(alpha) / 2) / u32::from(alpha)).min(255) as u8
+}
+
 fn sampled_color(
     pixels: &[Color],
     source_width: u32,
@@ -194,10 +241,35 @@ impl Widget for &PixelCover {
                 let Some(buffer_cell) = buf.cell_mut((destination_x + x, destination_y + y)) else {
                     continue;
                 };
-                buffer_cell
-                    .set_symbol("▀")
-                    .set_fg(cover_cell.upper)
-                    .set_bg(cover_cell.lower);
+                match (
+                    cover_cell.upper == Color::Reset,
+                    cover_cell.lower == Color::Reset,
+                ) {
+                    (true, true) => {
+                        buffer_cell
+                            .set_symbol(" ")
+                            .set_fg(Color::Reset)
+                            .set_bg(Color::Reset);
+                    }
+                    (false, true) => {
+                        buffer_cell
+                            .set_symbol("▀")
+                            .set_fg(cover_cell.upper)
+                            .set_bg(Color::Reset);
+                    }
+                    (true, false) => {
+                        buffer_cell
+                            .set_symbol("▄")
+                            .set_fg(cover_cell.lower)
+                            .set_bg(Color::Reset);
+                    }
+                    (false, false) => {
+                        buffer_cell
+                            .set_symbol("▀")
+                            .set_fg(cover_cell.upper)
+                            .set_bg(cover_cell.lower);
+                    }
+                }
             }
         }
     }
@@ -271,7 +343,9 @@ fn to_color((red, green, blue): Rgb) -> Color {
 mod tests {
     use std::io::Cursor;
 
-    use image::{DynamicImage, ImageFormat, Rgb as ImageRgb, RgbImage};
+    use image::{
+        DynamicImage, ImageFormat, Rgb as ImageRgb, RgbImage, Rgba as ImageRgba, RgbaImage,
+    };
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
@@ -353,6 +427,33 @@ mod tests {
     }
 
     #[test]
+    fn transparent_pixels_preserve_the_terminal_background() {
+        let red = (255, 0, 0);
+        let bytes = rgba_png_bytes(1, 2, &[(0, 0, 0, 0), (255, 0, 0, 255)]);
+
+        let cover = from_image_bytes(&bytes, &[BLACK, red], Color::Reset, 1, 1, 1.0).unwrap();
+
+        assert_eq!(
+            cover.cells,
+            vec![PixelCell {
+                upper: Color::Reset,
+                lower: Color::Rgb(255, 0, 0),
+            }]
+        );
+    }
+
+    #[test]
+    fn resizing_a_transparent_edge_keeps_its_visible_color() {
+        let red = (255, 0, 0);
+        let bytes = rgba_png_bytes(2, 1, &[(255, 0, 0, 255), (0, 0, 0, 0)]);
+
+        let cover =
+            from_image_bytes(&bytes, &[BLACK, (128, 0, 0), red], Color::Reset, 1, 1, 1.0).unwrap();
+
+        assert_eq!(cover.cells[0].upper, Color::Rgb(255, 0, 0));
+    }
+
+    #[test]
     fn detail_scale_never_changes_the_final_cell_footprint() {
         let bytes = png_bytes(8, 8, &[(128, 128, 128); 64]);
         let palette = [BLACK, WHITE];
@@ -396,6 +497,44 @@ mod tests {
     }
 
     #[test]
+    fn widget_preserves_transparent_half_cells() {
+        let red = Color::Rgb(255, 0, 0);
+        let cover = PixelCover {
+            width: 3,
+            height: 1,
+            cells: vec![
+                PixelCell {
+                    upper: Color::Reset,
+                    lower: Color::Reset,
+                },
+                PixelCell {
+                    upper: red,
+                    lower: Color::Reset,
+                },
+                PixelCell {
+                    upper: Color::Reset,
+                    lower: red,
+                },
+            ],
+        };
+        let mut buffer = Buffer::with_lines(["..."]);
+
+        (&cover).render(Rect::new(0, 0, 3, 1), &mut buffer);
+
+        let empty = buffer.cell((0, 0)).unwrap();
+        assert_eq!(empty.symbol(), " ");
+        assert_eq!((empty.fg, empty.bg), (Color::Reset, Color::Reset));
+
+        let upper = buffer.cell((1, 0)).unwrap();
+        assert_eq!(upper.symbol(), "▀");
+        assert_eq!((upper.fg, upper.bg), (red, Color::Reset));
+
+        let lower = buffer.cell((2, 0)).unwrap();
+        assert_eq!(lower.symbol(), "▄");
+        assert_eq!((lower.fg, lower.bg), (red, Color::Reset));
+    }
+
+    #[test]
     fn widget_clips_when_the_area_is_smaller_than_the_cover() {
         let cover = PixelCover {
             width: 2,
@@ -428,6 +567,18 @@ mod tests {
         });
         let mut cursor = Cursor::new(Vec::new());
         DynamicImage::ImageRgb8(image)
+            .write_to(&mut cursor, ImageFormat::Png)
+            .unwrap();
+        cursor.into_inner()
+    }
+
+    fn rgba_png_bytes(width: u32, height: u32, pixels: &[(u8, u8, u8, u8)]) -> Vec<u8> {
+        let image = RgbaImage::from_fn(width, height, |x, y| {
+            let (red, green, blue, alpha) = pixels[(y * width + x) as usize];
+            ImageRgba([red, green, blue, alpha])
+        });
+        let mut cursor = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(image)
             .write_to(&mut cursor, ImageFormat::Png)
             .unwrap();
         cursor.into_inner()
