@@ -1,7 +1,5 @@
 //! Every input becomes an Action; the reducer is the only place state changes.
 
-use std::time::Duration;
-
 use yesplaymusic_core::auth::Session;
 use yesplaymusic_core::cache::CacheLease;
 
@@ -47,18 +45,25 @@ pub enum Action {
     Quit,
     SwitchView(View),
     Back,
+    Escape,
     ToggleZen,
     TogglePlay,
     NextTrack,
     PrevTrack,
     SeekBy(i64),
     VolumeBy(f32),
+    ToggleMute,
     MoveSelection(i32),
+    MovePage(i32),
     Activate,
+    AddSelectedToQueue,
     SelectIndex(usize),
     /// vim `g` prefix: two in a row jump to the list top.
     GKey,
-    CycleMode,
+    ToggleShuffle,
+    CycleRepeat,
+    StartFilter,
+    ToggleLibraryFocus,
     ToggleHelp,
     ToggleLike,
     SetVolumeTo(f32),
@@ -67,6 +72,7 @@ pub enum Action {
     AdjustSetting(i32),
     SaveSettings,
     CancelSettings,
+    JumpTop,
     JumpBottom,
     ConfirmYes,
     Mouse(crossterm::event::MouseEvent),
@@ -196,5 +202,3 @@ pub enum Action {
         lines: Vec<crate::lyrics::LyricLine>,
     },
 }
-
-pub const SEEK_STEP: Duration = Duration::from_secs(5);

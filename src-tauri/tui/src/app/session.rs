@@ -180,6 +180,7 @@ impl AppState {
         }
         self.session.login_qr = None;
         self.selected = 0;
+        self.filter.clear();
         self.sidebar_selected = 0;
         self.library_source = Source::Liked;
         self.library_synced = false;
@@ -211,6 +212,7 @@ impl AppState {
     }
 
     pub(super) fn open_source(&mut self, fx: &Effects, index: usize) {
+        self.clear_filter();
         let source = match index {
             1 => Source::Daily,
             2 => Source::Fm,

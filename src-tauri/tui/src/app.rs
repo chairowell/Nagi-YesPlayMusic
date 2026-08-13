@@ -1,6 +1,7 @@
 //! Single state source: input becomes Action, update() is the only writer,
 //! ui::draw() only reads.
 
+mod filter;
 mod reducer;
 mod search;
 mod session;
@@ -17,6 +18,7 @@ use ratatui::style::Color;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::thread::{ResizeRequest, ResizeResponse, ThreadProtocol};
 use ratatui_image::StatefulImage;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use yesplaymusic_core::cache::{
     CacheKey, CacheLease, CacheMetadata, CacheWriteRequest, TrackCache,
@@ -32,6 +34,7 @@ use crate::player::{self, PlayerCommand, PlayerEvent, PlayerHandle};
 use crate::theme::Theme;
 use crate::ui;
 
+use self::filter::ListFilter;
 use self::search::SearchState;
 use self::session::SessionState;
 
@@ -121,28 +124,29 @@ fn initialize_audio_cache(config: &Config) -> Option<std::path::PathBuf> {
     Some(root)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PlayMode {
-    Sequential,
-    Shuffle,
-    RepeatOne,
+    Off,
+    List,
+    One,
 }
 
 impl PlayMode {
     fn next(self) -> Self {
         match self {
-            PlayMode::Sequential => PlayMode::Shuffle,
-            PlayMode::Shuffle => PlayMode::RepeatOne,
-            PlayMode::RepeatOne => PlayMode::Sequential,
+            PlayMode::Off => PlayMode::List,
+            PlayMode::List => PlayMode::One,
+            PlayMode::One => PlayMode::Off,
         }
     }
 
     /// Progress-row glyphs (the artifact mockup style), not words.
     pub fn icon(self) -> &'static str {
         match self {
-            PlayMode::Sequential => "»",
-            PlayMode::Shuffle => "⇆",
-            PlayMode::RepeatOne => "↺¹",
+            PlayMode::Off => "↺×",
+            PlayMode::List => "↺",
+            PlayMode::One => "↺¹",
         }
     }
 }
@@ -182,6 +186,10 @@ pub struct AppState {
     pub queue_pos: Option<usize>,
     queue_source: Source,
     pub play_mode: PlayMode,
+    pub shuffle: bool,
+    shuffle_order: Vec<usize>,
+    shuffle_cursor: usize,
+    pub(crate) filter: ListFilter,
     pub liked: std::collections::HashSet<i64>,
     like_mutations: std::collections::HashMap<i64, u64>,
     like_in_flight: std::collections::HashMap<i64, u64>,
@@ -219,6 +227,9 @@ pub struct AppState {
     pub duration: Option<Duration>,
     pub paused: bool,
     pub volume: f32,
+    volume_before_mute: Option<f32>,
+    resume_on_play: Option<Duration>,
+    seek_after_start: Option<Duration>,
     pub status: Option<String>,
     pub generation: u64,
     style_revision: u64,
@@ -265,7 +276,11 @@ impl AppState {
             queue: Vec::new(),
             queue_pos: None,
             queue_source: Source::Liked,
-            play_mode: PlayMode::Sequential,
+            play_mode: PlayMode::Off,
+            shuffle: false,
+            shuffle_order: Vec::new(),
+            shuffle_cursor: 0,
+            filter: ListFilter::default(),
             liked: std::collections::HashSet::new(),
             like_mutations: std::collections::HashMap::new(),
             like_in_flight: std::collections::HashMap::new(),
@@ -299,6 +314,9 @@ impl AppState {
             duration: None,
             paused: false,
             volume: 1.0,
+            volume_before_mute: None,
+            resume_on_play: None,
+            seek_after_start: None,
             status: None,
             generation: 0,
             style_revision: 0,
@@ -330,6 +348,152 @@ impl AppState {
 
     fn sidebar_visible(&self) -> bool {
         self.terminal_size.0 >= ui::library::COLLAPSE_BELOW
+    }
+
+    pub(crate) fn visible_rows<'a>(&self, rows: &'a [SongRow]) -> Vec<(usize, &'a SongRow)> {
+        rows.iter()
+            .enumerate()
+            .filter(|(_, row)| self.filter.matches(row))
+            .collect()
+    }
+
+    fn visible_len(&self) -> usize {
+        match self.view {
+            View::Library => self.visible_rows(&self.library).len(),
+            View::Queue => self.visible_rows(&self.queue).len(),
+            View::Search => self.visible_rows(&self.search.results).len(),
+            _ => 0,
+        }
+    }
+
+    fn visible_row(&self, index: usize) -> Option<(usize, SongRow)> {
+        let rows = match self.view {
+            View::Library => &self.library,
+            View::Queue => &self.queue,
+            View::Search => &self.search.results,
+            _ => return None,
+        };
+        self.visible_rows(rows)
+            .get(index)
+            .map(|(underlying, row)| (*underlying, (*row).clone()))
+    }
+
+    fn visible_rows_owned(&self) -> Vec<SongRow> {
+        let rows = match self.view {
+            View::Library => &self.library,
+            View::Queue => &self.queue,
+            View::Search => &self.search.results,
+            _ => return Vec::new(),
+        };
+        self.visible_rows(rows)
+            .into_iter()
+            .map(|(_, row)| row.clone())
+            .collect()
+    }
+
+    fn list_page_size(&self) -> usize {
+        let body = self.terminal_size.1.saturating_sub(2) as usize;
+        match self.view {
+            View::Library => body.saturating_sub(1).max(1),
+            View::Search => body.saturating_sub(2).max(1),
+            View::Queue => body.max(1),
+            _ => 1,
+        }
+    }
+
+    fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.selected = 0;
+    }
+
+    fn reset_shuffle_order(&mut self) {
+        self.shuffle_order.clear();
+        self.shuffle_cursor = 0;
+        if self.shuffle {
+            if let Some(current) = self.queue_pos.filter(|index| *index < self.queue.len()) {
+                self.shuffle_order = shuffled_order(self.queue.len(), current);
+            }
+        }
+    }
+
+    fn ensure_shuffle_order(&mut self) {
+        let current = self.queue_pos;
+        let valid = current.is_some_and(|current| {
+            self.shuffle_order.len() == self.queue.len()
+                && self.shuffle_order.get(self.shuffle_cursor) == Some(&current)
+        });
+        if !valid {
+            self.reset_shuffle_order();
+        }
+    }
+
+    fn playback_snapshot(&self) -> crate::store::StoredPlayback {
+        crate::store::StoredPlayback {
+            queue: self
+                .queue
+                .iter()
+                .map(crate::store::StoredSong::from)
+                .collect(),
+            current: self.active_row.as_ref().map(crate::store::StoredSong::from),
+            queue_pos: self.queue_pos,
+            position_ms: self.position.as_millis().min(u128::from(u64::MAX)) as u64,
+            volume: self.volume,
+            volume_before_mute: self.volume_before_mute,
+            play_mode: self.play_mode,
+            shuffle: self.shuffle,
+            queue_source: self.queue_source,
+        }
+    }
+
+    fn restore_playback(&mut self, playback: crate::store::StoredPlayback) {
+        self.queue = playback
+            .queue
+            .into_iter()
+            .map(crate::store::StoredSong::into_song_row)
+            .collect();
+        self.queue_pos = playback.queue_pos.filter(|index| *index < self.queue.len());
+        self.position = Duration::from_millis(playback.position_ms);
+        self.volume = playback.volume.clamp(0.0, 1.5);
+        self.volume_before_mute = playback.volume_before_mute;
+        self.play_mode = playback.play_mode;
+        self.shuffle = playback.shuffle;
+        self.queue_source = playback.queue_source;
+        self.paused = true;
+        self.status = None;
+        self.active_row = playback
+            .current
+            .map(crate::store::StoredSong::into_song_row);
+        if let Some(row) = &self.active_row {
+            self.current_track_id = (row.id > 0).then_some(row.id);
+            self.duration =
+                (row.duration_ms > 0).then(|| Duration::from_millis(row.duration_ms as u64));
+            self.now = Some(NowPlaying {
+                title: row.title.clone(),
+                artist: row.artist.clone(),
+                album: String::new(),
+            });
+            self.resume_on_play = Some(self.position);
+        } else {
+            self.current_track_id = None;
+            self.duration = None;
+            self.now = None;
+            self.resume_on_play = None;
+        }
+        self.reset_shuffle_order();
+    }
+
+    fn toggle_play(&mut self, fx: &Effects) {
+        let Some(position) = self.resume_on_play else {
+            fx.player.send(PlayerCommand::TogglePause);
+            return;
+        };
+        let Some(row) = self.active_row.clone() else {
+            return;
+        };
+        self.play_row(fx, row);
+        self.position = position;
+        self.resume_on_play = Some(position);
+        self.seek_after_start = Some(position);
     }
 
     fn desired_idle_cells(&self) -> (u16, u16) {
@@ -453,16 +617,21 @@ impl AppState {
         }
     }
 
-    /// Resolve the sequential next queue item ahead of time (shuffle is
-    /// unpredictable, so it opts out).
+    /// Resolve the sequential next queue item ahead of time.
     fn prefetch_next(&mut self, fx: &Effects) {
-        if self.play_mode == PlayMode::Shuffle {
+        if self.shuffle {
             return;
         }
         let Some(position) = self.queue_pos else {
             return;
         };
-        let next = position + 1;
+        let next = if position + 1 < self.queue.len() {
+            position + 1
+        } else if self.play_mode == PlayMode::List && self.queue_source != Source::Fm {
+            0
+        } else {
+            return;
+        };
         if self.prefetched.as_ref().is_some_and(|(i, _)| *i == next) {
             return;
         }
@@ -476,9 +645,11 @@ impl AppState {
     /// Reset the now-playing surface and kick off resolution for a row.
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
         fx.player.send(PlayerCommand::Stop);
-        self.current_track_id = None;
+        self.current_track_id = (row.id > 0).then_some(row.id);
         self.active_row = Some(row.clone());
         self.paused = false;
+        self.resume_on_play = None;
+        self.seek_after_start = None;
         self.clear_cover();
         self.ensure_placeholder();
         self.generation += 1;
@@ -529,29 +700,57 @@ impl AppState {
         if self.queue.is_empty() {
             return;
         }
-        if auto && self.play_mode == PlayMode::RepeatOne {
+        if auto && self.play_mode == PlayMode::One {
             if let Some(row) = self.queue.get(position).cloned() {
                 self.play_row(fx, row);
             }
             return;
         }
-        let next = if self.play_mode == PlayMode::Shuffle && self.queue.len() > 1 {
-            random_index(self.queue.len(), position) as i32
-        } else {
-            position as i32 + delta
-        };
-        if next < 0 {
-            return;
-        }
-        match self.queue.get(next as usize).cloned() {
-            Some(row) => {
-                self.queue_pos = Some(next as usize);
-                self.play_row(fx, row);
+        let next = if self.shuffle {
+            self.ensure_shuffle_order();
+            if delta >= 0 {
+                if self.shuffle_cursor + 1 < self.shuffle_order.len() {
+                    self.shuffle_cursor += 1;
+                    self.shuffle_order.get(self.shuffle_cursor).copied()
+                } else if self.queue_source == Source::Fm {
+                    self.pending_fm_next = true;
+                    self.fetch_fm_more(fx);
+                    return;
+                } else if self.play_mode == PlayMode::List {
+                    self.shuffle_order = shuffled_order(self.queue.len(), position);
+                    self.shuffle_cursor = usize::from(self.shuffle_order.len() > 1);
+                    self.shuffle_order.get(self.shuffle_cursor).copied()
+                } else {
+                    None
+                }
+            } else if self.shuffle_cursor > 0 {
+                self.shuffle_cursor -= 1;
+                self.shuffle_order.get(self.shuffle_cursor).copied()
+            } else if self.play_mode == PlayMode::List {
+                self.shuffle_order = shuffled_order(self.queue.len(), position);
+                self.shuffle_cursor = self.shuffle_order.len().saturating_sub(1);
+                self.shuffle_order.get(self.shuffle_cursor).copied()
+            } else {
+                None
             }
-            None if self.queue_source == Source::Fm && delta > 0 => {
-                // FM is an endless stream: pull the next batch, then play.
+        } else {
+            let candidate = position as i32 + delta;
+            if candidate >= 0 && (candidate as usize) < self.queue.len() {
+                Some(candidate as usize)
+            } else if self.queue_source == Source::Fm && delta > 0 {
                 self.pending_fm_next = true;
                 self.fetch_fm_more(fx);
+                return;
+            } else if self.play_mode == PlayMode::List {
+                Some(if delta >= 0 { 0 } else { self.queue.len() - 1 })
+            } else {
+                None
+            }
+        };
+        match next.and_then(|next| self.queue.get(next).cloned().map(|row| (next, row))) {
+            Some((next, row)) => {
+                self.queue_pos = Some(next);
+                self.play_row(fx, row);
             }
             None => self.status = Some(i18n::t(Key::QueueFinished).into()),
         }
@@ -561,7 +760,14 @@ impl AppState {
         match event {
             PlayerEvent::Started { generation, total } => {
                 if generation == self.generation {
-                    self.position = Duration::ZERO;
+                    if let Some(position) = self.seek_after_start.take() {
+                        self.position = position;
+                        fx.player.send(PlayerCommand::SeekTo(position));
+                        self.resume_on_play = None;
+                    } else {
+                        self.position = Duration::ZERO;
+                    }
+                    fx.player.send(PlayerCommand::Play);
                     self.duration = total;
                     self.paused = false;
                 }
@@ -760,17 +966,20 @@ fn spawn_prefetch(fx: &Effects, index: usize, row: SongRow) {
     });
 }
 
-/// Cheap non-repeating pick for shuffle; nanos beat rand-crate weight here.
-fn random_index(len: usize, current: usize) -> usize {
-    let nanos = std::time::SystemTime::now()
+fn shuffled_order(len: usize, current: usize) -> Vec<usize> {
+    let mut seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as usize)
+        .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(0);
-    let mut pick = nanos % len;
-    if pick == current {
-        pick = (pick + 1) % len;
+    let mut order = (0..len)
+        .filter(|index| *index != current)
+        .collect::<Vec<_>>();
+    for index in (1..order.len()).rev() {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        order.swap(index, seed as usize % (index + 1));
     }
-    pick
+    order.insert(0, current);
+    order
 }
 
 fn spawn_cover_fetch(fx: &Effects, generation: u64, pic_url: String) {
@@ -966,6 +1175,10 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
     };
     let mut state = AppState::new(config);
     state.original_cover = original_cover;
+    if let Some(playback) = fx.store.load_playback() {
+        state.restore_playback(playback);
+        fx.player.send(PlayerCommand::SetVolume(state.volume));
+    }
     state.load_idle_art(&fx);
     // Restore a persisted session: greet + load 我喜欢的音乐.
     if let Some(session) = fx.ncm.session_snapshot() {
@@ -994,6 +1207,9 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         }
         terminal.draw(|frame| ui::draw(frame, &mut state, &mut hits))?;
     }
+    if let Err(error) = fx.store.save_playback(&state.playback_snapshot()) {
+        tracing::warn!(%error, "playback state save failed");
+    }
     Ok(())
 }
 
@@ -1008,6 +1224,7 @@ fn apply(state: &mut AppState, action: Action, fx: &Effects, hits: &ui::Hits) {
             }
             let selected = if state.view == View::Search && state.search.input
                 || state.view == View::Library && state.sidebar_focus
+                || state.filter.input
             {
                 usize::MAX
             } else {

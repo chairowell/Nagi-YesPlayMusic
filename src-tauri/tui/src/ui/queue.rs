@@ -13,10 +13,16 @@ use crate::ui::Hits;
 
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
-    if state.queue.is_empty() {
+    let rows = state.visible_rows(&state.queue);
+    if rows.is_empty() {
+        let message = if !state.filter.query.is_empty() && !state.queue.is_empty() {
+            i18n::t(Key::NoResults)
+        } else {
+            i18n::t(Key::EmptyQueue)
+        };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                i18n::t(Key::EmptyQueue),
+                message,
                 Style::new().fg(theme.dim),
             )))
             .centered(),
@@ -26,20 +32,20 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     }
 
     let visible = area.height as usize;
-    let offset = super::scroll_offset(state.selected, state.queue.len(), visible);
+    let offset = super::scroll_offset(state.selected, rows.len(), visible);
     let mut lines = Vec::with_capacity(visible);
-    for (index, row) in state.queue.iter().enumerate().skip(offset).take(visible) {
+    for (visible_index, (index, row)) in rows.iter().enumerate().skip(offset).take(visible) {
         hits.rows.push((
             Rect {
                 x: area.x,
-                y: area.y + (index - offset) as u16,
+                y: area.y + (visible_index - offset) as u16,
                 width: area.width,
                 height: 1,
             },
-            index,
+            visible_index,
         ));
-        let playing = state.queue_pos == Some(index);
-        let selected = index == state.selected;
+        let playing = state.queue_pos == Some(*index);
+        let selected = visible_index == state.selected && !state.filter.input;
         let marker = if playing { "▶" } else { " " };
         let style = if selected {
             Style::new().fg(theme.selection_fg()).bg(theme.sel)

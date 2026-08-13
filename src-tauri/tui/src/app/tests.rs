@@ -38,6 +38,286 @@ fn row(id: i64) -> SongRow {
     }
 }
 
+fn named_row(id: i64, title: &str, artist: &str) -> SongRow {
+    SongRow {
+        id,
+        title: title.into(),
+        artist: artist.into(),
+        duration_ms: 180_000,
+        pic_url: None,
+    }
+}
+
+#[tokio::test]
+async fn mute_restores_the_volume_that_was_active_before_muting() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.volume = 0.65;
+
+    state.update(Action::ToggleMute, &fx);
+    assert_eq!(state.volume, 0.0);
+    assert_eq!(state.volume_before_mute, Some(0.65));
+
+    state.update(Action::ToggleMute, &fx);
+    assert_eq!(state.volume, 0.65);
+    assert_eq!(state.volume_before_mute, None);
+}
+
+#[tokio::test]
+async fn shuffle_and_repeat_change_independently() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::ToggleShuffle, &fx);
+    assert!(state.shuffle);
+    assert_eq!(state.play_mode, PlayMode::Off);
+
+    state.update(Action::CycleRepeat, &fx);
+    assert!(state.shuffle);
+    assert_eq!(state.play_mode, PlayMode::List);
+    state.update(Action::CycleRepeat, &fx);
+    assert_eq!(state.play_mode, PlayMode::One);
+    state.update(Action::CycleRepeat, &fx);
+    assert_eq!(state.play_mode, PlayMode::Off);
+}
+
+#[tokio::test]
+async fn list_repeat_wraps_while_single_repeat_replays_only_on_track_end() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.cache_root = Some(directory.path().join("audio"));
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(1);
+    state.play_mode = PlayMode::List;
+
+    state.update(Action::NextTrack, &fx);
+    assert_eq!(state.queue_pos, Some(0));
+
+    state.queue_pos = Some(1);
+    state.play_mode = PlayMode::One;
+    let generation = state.generation;
+    state.update(Action::Player(PlayerEvent::Ended { generation }), &fx);
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 2")
+    );
+}
+
+#[tokio::test]
+async fn local_filter_maps_visible_rows_to_the_correct_song_and_escape_restores_the_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.cache_root = Some(directory.path().join("audio"));
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.library = vec![
+        named_row(1, "Alpha", "One"),
+        named_row(2, "Beta", "Two"),
+        named_row(3, "Gamma", "Three"),
+    ];
+
+    state.update(Action::StartFilter, &fx);
+    state.update(raw_key(KeyCode::Char('g')), &fx);
+    state.update(raw_key(KeyCode::Char('m')), &fx);
+    assert_eq!(state.visible_len(), 1);
+    state.update(raw_key(KeyCode::Enter), &fx);
+    state.update(Action::Activate, &fx);
+
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Gamma")
+    );
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![3]
+    );
+
+    state.view = View::Library;
+    state.update(Action::StartFilter, &fx);
+    state.update(raw_key(KeyCode::Char('z')), &fx);
+    assert_eq!(state.visible_len(), 0);
+    state.update(raw_key(KeyCode::Esc), &fx);
+    assert_eq!(state.visible_len(), 3);
+    assert!(state.filter.query.is_empty());
+    assert_eq!(state.view, View::Library);
+}
+
+#[tokio::test]
+async fn starting_a_library_filter_moves_focus_from_the_sidebar_to_results() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.cache_root = Some(directory.path().join("audio"));
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.sidebar_focus = true;
+    state.library = vec![named_row(1, "Alpha", "One"), named_row(2, "Beta", "Two")];
+
+    state.update(Action::StartFilter, &fx);
+    state.update(raw_key(KeyCode::Char('b')), &fx);
+    state.update(raw_key(KeyCode::Enter), &fx);
+
+    assert!(!state.sidebar_focus);
+    assert_eq!(state.visible_len(), 1);
+    state.update(raw_key(KeyCode::Enter), &fx);
+    assert_eq!(state.current_track_id, Some(2));
+}
+
+#[tokio::test]
+async fn adding_a_filtered_selection_appends_without_starting_playback() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.library = vec![named_row(1, "Alpha", "One"), named_row(2, "Beta", "Two")];
+    state.filter.query = "bt".into();
+
+    state.update(Action::AddSelectedToQueue, &fx);
+
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(state.generation, 0);
+    assert!(state.now.is_none());
+    assert_eq!(state.view, View::Library);
+}
+
+#[tokio::test]
+async fn filtered_mouse_rows_keep_their_visible_to_underlying_mapping() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.cache_root = Some(directory.path().join("audio"));
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.library = vec![
+        named_row(1, "Alpha", "One"),
+        named_row(2, "Gamma", "Two"),
+        named_row(3, "Gamut", "Three"),
+    ];
+    state.filter.query = "ga".into();
+    let mut hits = ui::Hits::default();
+    hits.rows.push((Rect::new(4, 5, 20, 1), 1));
+    let click = || {
+        Action::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+
+    apply(&mut state, click(), &fx, &hits);
+    assert_eq!(state.selected, 1);
+    assert!(state.now.is_none());
+
+    apply(&mut state, click(), &fx, &hits);
+    assert_eq!(state.current_track_id, Some(3));
+}
+
+#[tokio::test]
+async fn page_home_end_and_tab_follow_the_visible_library() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.library = (0..30).map(row).collect();
+    state.update(Action::Resize { cols: 80, rows: 10 }, &fx);
+
+    state.update(Action::MovePage(1), &fx);
+    assert_eq!(state.selected, 7);
+    state.update(Action::JumpBottom, &fx);
+    assert_eq!(state.selected, 29);
+    state.update(Action::JumpTop, &fx);
+    assert_eq!(state.selected, 0);
+
+    state.update(Action::ToggleLibraryFocus, &fx);
+    assert!(state.sidebar_focus);
+    state.update(Action::ToggleLibraryFocus, &fx);
+    assert!(!state.sidebar_focus);
+    state.update(Action::Resize { cols: 40, rows: 10 }, &fx);
+    state.update(Action::ToggleLibraryFocus, &fx);
+    assert!(!state.sidebar_focus);
+}
+
+#[tokio::test]
+async fn restored_playback_stays_paused_until_space_then_seeks_after_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.cache_root = Some(directory.path().join("audio"));
+    let mut state = AppState::new(&Config::default());
+    state.restore_playback(crate::store::StoredPlayback {
+        queue: vec![crate::store::StoredSong::from(&row(7))],
+        current: Some(crate::store::StoredSong::from(&row(7))),
+        queue_pos: Some(0),
+        position_ms: 42_000,
+        volume: 0.0,
+        volume_before_mute: Some(0.8),
+        play_mode: PlayMode::List,
+        shuffle: true,
+        queue_source: Source::Fm,
+    });
+
+    assert!(state.paused);
+    assert_eq!(state.generation, 0);
+    assert_eq!(state.position, Duration::from_secs(42));
+    assert_eq!(state.current_track_id, Some(7));
+    assert!(state.status.is_none());
+
+    state.update(Action::TogglePlay, &fx);
+    assert_eq!(state.generation, 1);
+    assert_eq!(state.position, Duration::from_secs(42));
+    assert_eq!(state.status.as_deref(), Some(i18n::t(Key::Resolving)));
+    assert_eq!(state.queue_source, Source::Fm);
+
+    state.update(
+        Action::Player(PlayerEvent::Started {
+            generation: 1,
+            total: Some(Duration::from_secs(180)),
+        }),
+        &fx,
+    );
+    assert_eq!(state.position, Duration::from_secs(42));
+    assert!(state.seek_after_start.is_none());
+    assert!(state.resume_on_play.is_none());
+}
+
+#[tokio::test]
+async fn a_failed_restored_track_can_be_retried_with_space() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.cache_root = Some(directory.path().join("audio"));
+    let mut state = AppState::new(&Config::default());
+    state.restore_playback(crate::store::StoredPlayback {
+        queue: vec![crate::store::StoredSong::from(&row(7))],
+        current: Some(crate::store::StoredSong::from(&row(7))),
+        queue_pos: Some(0),
+        position_ms: 42_000,
+        volume: 0.7,
+        volume_before_mute: None,
+        play_mode: PlayMode::Off,
+        shuffle: false,
+        queue_source: Source::Liked,
+    });
+
+    state.update(Action::TogglePlay, &fx);
+    state.update(
+        Action::ResolveFailed {
+            generation: 1,
+            message: "offline".into(),
+        },
+        &fx,
+    );
+    assert_eq!(state.resume_on_play, Some(Duration::from_secs(42)));
+
+    state.update(Action::TogglePlay, &fx);
+    assert_eq!(state.generation, 2);
+    assert_eq!(state.position, Duration::from_secs(42));
+}
+
 #[tokio::test]
 async fn quit_dialog_handles_raw_confirm_and_cancel_keys() {
     let directory = tempfile::tempdir().unwrap();
@@ -523,7 +803,7 @@ fn original_mode_only_accepts_a_real_graphics_protocol() {
 }
 
 #[tokio::test]
-async fn starting_a_new_track_clears_the_old_track_identity_immediately() {
+async fn a_known_row_replaces_the_old_track_identity_before_resolution() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);
     let mut state = AppState::new(&Config::default());
@@ -532,12 +812,26 @@ async fn starting_a_new_track_clears_the_old_track_identity_immediately() {
 
     state.play_row(&fx, row(1));
 
-    assert_eq!(state.current_track_id, None);
+    assert_eq!(state.current_track_id, Some(1));
     assert!(!state.paused);
     assert_eq!(
         state.now.as_ref().map(|now| now.title.as_str()),
         Some("Track 1")
     );
+}
+
+#[tokio::test]
+async fn an_unresolved_demo_row_does_not_keep_the_previous_track_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.current_track_id = Some(99);
+    let mut unresolved = row(0);
+    unresolved.title = "Search me".into();
+
+    state.play_row(&fx, unresolved);
+
+    assert_eq!(state.current_track_id, None);
 }
 
 #[tokio::test]

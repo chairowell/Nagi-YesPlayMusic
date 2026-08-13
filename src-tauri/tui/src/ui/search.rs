@@ -64,7 +64,8 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         );
         return;
     }
-    if state.search.results.is_empty() {
+    let rows = state.visible_rows(&state.search.results);
+    if rows.is_empty() {
         let message = if state.search.query.is_empty() {
             i18n::t(Key::SearchPrompt)
         } else {
@@ -82,26 +83,20 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     }
 
     let visible = list_area.height as usize;
-    let offset = super::scroll_offset(state.selected, state.search.results.len(), visible);
+    let offset = super::scroll_offset(state.selected, rows.len(), visible);
     let mut lines = Vec::with_capacity(visible);
-    for (index, row) in state
-        .search
-        .results
-        .iter()
-        .enumerate()
-        .skip(offset)
-        .take(visible)
-    {
+    for (visible_index, (_, row)) in rows.iter().enumerate().skip(offset).take(visible) {
         hits.rows.push((
             Rect {
                 x: list_area.x,
-                y: list_area.y + (index - offset) as u16,
+                y: list_area.y + (visible_index - offset) as u16,
                 width: list_area.width,
                 height: 1,
             },
-            index,
+            visible_index,
         ));
-        let selected = index == state.selected && !state.search.input;
+        let selected =
+            visible_index == state.selected && !state.search.input && !state.filter.input;
         let style = if selected {
             Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else {

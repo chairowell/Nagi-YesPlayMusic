@@ -42,7 +42,7 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits
             Style::new().fg(theme.accent2),
         )),
         None => Line::from(Span::styled(
-            i18n::t(Key::NotLoggedInPressI),
+            i18n::t(Key::NotLoggedInMenu),
             Style::new().fg(theme.accent2),
         )),
     };
@@ -80,8 +80,11 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits
 
 fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
-    if state.library.is_empty() {
-        let message = if state.session.nickname.is_some() && !state.library_synced {
+    let rows = state.visible_rows(&state.library);
+    if rows.is_empty() {
+        let message = if !state.filter.query.is_empty() && !state.library.is_empty() {
+            i18n::t(Key::NoResults)
+        } else if state.session.nickname.is_some() && !state.library_synced {
             i18n::t(Key::SyncingLibrary)
         } else {
             i18n::t(Key::EmptyLibrary)
@@ -97,7 +100,7 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         return;
     }
     let visible = area.height.saturating_sub(1) as usize; // header row
-    let offset = super::scroll_offset(state.selected, state.library.len(), visible);
+    let offset = super::scroll_offset(state.selected, rows.len(), visible);
 
     let mut lines = Vec::with_capacity(visible + 1);
     lines.push(Line::from(Span::styled(
@@ -110,17 +113,17 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         ),
         Style::new().fg(theme.faint),
     )));
-    for (index, row) in state.library.iter().enumerate().skip(offset).take(visible) {
+    for (visible_index, (index, row)) in rows.iter().enumerate().skip(offset).take(visible) {
         hits.rows.push((
             Rect {
                 x: area.x,
-                y: area.y + 1 + (index - offset) as u16,
+                y: area.y + 1 + (visible_index - offset) as u16,
                 width: area.width,
                 height: 1,
             },
-            index,
+            visible_index,
         ));
-        let selected = index == state.selected;
+        let selected = visible_index == state.selected && !state.filter.input;
         let style = if selected {
             Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else {

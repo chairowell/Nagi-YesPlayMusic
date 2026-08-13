@@ -136,10 +136,10 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
 
 fn menu_entries(state: &AppState) -> Vec<(String, &'static str, MenuEntry)> {
     let mut entries = vec![(i18n::t(Key::LikedSongs).to_owned(), "2", MenuEntry::Library)];
-    entries.push((i18n::t(Key::Search).to_owned(), "f", MenuEntry::Search));
+    entries.push((i18n::t(Key::Search).to_owned(), "3", MenuEntry::Search));
     entries.push(match &state.session.nickname {
-        Some(_) => (i18n::t(Key::Relogin).to_owned(), "i", MenuEntry::Login),
-        None => (i18n::t(Key::ScanLogin).to_owned(), "i", MenuEntry::Login),
+        Some(_) => (i18n::t(Key::Relogin).to_owned(), "", MenuEntry::Login),
+        None => (i18n::t(Key::ScanLogin).to_owned(), "", MenuEntry::Login),
     });
     entries.push((i18n::t(Key::Settings).to_owned(), ",", MenuEntry::Settings));
     entries.push((i18n::t(Key::Quit).to_owned(), "q", MenuEntry::Quit));
@@ -188,7 +188,7 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect, centered_text: boo
     if let Some(now) = &state.now {
         lines.push(Line::from(Span::styled(
             format!("{indent}{}", now.title),
-            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
             format!("{indent}{} ", now.artist),
@@ -267,10 +267,11 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
         if let Some(translation) = &lyric.translation {
             if used < rows && !translation.is_empty() {
                 let translation_style = if is_current {
-                    Style::new().fg(theme.dim)
+                    Style::new().fg(theme.fg)
                 } else {
                     Style::new().fg(theme.faint)
-                };
+                }
+                .add_modifier(Modifier::ITALIC);
                 lines.push(Line::from(Span::styled(
                     format!("  {translation}"),
                     translation_style,
@@ -285,7 +286,7 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let icon = if state.paused { "⏸" } else { "▶" };
-    let mode_icon = state.play_mode.icon();
+    let repeat_icon = state.play_mode.icon();
     let liked = state
         .current_track_id
         .map(|id| state.liked.contains(&id))
@@ -296,7 +297,7 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         .map(format_duration)
         .unwrap_or_else(|| "--:--".into());
 
-    let fixed = icon.len() + elapsed.len() + total.len() + display_width(mode_icon) + 22;
+    let fixed = icon.len() + elapsed.len() + total.len() + display_width(repeat_icon) + 25;
     let bar_width = (area.width as usize).saturating_sub(fixed).max(8);
     let ratio = match state.duration {
         Some(duration) if !duration.is_zero() => {
@@ -357,8 +358,20 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         spans.push(Span::styled("♡", Style::new().fg(theme.faint)));
     }
     spans.push(Span::styled(
-        format!("  {mode_icon}"),
-        Style::new().fg(theme.dim),
+        "  ⇆",
+        Style::new().fg(if state.shuffle {
+            theme.accent
+        } else {
+            theme.faint
+        }),
+    ));
+    spans.push(Span::styled(
+        format!(" {repeat_icon}"),
+        Style::new().fg(if state.play_mode == crate::app::PlayMode::Off {
+            theme.faint
+        } else {
+            theme.accent
+        }),
     ));
     // Battery-style volume: click or drag inside the bracket to set.
     const VOLUME_CELLS: usize = 10;
@@ -386,4 +399,106 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
     ));
     spans.push(Span::styled("]", Style::new().fg(theme.faint)));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+    use ratatui::style::Modifier;
+    use ratatui::Terminal;
+
+    use super::{draw_meta, draw_progress, lyric_window, menu_entries};
+    use crate::action::MenuEntry;
+    use crate::app::{AppState, NowPlaying};
+    use crate::config::Config;
+    use crate::lyrics::LyricLine;
+    use crate::ui::Hits;
+
+    #[test]
+    fn lyrics_use_four_distinct_original_and_translation_styles() {
+        let mut state = AppState::new(&Config::default());
+        state.position = Duration::from_secs(1);
+        state.lyrics = vec![
+            LyricLine {
+                time: Duration::ZERO,
+                text: "Current".into(),
+                translation: Some("当前翻译".into()),
+            },
+            LyricLine {
+                time: Duration::from_secs(10),
+                text: "Context".into(),
+                translation: Some("上下文翻译".into()),
+            },
+        ];
+
+        let lines = lyric_window(&state, 4);
+        let styles = lines
+            .iter()
+            .map(|line| line.spans[0].style)
+            .collect::<Vec<_>>();
+
+        assert_eq!(styles[0].fg, Some(state.theme.accent));
+        assert!(styles[0].add_modifier.contains(Modifier::BOLD));
+        assert_eq!(styles[1].fg, Some(state.theme.fg));
+        assert!(styles[1].add_modifier.contains(Modifier::ITALIC));
+        assert_eq!(styles[2].fg, Some(state.theme.dim));
+        assert!(!styles[2].add_modifier.contains(Modifier::ITALIC));
+        assert_eq!(styles[3].fg, Some(state.theme.faint));
+        assert!(styles[3].add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn metadata_and_liked_progress_render_the_new_visual_hierarchy() {
+        let mut state = AppState::new(&Config::default());
+        state.now = Some(NowPlaying {
+            title: "Title".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+        });
+        state.current_track_id = Some(42);
+        state.liked.insert(42);
+        let backend = TestBackend::new(80, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| {
+                draw_meta(frame, &state, Rect::new(0, 0, 80, 5), false);
+                draw_progress(frame, &state, Rect::new(0, 6, 80, 1), &mut hits);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(2, 0)].fg, state.theme.accent);
+        assert!(buffer[(2, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(2, 1)].fg, state.theme.dim);
+        assert_eq!(buffer[(2, 2)].fg, state.theme.faint);
+        let progress = (0..80).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
+        assert!(progress.contains('♥'));
+        assert!(!progress.contains('♡'));
+    }
+
+    #[test]
+    fn dashboard_menu_only_advertises_shortcuts_that_still_exist() {
+        let state = AppState::new(&Config::default());
+        let entries = menu_entries(&state);
+
+        assert_eq!(
+            entries
+                .iter()
+                .find(|(_, _, entry)| *entry == MenuEntry::Search)
+                .map(|(_, key, _)| *key),
+            Some("3")
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .find(|(_, _, entry)| *entry == MenuEntry::Login)
+                .map(|(_, key, _)| *key),
+            Some("")
+        );
+    }
 }

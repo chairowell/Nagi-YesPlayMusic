@@ -8,6 +8,7 @@ use std::sync::RwLock;
 use anyhow::{anyhow, Result};
 use ncm_api_rs::api::Query;
 use ncm_api_rs::ApiClient;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use yesplaymusic_core::auth::{Session, SessionStore};
 use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
@@ -51,7 +52,8 @@ pub struct SongRow {
 }
 
 /// Which library list is on screen / feeding the queue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Source {
     Liked,
     Daily,

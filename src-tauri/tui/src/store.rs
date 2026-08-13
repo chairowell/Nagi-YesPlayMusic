@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::SongRow;
+use crate::api::{SongRow, Source};
+use crate::app::PlayMode;
 
 const SNAPSHOT_VERSION: u32 = 1;
 
@@ -54,6 +55,26 @@ struct Snapshot {
     rows: Vec<StoredSong>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct StoredPlayback {
+    pub queue: Vec<StoredSong>,
+    pub current: Option<StoredSong>,
+    pub queue_pos: Option<usize>,
+    pub position_ms: u64,
+    pub volume: f32,
+    pub volume_before_mute: Option<f32>,
+    pub play_mode: PlayMode,
+    pub shuffle: bool,
+    pub queue_source: Source,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PlaybackSnapshot {
+    version: u32,
+    saved_at_unix: u64,
+    playback: StoredPlayback,
+}
+
 impl LibraryStore {
     pub fn new(root: PathBuf) -> Self {
         Self { root }
@@ -76,6 +97,30 @@ impl LibraryStore {
         let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
         let path = self.snapshot_path(uid, source);
         let temporary = self.temporary_path(uid, source);
+        fs::write(&temporary, bytes)?;
+        if let Err(error) = fs::rename(&temporary, path) {
+            let _ = fs::remove_file(temporary);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn load_playback(&self) -> Option<StoredPlayback> {
+        let bytes = fs::read(self.root.join("playback.json")).ok()?;
+        let snapshot: PlaybackSnapshot = serde_json::from_slice(&bytes).ok()?;
+        (snapshot.version == SNAPSHOT_VERSION).then_some(snapshot.playback)
+    }
+
+    pub(crate) fn save_playback(&self, playback: &StoredPlayback) -> io::Result<()> {
+        fs::create_dir_all(&self.root)?;
+        let snapshot = PlaybackSnapshot {
+            version: SNAPSHOT_VERSION,
+            saved_at_unix: unix_now()?,
+            playback: playback.clone(),
+        };
+        let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
+        let path = self.root.join("playback.json");
+        let temporary = self.root.join("playback.json.tmp");
         fs::write(&temporary, bytes)?;
         if let Err(error) = fs::rename(&temporary, path) {
             let _ = fs::remove_file(temporary);
@@ -124,8 +169,9 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{LibraryStore, StoredSong};
-    use crate::api::SongRow;
+    use super::{LibraryStore, StoredPlayback, StoredSong};
+    use crate::api::{SongRow, Source};
+    use crate::app::PlayMode;
 
     #[test]
     fn roundtrips_rows_and_song_row_conversion() {
@@ -218,6 +264,41 @@ mod tests {
         assert_eq!(store.load(17, "../x"), None);
         assert!(!root.exists());
         assert!(!directory.path().join("x.json").exists());
+    }
+
+    #[test]
+    fn playback_state_roundtrips_and_atomically_replaces_the_previous_exit() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("library");
+        let store = LibraryStore::new(root.clone());
+        let mut playback = StoredPlayback {
+            queue: vec![song(1), song(1), song(2)],
+            current: Some(song(1)),
+            queue_pos: Some(1),
+            position_ms: 42_500,
+            volume: 0.0,
+            volume_before_mute: Some(0.7),
+            play_mode: PlayMode::One,
+            shuffle: true,
+            queue_source: Source::Fm,
+        };
+
+        store.save_playback(&playback).unwrap();
+        playback.position_ms = 43_000;
+        store.save_playback(&playback).unwrap();
+
+        assert_eq!(store.load_playback(), Some(playback));
+        assert!(!root.join("playback.json.tmp").exists());
+    }
+
+    #[test]
+    fn damaged_playback_state_is_ignored() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("library");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("playback.json"), b"{broken").unwrap();
+
+        assert!(LibraryStore::new(root).load_playback().is_none());
     }
 
     fn song(id: i64) -> StoredSong {

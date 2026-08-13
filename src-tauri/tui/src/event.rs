@@ -139,29 +139,47 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('1') => Some(Action::SwitchView(View::NowPlaying)),
         KeyCode::Char('2') => Some(Action::SwitchView(View::Library)),
-        KeyCode::Char('3') | KeyCode::Char('/') | KeyCode::Char('f') => {
-            Some(Action::SwitchView(View::Search))
-        }
+        KeyCode::Char('3') => Some(Action::SwitchView(View::Search)),
         KeyCode::Char('4') => Some(Action::SwitchView(View::Queue)),
         KeyCode::Char('5') | KeyCode::Char(',') => Some(Action::SwitchView(View::Settings)),
-        // vim: h backs out, l dives in (Backspace/Esc keep working)
-        KeyCode::Backspace | KeyCode::Esc | KeyCode::Char('h') => Some(Action::Back),
+        // vim: h backs out, l dives in.
+        KeyCode::Backspace | KeyCode::Char('h') => Some(Action::Back),
+        KeyCode::Esc => Some(Action::Escape),
         KeyCode::Char('l') | KeyCode::Enter => Some(Action::Activate),
         KeyCode::Char('g') => Some(Action::GKey),
-        KeyCode::Char('G') => Some(Action::JumpBottom),
-        KeyCode::Char('i') => Some(Action::StartLogin),
+        KeyCode::Char('G') | KeyCode::End => Some(Action::JumpBottom),
+        KeyCode::Home => Some(Action::JumpTop),
         KeyCode::Char('y') => Some(Action::ConfirmYes),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Char('z') => Some(Action::ToggleZen),
-        KeyCode::Char('s') => Some(Action::CycleMode),
-        KeyCode::Char('x') => Some(Action::ToggleLike),
+        KeyCode::Char('s') => Some(Action::ToggleShuffle),
+        KeyCode::Char('r') => Some(Action::CycleRepeat),
+        KeyCode::Char('*') => Some(Action::ToggleLike),
+        KeyCode::Char('m') => Some(Action::ToggleMute),
+        KeyCode::Char('a') => Some(Action::AddSelectedToQueue),
+        KeyCode::Char('/') => Some(Action::StartFilter),
+        KeyCode::Tab => Some(Action::ToggleLibraryFocus),
         KeyCode::Char(' ') => Some(Action::TogglePlay),
         KeyCode::Char('n') => Some(Action::NextTrack),
         KeyCode::Char('p') => Some(Action::PrevTrack),
-        KeyCode::Right => Some(Action::SeekBy(1)),
-        KeyCode::Left => Some(Action::SeekBy(-1)),
+        KeyCode::Right => Some(Action::SeekBy(
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                30
+            } else {
+                5
+            },
+        )),
+        KeyCode::Left => Some(Action::SeekBy(
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                -30
+            } else {
+                -5
+            },
+        )),
         KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::VolumeBy(0.05)),
         KeyCode::Char('-') => Some(Action::VolumeBy(-0.05)),
+        KeyCode::PageDown => Some(Action::MovePage(1)),
+        KeyCode::PageUp => Some(Action::MovePage(-1)),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::MoveSelection(1)),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::MoveSelection(-1)),
         _ => None,
@@ -185,7 +203,8 @@ pub fn settings_key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Down | KeyCode::Char('j') => Some(Action::MoveSelection(1)),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::MoveSelection(-1)),
         KeyCode::Char('g') => Some(Action::GKey),
-        KeyCode::Char('G') => Some(Action::JumpBottom),
+        KeyCode::Home => Some(Action::JumpTop),
+        KeyCode::Char('G') | KeyCode::End => Some(Action::JumpBottom),
         _ => None,
     }
 }
@@ -216,10 +235,58 @@ mod tests {
             Some(Action::SwitchView(View::Library))
         ));
         assert!(matches!(map(KeyCode::Char('z')), Some(Action::ToggleZen)));
-        assert!(matches!(map(KeyCode::Char('i')), Some(Action::StartLogin)));
+        assert!(map(KeyCode::Char('i')).is_none());
+        assert!(map(KeyCode::Char('f')).is_none());
+        assert!(map(KeyCode::Char('x')).is_none());
         assert!(matches!(
             map(KeyCode::Char(',')),
             Some(Action::SwitchView(View::Settings))
+        ));
+    }
+
+    #[test]
+    fn playback_and_list_keys_map_to_their_new_independent_actions() {
+        let map = |code, modifiers| key_action(KeyEvent::new(code, modifiers));
+
+        assert!(matches!(
+            map(KeyCode::Right, KeyModifiers::NONE),
+            Some(Action::SeekBy(5))
+        ));
+        assert!(matches!(
+            map(KeyCode::Left, KeyModifiers::SHIFT),
+            Some(Action::SeekBy(-30))
+        ));
+        assert!(matches!(
+            map(KeyCode::Char('m'), KeyModifiers::NONE),
+            Some(Action::ToggleMute)
+        ));
+        assert!(matches!(
+            map(KeyCode::Char('s'), KeyModifiers::NONE),
+            Some(Action::ToggleShuffle)
+        ));
+        assert!(matches!(
+            map(KeyCode::Char('r'), KeyModifiers::NONE),
+            Some(Action::CycleRepeat)
+        ));
+        assert!(matches!(
+            map(KeyCode::Char('*'), KeyModifiers::SHIFT),
+            Some(Action::ToggleLike)
+        ));
+        assert!(matches!(
+            map(KeyCode::Char('/'), KeyModifiers::NONE),
+            Some(Action::StartFilter)
+        ));
+        assert!(matches!(
+            map(KeyCode::PageDown, KeyModifiers::NONE),
+            Some(Action::MovePage(1))
+        ));
+        assert!(matches!(
+            map(KeyCode::Home, KeyModifiers::NONE),
+            Some(Action::JumpTop)
+        ));
+        assert!(matches!(
+            map(KeyCode::Tab, KeyModifiers::NONE),
+            Some(Action::ToggleLibraryFocus)
         ));
     }
 

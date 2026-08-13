@@ -30,6 +30,7 @@ pub enum PlayerCommand {
         url: String,
         cache: Option<CacheWritePlan>,
     },
+    Play,
     TogglePause,
     SeekTo(Duration),
     SetVolume(f32),
@@ -285,6 +286,11 @@ fn actor(context: ActorContext) {
                         work_tx.clone(),
                         wake_tx.clone(),
                     ));
+                }
+                PlayerCommand::Play => {
+                    if let (Some(engine), Some(_)) = (&engine, active_generation) {
+                        engine.player.play();
+                    }
                 }
                 PlayerCommand::TogglePause => {
                     if let (Some(engine), Some(generation)) = (&engine, active_generation) {
@@ -560,8 +566,8 @@ fn start_decoded(
     };
 
     engine.player.stop();
+    engine.player.pause();
     engine.player.append(decoded.source);
-    engine.player.play();
     let _ = events.send(PlayerEvent::Started {
         generation,
         total: decoded.total,
@@ -920,6 +926,46 @@ mod tests {
         drop(player);
         stalled.join();
         replacement.join();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn decoded_track_waits_for_explicit_play_before_reporting_position() {
+        let server = HttpServer::complete(WAV_BODY);
+        let (player, mut events) =
+            spawn_with_engine(tokio::runtime::Handle::current(), open_silent_engine);
+        player.send(PlayerCommand::PlayUrl {
+            generation: 7,
+            url: server.url.clone(),
+            cache: None,
+        });
+
+        let started = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("decoded track should become ready")
+            .expect("player event channel should remain open");
+        assert!(matches!(
+            started,
+            PlayerEvent::Started { generation: 7, .. }
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(350), events.recv())
+                .await
+                .is_err(),
+            "decoded audio must remain paused until the app finishes any restore seek"
+        );
+
+        player.send(PlayerCommand::Play);
+        let position = tokio::time::timeout(Duration::from_millis(500), events.recv())
+            .await
+            .expect("explicit play should start position updates")
+            .expect("player event channel should remain open");
+        assert!(matches!(
+            position,
+            PlayerEvent::Position { generation: 7, .. }
+        ));
+
+        drop(player);
+        server.join();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

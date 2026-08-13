@@ -1,6 +1,9 @@
-use crate::action::{Action, CoverRenderRequest, View, SEEK_STEP};
+use std::time::Duration;
+
+use crate::action::{Action, CoverRenderRequest, View};
 use crate::api::Source;
 use crate::event;
+use crate::i18n::Key;
 use crate::player::PlayerCommand;
 
 use super::{
@@ -19,7 +22,9 @@ impl AppState {
                         Some(Action::ConfirmYes | Action::Quit | Action::Activate) => {
                             self.should_quit = true;
                         }
-                        Some(Action::Back | Action::NextTrack) => self.confirm_quit = false,
+                        Some(Action::Back | Action::Escape | Action::NextTrack) => {
+                            self.confirm_quit = false;
+                        }
                         _ => {}
                     }
                     return;
@@ -28,7 +33,7 @@ impl AppState {
                     self.should_quit = true;
                     return;
                 }
-                Action::Back | Action::NextTrack => {
+                Action::Back | Action::Escape | Action::NextTrack => {
                     self.confirm_quit = false;
                     return;
                 }
@@ -54,6 +59,10 @@ impl AppState {
                 self.handle_search_key(fx, *key);
                 return;
             }
+            if self.filter.input {
+                self.handle_filter_key(*key);
+                return;
+            }
             let Some(mapped) = event::key_action(*key) else {
                 return;
             };
@@ -63,6 +72,9 @@ impl AppState {
         if let Action::Paste(text) = &action {
             if self.view == View::Search && self.search.input {
                 self.search.paste(text);
+            } else if self.filter.input {
+                self.filter.paste(text);
+                self.selected = 0;
             }
             return;
         }
@@ -74,6 +86,8 @@ impl AppState {
                 if was_pending_g {
                     if self.view == View::Settings {
                         self.settings.selected = 0;
+                    } else if self.view == View::Library && self.sidebar_focus {
+                        self.sidebar_selected = 0;
                     } else {
                         self.selected = 0;
                     }
@@ -81,23 +95,29 @@ impl AppState {
                     self.pending_g = true;
                 }
             }
-            Action::JumpBottom => {
-                let len = match self.view {
-                    View::Library => self.library.len(),
-                    View::Search => self.search.results.len(),
-                    View::Queue => self.queue.len(),
-                    View::Settings => super::settings::SettingField::ALL.len(),
-                    _ => 0,
-                };
+            Action::JumpTop => {
                 if self.view == View::Settings {
-                    self.settings.selected = len.saturating_sub(1);
+                    self.settings.selected = 0;
+                } else if self.view == View::Library && self.sidebar_focus {
+                    self.sidebar_selected = 0;
                 } else {
-                    self.selected = len.saturating_sub(1);
+                    self.selected = 0;
+                }
+            }
+            Action::JumpBottom => {
+                if self.view == View::Settings {
+                    let len = super::settings::SettingField::ALL.len();
+                    self.settings.selected = len.saturating_sub(1);
+                } else if self.view == View::Library && self.sidebar_focus {
+                    self.sidebar_selected = crate::ui::library::SOURCES.len() - 1;
+                } else {
+                    self.selected = self.visible_len().saturating_sub(1);
                 }
             }
             Action::ConfirmYes => {}
             Action::Quit => self.confirm_quit = true,
             Action::SwitchView(view) => {
+                self.clear_filter();
                 if view == View::Settings {
                     self.open_settings();
                 } else {
@@ -110,20 +130,12 @@ impl AppState {
                     self.search.input = true;
                 }
             }
-            Action::Back => {
-                if self.view == View::Settings {
-                    self.cancel_settings(fx);
-                } else if self.view == View::Search && !self.search.input {
-                    self.search.input = true;
-                } else if self.view == View::Library
-                    && !self.sidebar_focus
-                    && self.sidebar_visible()
-                {
-                    self.sidebar_focus = true;
-                    self.sidebar_selected = self.source_index();
+            Action::Back => self.navigate_back(fx),
+            Action::Escape => {
+                if self.filter.is_active() {
+                    self.clear_filter();
                 } else {
-                    self.sidebar_focus = false;
-                    self.view = View::NowPlaying;
+                    self.navigate_back(fx);
                 }
             }
             Action::ToggleZen => {
@@ -132,19 +144,18 @@ impl AppState {
                     self.view = View::NowPlaying;
                 }
             }
-            Action::TogglePlay => fx.player.send(PlayerCommand::TogglePause),
-            Action::SeekBy(sign) => {
-                let target = if sign >= 0 {
-                    self.position.saturating_add(SEEK_STEP)
+            Action::TogglePlay => self.toggle_play(fx),
+            Action::SeekBy(seconds) => {
+                let step = Duration::from_secs(seconds.unsigned_abs());
+                let target = if seconds >= 0 {
+                    self.position.saturating_add(step)
                 } else {
-                    self.position.saturating_sub(SEEK_STEP)
+                    self.position.saturating_sub(step)
                 };
                 fx.player.send(PlayerCommand::SeekTo(target));
             }
-            Action::VolumeBy(delta) => {
-                self.volume = (self.volume + delta).clamp(0.0, 1.5);
-                fx.player.send(PlayerCommand::SetVolume(self.volume));
-            }
+            Action::VolumeBy(delta) => self.set_volume(fx, self.volume + delta),
+            Action::ToggleMute => self.toggle_mute(fx),
             Action::MoveSelection(delta) => {
                 if self.view == View::Settings {
                     self.move_setting_selection(delta);
@@ -155,15 +166,21 @@ impl AppState {
                     self.sidebar_selected = next as usize;
                     return;
                 }
-                let len = match self.view {
-                    View::Library => self.library.len(),
-                    View::Queue => self.queue.len(),
-                    View::Search => self.search.results.len(),
-                    _ => 0,
-                };
+                let len = self.visible_len();
                 if len > 0 {
                     let last = len as i32 - 1;
                     let next = (self.selected as i32 + delta).clamp(0, last);
+                    self.selected = next as usize;
+                }
+            }
+            Action::MovePage(pages) => {
+                if self.view == View::Library && self.sidebar_focus {
+                    return;
+                }
+                let len = self.visible_len();
+                if len > 0 {
+                    let delta = pages.saturating_mul(self.list_page_size() as i32);
+                    let next = (self.selected as i32 + delta).clamp(0, len as i32 - 1);
                     self.selected = next as usize;
                 }
             }
@@ -173,11 +190,9 @@ impl AppState {
                     self.open_source(fx, self.sidebar_selected);
                 }
                 View::Library => {
-                    if let Some(row) = self.library.get(self.selected).cloned() {
+                    if let Some((_, row)) = self.visible_row(self.selected) {
                         if self.enter_replaces_queue {
-                            // Desktop/NCM semantics: the list becomes the
-                            // listening context from this song onward.
-                            self.queue = self.library.clone();
+                            self.queue = self.visible_rows_owned();
                             self.queue_pos = Some(self.selected);
                         } else {
                             self.queue = vec![row.clone()];
@@ -188,40 +203,73 @@ impl AppState {
                             self.pending_fm_next = false;
                             self.fm_request_pending = false;
                         }
+                        self.reset_shuffle_order();
                         self.play_row(fx, row);
+                        self.clear_filter();
                         self.view = View::NowPlaying;
                     }
                 }
                 View::Queue => {
-                    if let Some(row) = self.queue.get(self.selected).cloned() {
-                        self.queue_pos = Some(self.selected);
+                    if let Some((underlying, row)) = self.visible_row(self.selected) {
+                        self.queue_pos = Some(underlying);
+                        self.reset_shuffle_order();
                         self.play_row(fx, row);
+                        self.clear_filter();
                         self.view = View::NowPlaying;
                     }
                 }
                 View::Search if !self.search.input => {
-                    if let Some(row) = self.search.results.get(self.selected).cloned() {
-                        self.queue = self.search.results.clone();
+                    if let Some((_, row)) = self.visible_row(self.selected) {
+                        self.queue = self.visible_rows_owned();
                         self.queue_pos = Some(self.selected);
                         self.queue_source = Source::Search;
                         self.pending_fm_next = false;
                         self.fm_request_pending = false;
+                        self.reset_shuffle_order();
                         self.play_row(fx, row);
+                        self.clear_filter();
                         self.view = View::NowPlaying;
                     }
                 }
                 _ => {}
             },
+            Action::AddSelectedToQueue => {
+                if let Some((_, row)) = self.visible_row(self.selected) {
+                    self.queue.push(row);
+                    self.shuffle_order.clear();
+                    self.status = Some(crate::i18n::t(Key::AddedToQueue).into());
+                }
+            }
             Action::NextTrack => self.step_queue(fx, 1, false),
             Action::PrevTrack => self.step_queue(fx, -1, false),
             Action::ToggleHelp => self.show_help = true,
-            Action::CycleMode => {
+            Action::ToggleShuffle => {
+                self.shuffle = !self.shuffle;
+                self.reset_shuffle_order();
+            }
+            Action::CycleRepeat => {
                 self.play_mode = self.play_mode.next();
             }
-            Action::SetVolumeTo(ratio) => {
-                self.volume = ratio.clamp(0.0, 1.0);
-                fx.player.send(PlayerCommand::SetVolume(self.volume));
+            Action::StartFilter => {
+                if matches!(self.view, View::Library | View::Queue)
+                    || self.view == View::Search && !self.search.input
+                {
+                    self.filter.start();
+                    self.selected = 0;
+                    if self.view == View::Library {
+                        self.sidebar_focus = false;
+                    }
+                }
             }
+            Action::ToggleLibraryFocus => {
+                if self.view == View::Library && self.sidebar_visible() {
+                    self.sidebar_focus = !self.sidebar_focus;
+                    if self.sidebar_focus {
+                        self.sidebar_selected = self.source_index();
+                    }
+                }
+            }
+            Action::SetVolumeTo(ratio) => self.set_volume(fx, ratio.clamp(0.0, 1.0)),
             Action::ToggleLike => self.toggle_like(fx),
             Action::OpenSource(index) => self.open_source(fx, index),
             Action::SelectSetting(index) => self.select_setting(index),
@@ -234,14 +282,10 @@ impl AppState {
                 self.apply_fm_load_failed(session, message);
             }
             Action::SelectIndex(index) => {
-                let len = match self.view {
-                    View::Library => self.library.len(),
-                    View::Queue => self.queue.len(),
-                    View::Search => self.search.results.len(),
-                    _ => 0,
-                };
+                let len = self.visible_len();
                 if index < len {
                     self.selected = index;
+                    self.filter.input = false;
                     match self.view {
                         View::Library => self.sidebar_focus = false,
                         View::Search => self.search.input = false,
@@ -474,6 +518,43 @@ impl AppState {
                     self.ensure_placeholder();
                 }
             }
+        }
+    }
+
+    fn navigate_back(&mut self, fx: &Effects) {
+        self.clear_filter();
+        if self.view == View::Settings {
+            self.cancel_settings(fx);
+        } else if self.view == View::Search && !self.search.input {
+            self.search.input = true;
+        } else if self.view == View::Library && !self.sidebar_focus && self.sidebar_visible() {
+            self.sidebar_focus = true;
+            self.sidebar_selected = self.source_index();
+        } else {
+            self.sidebar_focus = false;
+            self.view = View::NowPlaying;
+        }
+    }
+
+    fn set_volume(&mut self, fx: &Effects, volume: f32) {
+        let volume = volume.clamp(0.0, 1.5);
+        if volume == 0.0 && self.volume > 0.0 {
+            self.volume_before_mute = Some(self.volume);
+        } else if volume > 0.0 {
+            self.volume_before_mute = None;
+        }
+        self.volume = volume;
+        fx.player.send(PlayerCommand::SetVolume(volume));
+    }
+
+    fn toggle_mute(&mut self, fx: &Effects) {
+        if self.volume > 0.0 {
+            let previous = self.volume;
+            self.set_volume(fx, 0.0);
+            self.volume_before_mute = Some(previous);
+        } else {
+            let volume = self.volume_before_mute.take().unwrap_or(1.0);
+            self.set_volume(fx, volume);
         }
     }
 }
