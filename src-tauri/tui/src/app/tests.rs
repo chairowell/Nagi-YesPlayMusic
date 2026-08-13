@@ -274,6 +274,33 @@ async fn first_click_on_the_selected_library_row_only_moves_focus_from_the_sideb
 }
 
 #[tokio::test]
+async fn mouse_click_over_a_help_overlay_only_dismisses_the_overlay() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.show_help = true;
+    let mut hits = ui::Hits::default();
+    hits.tabs.push((Rect::new(4, 1, 20, 1), View::Search));
+
+    apply(
+        &mut state,
+        Action::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        }),
+        &fx,
+        &hits,
+    );
+
+    assert!(!state.show_help);
+    assert_eq!(state.view, View::Library);
+    assert!(state.queue.is_empty());
+}
+
+#[tokio::test]
 async fn narrowing_the_terminal_clears_hidden_sidebar_focus() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);

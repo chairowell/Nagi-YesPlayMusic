@@ -194,6 +194,7 @@ pub struct AppState {
     original_cover: Option<OriginalCover>,
     pub idle_art: PixelCover,
     pub library_synced: bool,
+    library_request: u64,
     /// Idle art pre-rendered at the playing-cover size, so the loading
     /// placeholder swaps to the real cover without a size jump.
     pub placeholder: Option<PixelCover>,
@@ -273,6 +274,7 @@ impl AppState {
             original_cover: None,
             idle_art: pixel::vinyl(theme.palette, theme.bg, idle_cells.0, idle_cells.1),
             library_synced: false,
+            library_request: 0,
             placeholder: None,
             idle_bytes,
             idle_path,
@@ -971,6 +973,10 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
 fn apply(state: &mut AppState, action: Action, fx: &Effects, hits: &ui::Hits) {
     match action {
         Action::Mouse(mouse) => {
+            if state.show_help {
+                state.update(Action::Mouse(mouse), fx);
+                return;
+            }
             let selected = if state.view == View::Search && state.search.input
                 || state.view == View::Library && state.sidebar_focus
             {

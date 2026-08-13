@@ -193,7 +193,8 @@ impl AppState {
             .load(stamp.uid, "liked")
             .map(|rows| rows.into_iter().map(|row| row.into_song_row()).collect())
             .unwrap_or_default();
-        spawn_fetch_library(fx, stamp, session);
+        let request = self.begin_library_request();
+        spawn_fetch_library(fx, stamp, request, session);
     }
 
     fn personal_request(&self, fx: &Effects) -> Option<(SessionStamp, Session)> {
@@ -229,18 +230,25 @@ impl AppState {
             .map(|rows| rows.into_iter().map(|row| row.into_song_row()).collect())
             .unwrap_or_default();
         if let Some((stamp, session)) = self.personal_request(fx) {
-            spawn_fetch_source(fx, stamp, session, source);
+            let request = self.begin_library_request();
+            spawn_fetch_source(fx, stamp, request, session, source);
         }
+    }
+
+    fn begin_library_request(&mut self) -> u64 {
+        self.library_request += 1;
+        self.library_request
     }
 
     pub(super) fn apply_library_loaded(
         &mut self,
         fx: &Effects,
         session: SessionStamp,
+        request: u64,
         source: Source,
         rows: Vec<SongRow>,
     ) {
-        if !self.session.matches(session) {
+        if !self.session.matches(session) || request != self.library_request {
             return;
         }
         if let Some(name) = cache_name(source) {
@@ -253,6 +261,17 @@ impl AppState {
             self.library = rows;
             self.selected = 0;
             self.library_synced = true;
+        }
+    }
+
+    pub(super) fn apply_library_failed(
+        &mut self,
+        session: SessionStamp,
+        request: u64,
+        message: String,
+    ) {
+        if self.session.matches(session) && request == self.library_request {
+            self.status = Some(message);
         }
     }
 
@@ -353,12 +372,6 @@ impl AppState {
     #[cfg(test)]
     fn begin_like_request_for_test(&mut self, id: i64, mutation: u64) {
         self.like_in_flight.insert(id, mutation);
-    }
-
-    pub(super) fn apply_personal_notice(&mut self, session: SessionStamp, message: String) {
-        if self.session.matches(session) {
-            self.status = Some(message);
-        }
     }
 
     fn start_like_request(
@@ -521,7 +534,7 @@ fn spawn_login(fx: &Effects, attempt: u64) {
     });
 }
 
-fn spawn_fetch_library(fx: &Effects, stamp: SessionStamp, session: Session) {
+fn spawn_fetch_library(fx: &Effects, stamp: SessionStamp, request: u64, session: Session) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     let liked_session = session.clone();
@@ -529,11 +542,13 @@ fn spawn_fetch_library(fx: &Effects, stamp: SessionStamp, session: Session) {
         let action = match ncm.liked_songs(stamp.uid, Some(&liked_session)).await {
             Ok(rows) => Action::LibraryLoaded {
                 session: stamp,
+                request,
                 source: Source::Liked,
                 rows,
             },
-            Err(error) => Action::PersonalNotice {
+            Err(error) => Action::LibraryFailed {
                 session: stamp,
+                request,
                 message: i18n::t_library_load_failed(error),
             },
         };
@@ -551,7 +566,13 @@ fn spawn_fetch_library(fx: &Effects, stamp: SessionStamp, session: Session) {
     });
 }
 
-fn spawn_fetch_source(fx: &Effects, stamp: SessionStamp, session: Session, source: Source) {
+fn spawn_fetch_source(
+    fx: &Effects,
+    stamp: SessionStamp,
+    request: u64,
+    session: Session,
+    source: Source,
+) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
@@ -565,11 +586,13 @@ fn spawn_fetch_source(fx: &Effects, stamp: SessionStamp, session: Session, sourc
         let action = match result {
             Ok(rows) => Action::LibraryLoaded {
                 session: stamp,
+                request,
                 source,
                 rows,
             },
-            Err(error) => Action::PersonalNotice {
+            Err(error) => Action::LibraryFailed {
                 session: stamp,
+                request,
                 message: i18n::t_library_load_failed(error),
             },
         };

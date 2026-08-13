@@ -141,8 +141,14 @@ pub enum Action {
     },
     LibraryLoaded {
         session: SessionStamp,
+        request: u64,
         source: Source,
         rows: Vec<SongRow>,
+    },
+    LibraryFailed {
+        session: SessionStamp,
+        request: u64,
+        message: String,
     },
     FmMore {
         session: SessionStamp,
@@ -176,10 +182,6 @@ pub enum Action {
         mutation: u64,
         attempted_like: bool,
         error: Option<String>,
-    },
-    PersonalNotice {
-        session: SessionStamp,
-        message: String,
     },
     LyricsLoaded {
         generation: u64,

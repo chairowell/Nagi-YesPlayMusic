@@ -203,10 +203,7 @@ impl Ncm {
             .playlist_track_all(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
-        let songs = response.body["songs"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let songs = response_array(&response.body, &["songs"])?;
         Ok(songs.iter().map(song_row).collect())
     }
 
@@ -232,10 +229,10 @@ impl Ncm {
             .likelist(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpUserPlaylist, error)))?;
-        Ok(response.body["ids"]
-            .as_array()
-            .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
-            .unwrap_or_default())
+        Ok(response_array(&response.body, &["ids"])?
+            .iter()
+            .filter_map(Value::as_i64)
+            .collect())
     }
 
     pub async fn daily_songs(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
@@ -244,10 +241,7 @@ impl Ncm {
             .recommend_songs(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
-        let songs = response.body["data"]["dailySongs"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let songs = response_array(&response.body, &["data", "dailySongs"])?;
         Ok(songs.iter().map(song_row_flex).collect())
     }
 
@@ -257,10 +251,7 @@ impl Ncm {
             .personal_fm(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
-        let songs = response.body["data"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let songs = response_array(&response.body, &["data"])?;
         Ok(songs.iter().map(song_row_flex).collect())
     }
 
@@ -282,10 +273,7 @@ impl Ncm {
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
         let has_more = response.body["hasMore"].as_bool();
-        let items = response.body["data"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let items = response_array(&response.body, &["data"])?;
         let rows = items
             .iter()
             .map(|item| {
@@ -450,6 +438,25 @@ where
 
 fn like_error() -> anyhow::Error {
     anyhow!(i18n::t(Key::LikeFailed))
+}
+
+fn response_array<'a>(body: &'a Value, path: &[&str]) -> Result<&'a [Value]> {
+    if body
+        .get("code")
+        .is_some_and(|code| code.as_i64() != Some(200))
+    {
+        return Err(anyhow!(i18n::t(Key::ApiLibraryPayloadMissing)));
+    }
+    let mut value = body;
+    for segment in path {
+        value = value
+            .get(*segment)
+            .ok_or_else(|| anyhow!(i18n::t(Key::ApiLibraryPayloadMissing)))?;
+    }
+    value
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| anyhow!(i18n::t(Key::ApiLibraryPayloadMissing)))
 }
 
 fn parse_playback_source(data: &Value) -> Result<PlaybackSource> {
@@ -701,6 +708,37 @@ mod tests {
 
         assert_eq!(calls, vec![0]);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn library_payloads_distinguish_an_explicit_empty_list_from_missing_data() {
+        let empty_payloads: [(Value, &[&str]); 5] = [
+            (serde_json::json!({ "code": 200, "songs": [] }), &["songs"]),
+            (serde_json::json!({ "code": 200, "ids": [] }), &["ids"]),
+            (
+                serde_json::json!({ "code": 200, "data": { "dailySongs": [] } }),
+                &["data", "dailySongs"],
+            ),
+            (serde_json::json!({ "code": 200, "data": [] }), &["data"]),
+            (serde_json::json!({ "data": [] }), &["data"]),
+        ];
+        for (body, path) in &empty_payloads {
+            assert!(response_array(body, path).unwrap().is_empty());
+        }
+
+        let missing_payloads: [(Value, &[&str]); 5] = [
+            (serde_json::json!({ "code": 200 }), &["songs"]),
+            (serde_json::json!({ "code": 200 }), &["ids"]),
+            (
+                serde_json::json!({ "code": 200, "data": {} }),
+                &["data", "dailySongs"],
+            ),
+            (serde_json::json!({ "code": 200 }), &["data"]),
+            (serde_json::json!({ "code": 301, "data": [] }), &["data"]),
+        ];
+        for (body, path) in &missing_payloads {
+            assert!(response_array(body, path).is_err());
+        }
     }
 
     #[test]

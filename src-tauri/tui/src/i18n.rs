@@ -85,6 +85,7 @@ pub enum Key {
     ApiInvalidSession,
     OpUserPlaylist,
     ApiLikedPlaylistMissing,
+    ApiLibraryPayloadMissing,
     OpPlaylistTracks,
     OpSongUrl,
     ApiPlaybackUrlUnavailable,
@@ -263,6 +264,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::ApiInvalidSession => "登录态无效（拿不到账号 id）",
             Key::OpUserPlaylist => "获取用户歌单",
             Key::ApiLikedPlaylistMissing => "没有找到「我喜欢的音乐」歌单",
+            Key::ApiLibraryPayloadMissing => "服务端没有返回有效的曲库数据",
             Key::OpPlaylistTracks => "获取歌单歌曲",
             Key::OpSongUrl => "获取播放地址",
             Key::ApiPlaybackUrlUnavailable => {
@@ -341,6 +343,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::ApiInvalidSession => "Invalid session (account id is unavailable)",
             Key::OpUserPlaylist => "load user playlists",
             Key::ApiLikedPlaylistMissing => "Liked Songs playlist not found",
+            Key::ApiLibraryPayloadMissing => "The server returned no valid library data",
             Key::OpPlaylistTracks => "load playlist tracks",
             Key::OpSongUrl => "get the playback URL",
             Key::ApiPlaybackUrlUnavailable => {
@@ -419,6 +422,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::ApiInvalidSession => "ログイン情報が無効です（アカウントIDを取得できません）",
             Key::OpUserPlaylist => "ユーザープレイリストの取得",
             Key::ApiLikedPlaylistMissing => "お気に入りプレイリストが見つかりません",
+            Key::ApiLibraryPayloadMissing => "サーバーから有効なライブラリデータが返されませんでした",
             Key::OpPlaylistTracks => "プレイリスト曲の取得",
             Key::OpSongUrl => "再生URLの取得",
             Key::ApiPlaybackUrlUnavailable => {

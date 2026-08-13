@@ -140,6 +140,7 @@ async fn personal_results_from_the_previous_account_are_ignored_and_not_saved_fo
     state.update(
         Action::LibraryLoaded {
             session: first,
+            request: 0,
             source: Source::Liked,
             rows: vec![row(11)],
         },
@@ -156,6 +157,7 @@ async fn personal_results_from_the_previous_account_are_ignored_and_not_saved_fo
     state.update(
         Action::LibraryLoaded {
             session: first,
+            request: 0,
             source: Source::Liked,
             rows: vec![row(11)],
         },
@@ -176,6 +178,7 @@ async fn personal_results_from_the_previous_account_are_ignored_and_not_saved_fo
     state.update(
         Action::LibraryLoaded {
             session: second,
+            request: 0,
             source: Source::Liked,
             rows: vec![row(22)],
         },
@@ -201,6 +204,58 @@ async fn personal_results_from_the_previous_account_are_ignored_and_not_saved_fo
         fx.store.load(second.uid, "liked").unwrap()[0].id,
         second.uid
     );
+}
+
+#[tokio::test]
+async fn an_older_visit_cannot_overwrite_the_latest_library_result_or_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let attempt = state.session.begin_login();
+    let session = state
+        .session
+        .accept_login(attempt, 42, "listener".into())
+        .unwrap();
+    state.library_source = Source::Daily;
+    let first = state.begin_library_request();
+    let second = state.begin_library_request();
+
+    state.update(
+        Action::LibraryLoaded {
+            session,
+            request: second,
+            source: Source::Daily,
+            rows: vec![row(2)],
+        },
+        &fx,
+    );
+    state.update(
+        Action::LibraryLoaded {
+            session,
+            request: first,
+            source: Source::Daily,
+            rows: vec![row(1)],
+        },
+        &fx,
+    );
+    state.update(
+        Action::LibraryFailed {
+            session,
+            request: first,
+            message: "stale failure".into(),
+        },
+        &fx,
+    );
+
+    assert_eq!(state.library[0].id, 2);
+    assert_ne!(state.status.as_deref(), Some("stale failure"));
+    for _ in 0..50 {
+        if fx.store.load(session.uid, "daily").is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(fx.store.load(session.uid, "daily").unwrap()[0].id, 2);
 }
 
 #[tokio::test]

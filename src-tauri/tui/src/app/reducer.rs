@@ -242,9 +242,15 @@ impl AppState {
             }
             Action::LibraryLoaded {
                 session,
+                request,
                 source,
                 rows,
-            } => self.apply_library_loaded(fx, session, source, rows),
+            } => self.apply_library_loaded(fx, session, request, source, rows),
+            Action::LibraryFailed {
+                session,
+                request,
+                message,
+            } => self.apply_library_failed(session, request, message),
             Action::SearchResults { seq, query, rows } => {
                 if self.search.accept(seq, &query, rows) && !self.search.results.is_empty() {
                     self.selected = 0;
@@ -264,9 +270,6 @@ impl AppState {
                 attempted_like,
                 error,
             } => self.apply_like_finished(fx, session, id, mutation, attempted_like, error),
-            Action::PersonalNotice { session, message } => {
-                self.apply_personal_notice(session, message);
-            }
             Action::LyricsLoaded { generation, lines } => {
                 if generation == self.generation {
                     self.lyrics = lines;
