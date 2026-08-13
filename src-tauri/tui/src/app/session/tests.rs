@@ -46,6 +46,44 @@ fn row(id: i64) -> SongRow {
 }
 
 #[tokio::test]
+async fn restored_track_uses_cached_likes_until_live_ids_arrive() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let cached = [row(7), row(9)]
+        .iter()
+        .map(crate::store::StoredSong::from)
+        .collect::<Vec<_>>();
+    fx.store.save(42, "liked", &cached).unwrap();
+
+    let mut state = AppState::new(&Config::default());
+    state.restore_playback(crate::store::StoredPlayback {
+        queue: vec![crate::store::StoredSong::from(&row(7))],
+        current: Some(crate::store::StoredSong::from(&row(7))),
+        queue_pos: Some(0),
+        position_ms: 12_000,
+        volume: 0.8,
+        volume_before_mute: None,
+        play_mode: super::super::PlayMode::Off,
+        shuffle: false,
+        queue_source: Source::Liked,
+    });
+    assert_eq!(state.current_track_id, Some(7));
+    assert!(state.liked.is_empty());
+
+    let attempt = state.session.begin_login();
+    state.apply_login_succeeded(&fx, attempt, candidate("listener"), 42, "listener".into());
+
+    assert_eq!(state.liked, HashSet::from([7, 9]));
+    assert!(state
+        .current_track_id
+        .is_some_and(|id| state.liked.contains(&id)));
+
+    let stamp = state.session.current_stamp().unwrap();
+    state.apply_liked_ids(stamp, HashSet::from([9]));
+    assert_eq!(state.liked, HashSet::from([9]));
+}
+
+#[tokio::test]
 async fn only_the_current_login_attempt_can_commit_its_candidate() {
     let directory = tempfile::tempdir().unwrap();
     let session_path = directory.path().join("session.json");

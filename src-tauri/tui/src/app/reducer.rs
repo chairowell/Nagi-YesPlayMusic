@@ -8,7 +8,7 @@ use crate::player::PlayerCommand;
 
 use super::{
     apply_pixel_cover, song_row_from_resolved, spawn_cover_load, spawn_cover_prefetch,
-    spawn_render_idle, spawn_resolve, AppState, Effects, PREVIEW_CELLS,
+    spawn_render_idle, spawn_resolve, AppState, Effects, PlaybackModeSlot, PREVIEW_CELLS,
 };
 
 impl AppState {
@@ -253,6 +253,11 @@ impl AppState {
             }
             Action::CycleRepeat => {
                 self.play_mode = self.play_mode.next();
+            }
+            Action::CyclePlaybackMode => {
+                (self.shuffle, self.play_mode) =
+                    PlaybackModeSlot::from_parts(self.shuffle, self.play_mode).next_parts();
+                self.reset_shuffle_order();
             }
             Action::StartFilter => {
                 if matches!(self.view, View::Library | View::Queue)

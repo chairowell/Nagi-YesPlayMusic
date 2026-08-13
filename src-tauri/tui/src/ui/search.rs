@@ -17,6 +17,7 @@ const MIN_LIST_WIDTH: u16 = 53;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
+    let icons = crate::icons::for_style(state.config.icons);
     let [input_area, _, list_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -32,7 +33,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("  / ", Style::new().fg(theme.accent)),
+            Span::styled(
+                format!("  {} ", icons.search),
+                Style::new().fg(theme.accent),
+            ),
             Span::styled(format!("{}{cursor}", state.search.query), query_style),
             Span::styled(
                 if state.search.query.is_empty() && state.search.input {
@@ -114,7 +118,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
             Style::new().fg(theme.fg)
         };
         let liked = if state.liked.contains(&row.id) {
-            "♥"
+            icons.heart
         } else {
             " "
         };

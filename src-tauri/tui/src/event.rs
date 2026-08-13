@@ -92,6 +92,16 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
                     return Some(Action::ToggleLike);
                 }
             }
+            for (rect, _) in &hits.play {
+                if rect.contains(position) {
+                    return Some(Action::TogglePlay);
+                }
+            }
+            for (rect, _) in &hits.playback_mode {
+                if rect.contains(position) {
+                    return Some(Action::CyclePlaybackMode);
+                }
+            }
             for (rect, index) in &hits.sidebar {
                 if rect.contains(position) {
                     return Some(Action::OpenSource(*index));

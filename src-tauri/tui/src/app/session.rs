@@ -194,6 +194,7 @@ impl AppState {
             .load(stamp.uid, "liked")
             .map(|rows| rows.into_iter().map(|row| row.into_song_row()).collect())
             .unwrap_or_default();
+        self.liked = self.library.iter().map(|row| row.id).collect();
         let request = self.begin_library_request();
         spawn_fetch_library(fx, stamp, request, session);
     }
@@ -559,11 +560,14 @@ fn spawn_fetch_library(fx: &Effects, stamp: SessionStamp, request: u64, session:
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        if let Ok(ids) = ncm.liked_ids(stamp.uid, Some(&session)).await {
-            let _ = actions.send(Action::LikedIds {
-                session: stamp,
-                ids,
-            });
+        match ncm.liked_ids(stamp.uid, Some(&session)).await {
+            Ok(ids) => {
+                let _ = actions.send(Action::LikedIds {
+                    session: stamp,
+                    ids,
+                });
+            }
+            Err(_) => tracing::warn!("liked IDs load failed"),
         }
     });
 }

@@ -1,7 +1,7 @@
 use yesplaymusic_core::cache::AudioQuality;
 
 use crate::action::View;
-use crate::config::{Config, CoverMode};
+use crate::config::{Config, CoverMode, IconStyle};
 use crate::i18n::{self, Key};
 use crate::theme::{Theme, BUILTIN_NAMES};
 
@@ -17,10 +17,11 @@ pub(crate) enum SettingField {
     ProgressStyle,
     PixelDetail,
     QueueBehavior,
+    Icons,
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Theme,
         Self::Language,
         Self::Quality,
@@ -29,6 +30,7 @@ impl SettingField {
         Self::ProgressStyle,
         Self::PixelDetail,
         Self::QueueBehavior,
+        Self::Icons,
     ];
 
     pub(crate) const fn label(self) -> Key {
@@ -41,6 +43,7 @@ impl SettingField {
             Self::ProgressStyle => Key::SettingProgressStyle,
             Self::PixelDetail => Key::SettingPixelDetail,
             Self::QueueBehavior => Key::SettingQueueBehavior,
+            Self::Icons => Key::SettingIcons,
         }
     }
 }
@@ -138,6 +141,10 @@ impl AppState {
             SettingField::QueueBehavior => {
                 self.config.enter_replaces_queue = !self.config.enter_replaces_queue;
             }
+            SettingField::Icons => {
+                const VALUES: &[IconStyle] = &[IconStyle::Unicode, IconStyle::Nerd];
+                self.config.icons = cycle(VALUES, &self.config.icons, delta);
+            }
         }
         self.apply_config_preview(fx, &before, None);
     }
@@ -210,6 +217,11 @@ impl AppState {
                 i18n::t(Key::SettingQueueList)
             } else {
                 i18n::t(Key::SettingQueueSingle)
+            }
+            .to_owned(),
+            SettingField::Icons => match self.config.icons {
+                IconStyle::Unicode => "Unicode",
+                IconStyle::Nerd => "Nerd Font",
             }
             .to_owned(),
         }

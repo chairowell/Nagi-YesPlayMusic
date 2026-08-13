@@ -7,6 +7,7 @@ mod config;
 mod cover_cache;
 mod event;
 mod i18n;
+mod icons;
 mod lyrics;
 pub mod pixel;
 mod player;

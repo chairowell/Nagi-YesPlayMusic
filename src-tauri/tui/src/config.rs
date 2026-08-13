@@ -15,6 +15,14 @@ pub enum CoverMode {
     Original,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IconStyle {
+    #[default]
+    Unicode,
+    Nerd,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -43,6 +51,8 @@ pub struct Config {
     /// Progress bar look: "dot" = thin line with a playhead dot,
     /// "bar" = thick block line, no dot.
     pub progress_style: String,
+    /// UI glyph palette; Nerd requires a Nerd Font in the terminal.
+    pub icons: IconStyle,
     /// Cover renderer: palette pixel art or terminal graphics protocol.
     pub cover_mode: CoverMode,
     /// Pixel sampling detail (0.5 chunky … 2.0 fine). The final cell
@@ -61,6 +71,7 @@ impl Default for Config {
             layout: "side".into(),
             idle_art: None,
             progress_style: "dot".into(),
+            icons: IconStyle::Unicode,
             cover_mode: CoverMode::Pixel,
             pixel_scale: 1.0,
         }
@@ -108,6 +119,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm | one-dark | transparent
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
+# icons = "unicode"           # unicode（无需特殊字体）| nerd（需要 Nerd Font）
 # cover_mode = "pixel"        # pixel（主题像素画）| original（终端原图协议，不支持时回退 pixel）
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
@@ -224,6 +236,7 @@ mod tests {
         assert_eq!(config.quality, AudioQuality::High320);
         assert_eq!(config.theme, "db16");
         assert_eq!(config.cover_mode, CoverMode::Pixel);
+        assert_eq!(config.icons, IconStyle::Unicode);
         assert_eq!(config.cache_limit_mib, None);
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
@@ -237,6 +250,9 @@ mod tests {
 
         let parsed: Config = toml::from_str("cover_mode = \"original\"").unwrap();
         assert_eq!(parsed.cover_mode, CoverMode::Original);
+
+        let parsed: Config = toml::from_str("icons = \"nerd\"").unwrap();
+        assert_eq!(parsed.icons, IconStyle::Nerd);
 
         let parsed: Config = toml::from_str("cache_limit_mib = 4096").unwrap();
         assert_eq!(parsed.cache_limit_mib, Some(4096));
@@ -283,12 +299,14 @@ mod tests {
                 layout: "stacked".into(),
                 idle_art: Some("~/cover.png".into()),
                 progress_style: "bar".into(),
+                icons: IconStyle::Nerd,
                 cover_mode: CoverMode::Original,
                 pixel_scale: 1.5,
             };
 
             let encoded = toml::to_string(&config).unwrap();
             assert!(encoded.contains(&format!("quality = \"{name}\"")));
+            assert!(encoded.contains("icons = \"nerd\""));
             let decoded: Config = toml::from_str(&encoded).unwrap();
             assert_eq!(decoded, config);
         }

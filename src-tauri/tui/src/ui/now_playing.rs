@@ -220,8 +220,7 @@ fn draw_meta(frame: &mut Frame, state: &AppState, area: Rect, centered_text: boo
     frame.render_widget(paragraph, area);
 }
 
-/// Rows of synced lyrics with the current line pinned mid-window:
-/// context dimmed, current line accented, its translation right below.
+/// Rows of synced lyrics with the current pair pinned mid-window.
 fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
     let theme = &state.theme;
     let current = crate::lyrics::line_index_at(&state.lyrics, state.position);
@@ -252,16 +251,20 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
             break;
         }
         let is_current = Some(index) == current;
-        let style = if is_current {
-            Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
+        let original_style = if is_current {
+            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(theme.dim)
         };
-        let marker = if is_current { "> " } else { "  " };
-        lines.push(Line::from(Span::styled(
-            format!("{marker}{}", lyric.text),
-            style,
-        )));
+        let marker_style = if is_current {
+            Style::new().fg(theme.accent)
+        } else {
+            original_style
+        };
+        lines.push(Line::from(vec![
+            Span::styled(if is_current { "▎ " } else { "  " }, marker_style),
+            Span::styled(lyric.text.clone(), original_style),
+        ]));
         used += 1;
         // Every line carries its translation; the current pair reads brighter.
         if let Some(translation) = &lyric.translation {
@@ -272,10 +275,15 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
                     Style::new().fg(theme.faint)
                 }
                 .add_modifier(Modifier::ITALIC);
-                lines.push(Line::from(Span::styled(
-                    format!("  {translation}"),
-                    translation_style,
-                )));
+                let marker_style = if is_current {
+                    Style::new().fg(theme.accent)
+                } else {
+                    translation_style
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(if is_current { "▎ " } else { "  " }, marker_style),
+                    Span::styled(translation.clone(), translation_style),
+                ]));
                 used += 1;
             }
         }
@@ -285,8 +293,19 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
 
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
-    let icon = if state.paused { "⏸" } else { "▶" };
-    let repeat_icon = state.play_mode.icon();
+    let icons = crate::icons::for_style(state.config.icons);
+    let play_icon = if state.paused {
+        icons.play
+    } else {
+        icons.pause
+    };
+    let mode = crate::app::PlaybackModeSlot::from_parts(state.shuffle, state.play_mode);
+    let mode_icon = match mode {
+        crate::app::PlaybackModeSlot::Sequential => icons.sequential,
+        crate::app::PlaybackModeSlot::RepeatList => icons.repeat_list,
+        crate::app::PlaybackModeSlot::RepeatOne => icons.repeat_one,
+        crate::app::PlaybackModeSlot::Shuffle => icons.shuffle,
+    };
     let liked = state
         .current_track_id
         .map(|id| state.liked.contains(&id))
@@ -297,7 +316,27 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         .map(format_duration)
         .unwrap_or_else(|| "--:--".into());
 
-    let fixed = icon.len() + elapsed.len() + total.len() + display_width(repeat_icon) + 25;
+    let play_slot_width = display_width(icons.play).max(display_width(icons.pause));
+    let heart_slot_width = display_width(icons.heart).max(display_width(icons.heart_outline));
+    let mode_slot_width = [
+        icons.sequential,
+        icons.repeat_list,
+        icons.repeat_one,
+        icons.shuffle,
+    ]
+    .into_iter()
+    .map(display_width)
+    .max()
+    .unwrap_or(1);
+    const VOLUME_CELLS: usize = 10;
+    let fixed = play_slot_width
+        + display_width(&elapsed)
+        + display_width(&total)
+        + heart_slot_width
+        + mode_slot_width
+        + display_width(icons.volume)
+        + VOLUME_CELLS
+        + 21;
     let bar_width = (area.width as usize).saturating_sub(fixed).max(8);
     let ratio = match state.duration {
         Some(duration) if !duration.is_zero() => {
@@ -326,8 +365,19 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
             ),
         ]
     };
+    hits.play.push((
+        Rect {
+            x: area.x + 1,
+            y: area.y,
+            width: display_width(play_icon) as u16,
+            height: 1,
+        },
+        (),
+    ));
     let mut spans = vec![
-        Span::styled(format!(" {icon} "), Style::new().fg(theme.fg)),
+        Span::raw(" "),
+        Span::styled(play_icon, Style::new().fg(theme.fg)),
+        Span::raw(" ".repeat(play_slot_width.saturating_sub(display_width(play_icon)) + 1)),
         Span::styled(elapsed, Style::new().fg(theme.dim)),
         Span::raw(" "),
     ];
@@ -345,7 +395,11 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         Rect {
             x: heart_x,
             y: area.y,
-            width: 1,
+            width: if liked {
+                display_width(icons.heart) as u16
+            } else {
+                display_width(icons.heart_outline) as u16
+            },
             height: 1,
         },
         (),
@@ -353,35 +407,55 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
     spans.push(Span::raw("  "));
     // Filled+bright = liked, hollow+faint = not — glyph AND color both signal.
     if liked {
-        spans.push(Span::styled("♥", Style::new().fg(theme.accent2)));
+        spans.push(Span::styled(icons.heart, Style::new().fg(theme.accent2)));
+        spans.push(Span::raw(" ".repeat(
+            heart_slot_width.saturating_sub(display_width(icons.heart)),
+        )));
     } else {
-        spans.push(Span::styled("♡", Style::new().fg(theme.faint)));
+        spans.push(Span::styled(
+            icons.heart_outline,
+            Style::new().fg(theme.faint),
+        ));
+        spans.push(Span::raw(" ".repeat(
+            heart_slot_width.saturating_sub(display_width(icons.heart_outline)),
+        )));
     }
-    spans.push(Span::styled(
-        "  ⇆",
-        Style::new().fg(if state.shuffle {
-            theme.accent
-        } else {
-            theme.faint
-        }),
+    spans.push(Span::raw("  "));
+    let mode_x = area.x
+        + spans
+            .iter()
+            .map(|span| display_width(&span.content) as u16)
+            .sum::<u16>();
+    hits.playback_mode.push((
+        Rect {
+            x: mode_x,
+            y: area.y,
+            width: display_width(mode_icon) as u16,
+            height: 1,
+        },
+        (),
     ));
     spans.push(Span::styled(
-        format!(" {repeat_icon}"),
-        Style::new().fg(if state.play_mode == crate::app::PlayMode::Off {
+        mode_icon,
+        Style::new().fg(if mode == crate::app::PlaybackModeSlot::Sequential {
             theme.faint
         } else {
             theme.accent
         }),
     ));
-    // Battery-style volume: click or drag inside the bracket to set.
-    const VOLUME_CELLS: usize = 10;
+    spans.push(Span::raw(
+        " ".repeat(mode_slot_width.saturating_sub(display_width(mode_icon))),
+    ));
+    // Click or drag across the dot meter to set the volume.
     let filled = (state.volume.clamp(0.0, 1.0) * VOLUME_CELLS as f32).round() as usize;
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(icons.volume, Style::new().fg(theme.faint)));
+    spans.push(Span::raw(" "));
     let volume_x = spans
         .iter()
         .map(|span| display_width(&span.content) as u16)
         .sum::<u16>()
-        + area.x
-        + 3; // skip the "  [" prefix
+        + area.x;
     hits.volume.push((
         Rect {
             x: volume_x,
@@ -391,13 +465,14 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         },
         (),
     ));
-    spans.push(Span::styled("  [", Style::new().fg(theme.faint)));
-    spans.push(Span::styled("▮".repeat(filled), Style::new().fg(theme.dim)));
     spans.push(Span::styled(
-        "▯".repeat(VOLUME_CELLS - filled),
+        icons.volume_full.repeat(filled),
+        Style::new().fg(theme.dim),
+    ));
+    spans.push(Span::styled(
+        icons.volume_empty.repeat(VOLUME_CELLS - filled),
         Style::new().fg(theme.faint),
     ));
-    spans.push(Span::styled("]", Style::new().fg(theme.faint)));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -405,17 +480,35 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
 mod tests {
     use std::time::Duration;
 
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::Modifier;
     use ratatui::Terminal;
 
     use super::{draw_meta, draw_progress, lyric_window, menu_entries};
-    use crate::action::MenuEntry;
-    use crate::app::{AppState, NowPlaying};
+    use crate::action::{Action, MenuEntry};
+    use crate::app::{AppState, NowPlaying, PlayMode};
     use crate::config::Config;
+    use crate::event;
     use crate::lyrics::LyricLine;
     use crate::ui::Hits;
+
+    fn rect_text(buffer: &Buffer, rect: Rect) -> String {
+        (rect.x..rect.right())
+            .map(|x| buffer[(x, rect.y)].symbol())
+            .collect()
+    }
+
+    fn click(rect: Rect) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
 
     #[test]
     fn lyrics_use_four_distinct_original_and_translation_styles() {
@@ -435,19 +528,32 @@ mod tests {
         ];
 
         let lines = lyric_window(&state, 4);
-        let styles = lines
-            .iter()
-            .map(|line| line.spans[0].style)
-            .collect::<Vec<_>>();
+        assert_eq!(lines[0].spans[0].content, "▎ ");
+        assert_eq!(lines[0].spans[0].style.fg, Some(state.theme.accent));
+        assert_eq!(lines[0].spans[1].style.fg, Some(state.theme.fg));
+        assert!(lines[0].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::BOLD));
 
-        assert_eq!(styles[0].fg, Some(state.theme.accent));
-        assert!(styles[0].add_modifier.contains(Modifier::BOLD));
-        assert_eq!(styles[1].fg, Some(state.theme.fg));
-        assert!(styles[1].add_modifier.contains(Modifier::ITALIC));
-        assert_eq!(styles[2].fg, Some(state.theme.dim));
-        assert!(!styles[2].add_modifier.contains(Modifier::ITALIC));
-        assert_eq!(styles[3].fg, Some(state.theme.faint));
-        assert!(styles[3].add_modifier.contains(Modifier::ITALIC));
+        assert_eq!(lines[1].spans[0].content, "▎ ");
+        assert_eq!(lines[1].spans[0].style.fg, Some(state.theme.accent));
+        assert_eq!(lines[1].spans[1].style.fg, Some(state.theme.fg));
+        assert!(lines[1].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::ITALIC));
+
+        assert_eq!(lines[2].spans[1].style.fg, Some(state.theme.dim));
+        assert!(!lines[2].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::ITALIC));
+        assert_eq!(lines[3].spans[1].style.fg, Some(state.theme.faint));
+        assert!(lines[3].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::ITALIC));
     }
 
     #[test]
@@ -479,6 +585,107 @@ mod tests {
         let progress = (0..80).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
         assert!(progress.contains('♥'));
         assert!(!progress.contains('♡'));
+    }
+
+    #[test]
+    fn progress_play_button_shows_the_action_and_uses_its_drawn_hit_target() {
+        for (paused, expected) in [(true, "▶"), (false, "⏸")] {
+            let mut state = AppState::new(&Config::default());
+            state.paused = paused;
+            let backend = TestBackend::new(100, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut hits = Hits::default();
+
+            terminal
+                .draw(|frame| draw_progress(frame, &state, frame.area(), &mut hits))
+                .unwrap();
+
+            let rect = hits.play[0].0;
+            assert_eq!(rect_text(terminal.backend().buffer(), rect), expected);
+            assert!(matches!(
+                event::mouse_action(click(rect), &hits, 0),
+                Some(Action::TogglePlay)
+            ));
+        }
+    }
+
+    #[test]
+    fn progress_projects_repeat_and_shuffle_into_one_clickable_slot() {
+        let cases = [
+            (false, PlayMode::Off, "→", false),
+            (false, PlayMode::List, "↺", true),
+            (false, PlayMode::One, "↺¹", true),
+            (true, PlayMode::Off, "⇆", true),
+            (true, PlayMode::List, "⇆", true),
+            (true, PlayMode::One, "⇆", true),
+        ];
+        for (shuffle, repeat, expected, active) in cases {
+            let mut state = AppState::new(&Config::default());
+            state.shuffle = shuffle;
+            state.play_mode = repeat;
+            state.volume = 0.4;
+            let backend = TestBackend::new(100, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut hits = Hits::default();
+
+            terminal
+                .draw(|frame| draw_progress(frame, &state, frame.area(), &mut hits))
+                .unwrap();
+
+            let buffer = terminal.backend().buffer();
+            let rect = hits.playback_mode[0].0;
+            assert_eq!(rect_text(buffer, rect), expected);
+            assert_eq!(
+                buffer[(rect.x, rect.y)].fg,
+                if active {
+                    state.theme.accent
+                } else {
+                    state.theme.faint
+                }
+            );
+            let rendered = (0..100)
+                .map(|x| buffer[(x, 0)].symbol())
+                .collect::<String>();
+            assert!(!rendered.contains('×'));
+            assert!(rendered.contains("●●●●○○○○○○"));
+            assert!(matches!(
+                event::mouse_action(click(rect), &hits, 0),
+                Some(Action::CyclePlaybackMode)
+            ));
+        }
+    }
+
+    #[test]
+    fn nerd_setting_switches_the_progress_controls_to_the_nerd_table() {
+        let config = Config {
+            icons: crate::config::IconStyle::Nerd,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.paused = true;
+        state.current_track_id = Some(42);
+        state.liked.insert(42);
+        state.shuffle = true;
+        state.volume = 0.5;
+        let icons = crate::icons::for_style(crate::config::IconStyle::Nerd);
+        let backend = TestBackend::new(100, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw_progress(frame, &state, frame.area(), &mut hits))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(rect_text(buffer, hits.play[0].0), icons.play);
+        assert_eq!(rect_text(buffer, hits.heart[0].0), icons.heart);
+        assert_eq!(rect_text(buffer, hits.playback_mode[0].0), icons.shuffle);
+        let rendered = (0..100)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(rendered.contains(icons.volume));
+        assert!(rendered.contains(&icons.volume_full.repeat(5)));
+        assert!(rendered.contains(&icons.volume_empty.repeat(5)));
     }
 
     #[test]

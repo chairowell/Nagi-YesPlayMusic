@@ -168,13 +168,34 @@ impl PlayMode {
             PlayMode::One => PlayMode::Off,
         }
     }
+}
 
-    /// Progress-row glyphs (the artifact mockup style), not words.
-    pub fn icon(self) -> &'static str {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlaybackModeSlot {
+    Sequential,
+    RepeatList,
+    RepeatOne,
+    Shuffle,
+}
+
+impl PlaybackModeSlot {
+    pub(crate) fn from_parts(shuffle: bool, repeat: PlayMode) -> Self {
+        if shuffle {
+            return Self::Shuffle;
+        }
+        match repeat {
+            PlayMode::Off => Self::Sequential,
+            PlayMode::List => Self::RepeatList,
+            PlayMode::One => Self::RepeatOne,
+        }
+    }
+
+    fn next_parts(self) -> (bool, PlayMode) {
         match self {
-            PlayMode::Off => "↺×",
-            PlayMode::List => "↺",
-            PlayMode::One => "↺¹",
+            Self::Sequential => (false, PlayMode::List),
+            Self::RepeatList => (false, PlayMode::One),
+            Self::RepeatOne => (true, PlayMode::Off),
+            Self::Shuffle => (false, PlayMode::Off),
         }
     }
 }

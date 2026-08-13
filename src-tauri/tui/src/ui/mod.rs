@@ -28,6 +28,8 @@ pub struct Hits {
     pub menu: Vec<(Rect, crate::action::MenuEntry)>,
     pub sidebar: Vec<(Rect, usize)>,
     pub heart: Vec<(Rect, ())>,
+    pub play: Vec<(Rect, ())>,
+    pub playback_mode: Vec<(Rect, ())>,
     pub volume: Vec<(Rect, ())>,
     /// Quit-confirm buttons: true = 确定退出, false = 点错了.
     pub confirm: Vec<(Rect, bool)>,
@@ -43,6 +45,8 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
     hits.menu.clear();
     hits.sidebar.clear();
     hits.heart.clear();
+    hits.play.clear();
+    hits.playback_mode.clear();
     hits.volume.clear();
     hits.confirm.clear();
     hits.settings_rows.clear();

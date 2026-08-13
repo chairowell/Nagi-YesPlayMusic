@@ -1,4 +1,4 @@
-//! Queue view: the current listening context; ▶ marks the playing row.
+//! Queue view: the current listening context; the play glyph marks its row.
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -13,6 +13,7 @@ use crate::ui::Hits;
 
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
+    let icons = crate::icons::for_style(state.config.icons);
     let rows = state.visible_rows(&state.queue);
     if rows.is_empty() {
         let message = if !state.filter.query.is_empty() && !state.queue.is_empty() {
@@ -47,7 +48,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         ));
         let playing = state.queue_pos == Some(*index);
         let selected = visible_index == state.selected && !state.filter.input;
-        let marker = if playing { "▶" } else { " " };
+        let marker = if playing { icons.play } else { " " };
         let style = if selected {
             Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else if playing {

@@ -229,6 +229,30 @@ async fn shuffle_and_repeat_change_independently() {
 }
 
 #[tokio::test]
+async fn clickable_mode_slot_cycles_the_four_visible_states() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    for expected in [
+        (false, PlayMode::List),
+        (false, PlayMode::One),
+        (true, PlayMode::Off),
+        (false, PlayMode::Off),
+    ] {
+        state.update(Action::CyclePlaybackMode, &fx);
+        assert_eq!((state.shuffle, state.play_mode), expected);
+    }
+
+    for repeat in [PlayMode::List, PlayMode::One] {
+        state.shuffle = true;
+        state.play_mode = repeat;
+        state.update(Action::CyclePlaybackMode, &fx);
+        assert_eq!((state.shuffle, state.play_mode), (false, PlayMode::Off));
+    }
+}
+
+#[tokio::test]
 async fn list_repeat_wraps_while_single_repeat_replays_only_on_track_end() {
     let directory = tempfile::tempdir().unwrap();
     let mut fx = effects(&directory);
@@ -513,6 +537,24 @@ async fn settings_preview_can_be_cancelled_without_touching_disk() {
     assert_eq!(state.config.theme, "db16");
     assert_eq!(state.theme, original_theme);
     assert!(!fx.config_path.exists());
+}
+
+#[tokio::test]
+async fn icon_setting_previews_immediately_and_cancel_restores_unicode() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.update(Action::SwitchView(View::Settings), &fx);
+    state.settings.selected = super::settings::SettingField::ALL
+        .iter()
+        .position(|field| *field == super::settings::SettingField::Icons)
+        .unwrap();
+
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.icons, crate::config::IconStyle::Nerd);
+
+    state.update(Action::CancelSettings, &fx);
+    assert_eq!(state.config.icons, crate::config::IconStyle::Unicode);
 }
 
 #[tokio::test]

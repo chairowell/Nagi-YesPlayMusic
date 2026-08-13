@@ -72,6 +72,7 @@ pub enum Action {
     GKey,
     ToggleShuffle,
     CycleRepeat,
+    CyclePlaybackMode,
     StartFilter,
     ToggleLibraryFocus,
     ToggleHelp,
