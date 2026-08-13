@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 讨论区
+    url: https://github.com/nagi-studio/YesPlayMusic/discussions
+    about: 讨论区，欢迎咨询使用问题、提交建议和经验分享。
+  - name: 📘 使用说明
+    url: https://github.com/nagi-studio/YesPlayMusic#readme
+    about: 安装、使用等常规问题请先阅读说明文档。

@@ -1,0 +1,57 @@
+name: 🌠 功能请求
+description: 需求或建议
+title: '[Feature]: '
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 描述
+      description: 请描述你希望添加的功能。
+      placeholder: |
+        请描述你希望添加的功能。
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 动机
+      description: 为什么需要这个功能？请说明使用场景。
+      placeholder: |
+        为什么需要这个功能？请说明使用场景。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期行为
+      description: 它应该如何工作？请描述预期行为。
+      placeholder: |
+        它应该如何工作？请描述预期行为。
+    validations:
+      required: true
+  - type: textarea
+    id: design-reference
+    attributes:
+      label: 设计参考
+      description: 是否有设计参考或示例？
+      placeholder: |
+        是否有设计参考或示例？
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充说明
+      description: 其他想补充的信息。
+    validations:
+      required: false
+  - type: checkboxes
+    id: willing_to_contribute
+    attributes:
+      label: '是否愿意贡献'
+      description: '如果你愿意提交 PR 实现此功能，请勾选'
+      options:
+        - label: '我愿意提交 PR'
+    validations:
+      required: false
