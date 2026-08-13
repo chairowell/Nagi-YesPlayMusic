@@ -8,10 +8,14 @@ use ratatui::Frame;
 
 use crate::app::AppState;
 use crate::i18n::{self, Key};
-use crate::ui::text::pad_display;
+use crate::ui::text::pad_or_marquee;
 use crate::ui::Hits;
 
-pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
+use super::cover_preview;
+
+const MIN_LIST_WIDTH: u16 = 53;
+
+pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let [input_area, _, list_area] = Layout::vertical([
         Constraint::Length(1),
@@ -82,8 +86,15 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         return;
     }
 
+    let (list_area, preview_area) = if state.search.input || state.filter.input {
+        (list_area, None)
+    } else {
+        cover_preview::split_preview(list_area, MIN_LIST_WIDTH)
+    };
+
     let visible = list_area.height as usize;
     let offset = super::scroll_offset(state.selected, rows.len(), visible);
+    let marquee_frame = state.marquee_frame();
     let mut lines = Vec::with_capacity(visible);
     for (visible_index, (_, row)) in rows.iter().enumerate().skip(offset).take(visible) {
         hits.rows.push((
@@ -114,12 +125,62 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         lines.push(Line::from(Span::styled(
             format!(
                 "  {liked} {} {} {:>5}",
-                pad_display(&row.title, 26),
-                pad_display(&row.artist, 16),
+                pad_or_marquee(&row.title, 26, selected, marquee_frame),
+                pad_or_marquee(&row.artist, 16, selected, marquee_frame),
                 super::format_ms(row.duration_ms)
             ),
             line_style,
         )));
     }
     frame.render_widget(Paragraph::new(lines), list_area);
+    if let Some(preview_area) = preview_area {
+        cover_preview::draw(frame, state, preview_area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    use super::*;
+    use crate::api::SongRow;
+    use crate::config::Config;
+
+    fn rendered_search(width: u16) -> (ratatui::buffer::Buffer, Hits) {
+        let backend = TestBackend::new(width, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new(&Config::default());
+        state.search.input = false;
+        state.search.results.push(SongRow {
+            id: 1,
+            title: "Track".into(),
+            artist: "Artist".into(),
+            duration_ms: 180_000,
+            pic_url: None,
+        });
+        let mut hits = Hits::default();
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+        (terminal.backend().buffer().clone(), hits)
+    }
+
+    #[test]
+    fn preview_and_list_hits_share_search_at_width_81() {
+        let (buffer, hits) = rendered_search(81);
+
+        assert_eq!(hits.rows.len(), 1);
+        assert_eq!(hits.rows[0].0, Rect::new(0, 2, 53, 1));
+        assert_eq!(buffer[(55, 2)].symbol(), "▀");
+    }
+
+    #[test]
+    fn width_80_keeps_the_whole_search_row_clickable() {
+        let (buffer, hits) = rendered_search(80);
+
+        assert_eq!(hits.rows.len(), 1);
+        assert_eq!(hits.rows[0].0, Rect::new(0, 2, 80, 1));
+        assert_ne!(buffer[(55, 2)].symbol(), "▀");
+    }
 }

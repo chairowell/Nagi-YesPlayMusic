@@ -8,10 +8,19 @@ use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CoverSurface {
+    Playing,
+    Selection,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CoverRenderRequest {
+    pub surface: CoverSurface,
     pub generation: u64,
     pub cells: (u16, u16),
     pub style_revision: u64,
+    pub song_id: i64,
+    pub source_key: String,
 }
 
 /// Idle-dashboard menu entries; resolved to Actions at the input layer.
@@ -42,6 +51,7 @@ pub struct SessionStamp {
 
 #[derive(Debug)]
 pub enum Action {
+    UiTick,
     Quit,
     SwitchView(View),
     Back,
@@ -105,17 +115,20 @@ pub enum Action {
         generation: u64,
         message: String,
     },
-    CoverBytes {
-        generation: u64,
-        bytes: Vec<u8>,
-    },
     CoverLoaded {
         request: CoverRenderRequest,
         cover: PixelCover,
     },
     CoverDecoded {
+        surface: CoverSurface,
         generation: u64,
+        style_revision: u64,
         image: image::DynamicImage,
+    },
+    SelectionCoverDue {
+        generation: u64,
+        row: SongRow,
+        neighbors: Vec<String>,
     },
     IdleArtBytes {
         bytes: Vec<u8>,

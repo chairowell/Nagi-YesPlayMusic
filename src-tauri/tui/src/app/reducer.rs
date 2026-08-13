@@ -1,18 +1,22 @@
 use std::time::Duration;
 
-use crate::action::{Action, CoverRenderRequest, View};
+use crate::action::{Action, CoverSurface, View};
 use crate::api::Source;
 use crate::event;
 use crate::i18n::Key;
 use crate::player::PlayerCommand;
 
 use super::{
-    apply_pixel_cover, song_row_from_resolved, spawn_decode_cover, spawn_render_cover,
-    spawn_render_idle, spawn_resolve, AppState, Effects,
+    apply_pixel_cover, song_row_from_resolved, spawn_cover_load, spawn_cover_prefetch,
+    spawn_render_idle, spawn_resolve, AppState, Effects, PREVIEW_CELLS,
 };
 
 impl AppState {
     pub(super) fn update(&mut self, action: Action, fx: &Effects) {
+        if matches!(action, Action::UiTick) {
+            self.advance_marquee();
+            return;
+        }
         // The quit dialog owns keyboard input, while background results
         // keep flowing through the normal reducer.
         let action = if self.confirm_quit {
@@ -294,7 +298,7 @@ impl AppState {
                 }
             }
             Action::Mouse(_) => {} // resolved against Hits in the event loop
-            Action::RawKey(_) | Action::Paste(_) => {} // handled before this match
+            Action::RawKey(_) | Action::Paste(_) | Action::UiTick => {} // handled before this match
             Action::StartLogin => self.start_login(fx),
             Action::LoginQrReady { attempt, art } => self.apply_login_qr(attempt, art),
             Action::LoginProgress { attempt, message } => {
@@ -407,44 +411,79 @@ impl AppState {
                     self.status = Some(message);
                 }
             }
-            Action::CoverBytes { generation, bytes } => {
-                if generation == self.generation {
-                    self.cover_bytes = Some(bytes.clone());
-                    let original_bytes = self.original_cover.is_some().then(|| bytes.clone());
-                    let request = CoverRenderRequest {
-                        generation,
-                        cells: self.desired_cover_cells(),
-                        style_revision: self.style_revision,
-                    };
-                    spawn_render_cover(
-                        fx,
+            Action::CoverLoaded { request, cover } => {
+                let desired_playing = self.desired_cover_cells();
+                match request.surface {
+                    CoverSurface::Playing => apply_pixel_cover(
+                        &mut self.cover,
+                        self.generation,
+                        desired_playing,
+                        self.style_revision,
                         request,
-                        bytes,
-                        self.theme.palette,
-                        self.theme.bg,
-                        self.pixel_detail_scale,
-                    );
-                    if let Some(bytes) = original_bytes {
-                        spawn_decode_cover(fx, generation, bytes);
+                        cover,
+                    ),
+                    CoverSurface::Selection => apply_pixel_cover(
+                        &mut self.selected_cover.pixel,
+                        self.selected_cover.generation,
+                        PREVIEW_CELLS,
+                        self.style_revision,
+                        request,
+                        cover,
+                    ),
+                }
+            }
+            Action::CoverDecoded {
+                surface,
+                generation,
+                style_revision,
+                image,
+            } => {
+                if style_revision == self.style_revision {
+                    match surface {
+                        CoverSurface::Playing if generation == self.generation => {
+                            if let Some(original) = &mut self.original_cover {
+                                original.replace(generation, image);
+                            }
+                        }
+                        CoverSurface::Selection if generation == self.selected_cover.generation => {
+                            if let Some(original) = &mut self.selected_original_cover {
+                                original.replace(generation, image);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
-            Action::CoverLoaded { request, cover } => {
-                let desired = self.desired_cover_cells();
-                apply_pixel_cover(
-                    &mut self.cover,
-                    self.generation,
-                    desired,
-                    self.style_revision,
-                    request,
-                    cover,
-                );
-            }
-            Action::CoverDecoded { generation, image } => {
-                if generation == self.generation {
-                    if let Some(original) = &mut self.original_cover {
-                        original.replace(generation, image);
+            Action::SelectionCoverDue {
+                generation,
+                row,
+                neighbors,
+            } => {
+                let current = self.selected_cover.key.as_ref();
+                if generation == self.selected_cover.generation
+                    && current.is_some_and(|key| {
+                        key.id == row.id && key.pic_url.as_ref() == row.pic_url.as_ref()
+                    })
+                {
+                    if let Some(pic_url) = row.pic_url.as_deref() {
+                        let request = self.cover_request(
+                            CoverSurface::Selection,
+                            generation,
+                            row.id,
+                            pic_url,
+                            PREVIEW_CELLS,
+                        );
+                        spawn_cover_load(
+                            fx,
+                            request,
+                            pic_url.to_owned(),
+                            self.theme.palette,
+                            self.theme.bg,
+                            self.pixel_detail_scale,
+                            self.uses_original_cover(CoverSurface::Selection),
+                        );
                     }
+                    spawn_cover_prefetch(fx, neighbors);
                 }
             }
             Action::IdleArtBytes { bytes } => {
@@ -480,24 +519,12 @@ impl AppState {
                 if !self.sidebar_visible() {
                     self.sidebar_focus = false;
                 }
-                // Layout-dependent resolution: re-render cover and idle art
-                // from their kept source bytes when the desired grid changed.
-                if let Some(bytes) = &self.cover_bytes {
-                    let desired = self.desired_cover_cells();
-                    let current = self.cover.as_ref().map(|cover| (cover.width, cover.height));
-                    if current != Some(desired) {
-                        spawn_render_cover(
-                            fx,
-                            CoverRenderRequest {
-                                generation: self.generation,
-                                cells: desired,
-                                style_revision: self.style_revision,
-                            },
-                            bytes.clone(),
-                            self.theme.palette,
-                            self.theme.bg,
-                            self.pixel_detail_scale,
-                        );
+                let desired = self.desired_cover_cells();
+                let current = self.cover.as_ref().map(|cover| (cover.width, cover.height));
+                if current != Some(desired) {
+                    self.cover = None;
+                    if let Some(row) = self.active_row.clone() {
+                        self.load_playing_cover(fx, &row);
                     }
                 }
                 let desired = self.desired_idle_cells();

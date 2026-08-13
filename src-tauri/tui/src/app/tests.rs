@@ -20,6 +20,7 @@ fn effects(directory: &TempDir) -> Effects {
         )),
         actions,
         cache_root: None,
+        covers: None,
         config_path: directory.path().join("config.toml"),
     }
 }
@@ -46,6 +47,150 @@ fn named_row(id: i64, title: &str, artist: &str) -> SongRow {
         duration_ms: 180_000,
         pic_url: None,
     }
+}
+
+fn covered_row(id: i64) -> SongRow {
+    SongRow {
+        pic_url: Some(format!("https://example.test/{id}.jpg")),
+        ..row(id)
+    }
+}
+
+#[tokio::test]
+async fn paused_ui_ticks_advance_the_marquee_without_consuming_the_gg_prefix() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Queue;
+    state.paused = true;
+    state.queue = vec![named_row(1, "A title long enough to scroll", "Artist")];
+
+    state.update(Action::GKey, &fx);
+    state.update(Action::UiTick, &fx);
+    assert_eq!(state.marquee_frame, 0);
+    assert!(state.pending_g);
+
+    state.update(Action::UiTick, &fx);
+    assert_eq!(state.marquee_frame, 1);
+    assert!(state.pending_g);
+}
+
+#[tokio::test]
+async fn returning_to_a_long_row_restarts_the_marquee_pause() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let hits = ui::Hits::default();
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Queue;
+    state.queue = vec![
+        named_row(1, "A title long enough to scroll", "Artist"),
+        named_row(2, "Short", "Artist"),
+    ];
+
+    apply(&mut state, Action::UiTick, &fx, &hits);
+    apply(&mut state, Action::UiTick, &fx, &hits);
+    assert_eq!(state.marquee_frame, 1);
+
+    apply(&mut state, Action::MoveSelection(1), &fx, &hits);
+    assert!(state.marquee_target.is_none());
+    apply(&mut state, Action::MoveSelection(-1), &fx, &hits);
+    assert_eq!(state.marquee_frame, 0);
+    assert_eq!(
+        state.marquee_target.as_ref().map(|target| target.id),
+        Some(1)
+    );
+}
+
+#[tokio::test]
+async fn selected_cover_waits_for_debounce_and_schedules_three_neighbors_each_side() {
+    let directory = tempfile::tempdir().unwrap();
+    let (player, _events) = player::spawn(tokio::runtime::Handle::current());
+    let (actions, mut receiver) = mpsc::unbounded_channel();
+    let fx = Effects {
+        player,
+        ncm: Arc::new(Ncm::new(
+            directory.path().join("session.json"),
+            AudioQuality::High320,
+        )),
+        store: Arc::new(crate::store::LibraryStore::new(
+            directory.path().join("library"),
+        )),
+        actions,
+        cache_root: None,
+        covers: None,
+        config_path: directory.path().join("config.toml"),
+    };
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.terminal_size = (96, 15);
+    state.library = (0..9).map(covered_row).collect();
+    state.selected = 4;
+
+    state.reconcile_selected_cover(&fx);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), receiver.recv())
+            .await
+            .is_err()
+    );
+
+    let due = tokio::time::timeout(Duration::from_millis(250), receiver.recv())
+        .await
+        .expect("debounced cover request")
+        .expect("cover action channel");
+    let Action::SelectionCoverDue {
+        generation,
+        row,
+        neighbors,
+    } = due
+    else {
+        panic!("unexpected action");
+    };
+    assert_eq!(generation, state.selected_cover.generation);
+    assert_eq!(row.id, 4);
+    assert_eq!(
+        neighbors,
+        [1, 2, 3, 5, 6, 7].map(|id| format!("https://example.test/{id}.jpg"))
+    );
+}
+
+#[tokio::test]
+async fn a_selection_without_art_still_prefetches_neighbor_originals() {
+    let directory = tempfile::tempdir().unwrap();
+    let (player, _events) = player::spawn(tokio::runtime::Handle::current());
+    let (actions, mut receiver) = mpsc::unbounded_channel();
+    let fx = Effects {
+        player,
+        ncm: Arc::new(Ncm::new(
+            directory.path().join("session.json"),
+            AudioQuality::High320,
+        )),
+        store: Arc::new(crate::store::LibraryStore::new(
+            directory.path().join("library"),
+        )),
+        actions,
+        cache_root: None,
+        covers: None,
+        config_path: directory.path().join("config.toml"),
+    };
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.terminal_size = (96, 15);
+    state.library = vec![covered_row(1), row(2), covered_row(3)];
+    state.selected = 1;
+
+    state.reconcile_selected_cover(&fx);
+    let due = tokio::time::timeout(Duration::from_millis(250), receiver.recv())
+        .await
+        .expect("neighbor prefetch request")
+        .expect("cover action channel");
+    let Action::SelectionCoverDue { row, neighbors, .. } = due else {
+        panic!("unexpected action");
+    };
+    assert_eq!(row.id, 2);
+    assert_eq!(
+        neighbors,
+        [1, 3].map(|id| format!("https://example.test/{id}.jpg"))
+    );
 }
 
 #[tokio::test]
@@ -715,12 +860,10 @@ async fn back_leaves_library_when_the_sidebar_is_hidden() {
 fn starting_a_cover_load_clears_the_previous_song_art() {
     let mut state = AppState::new(&Config::default());
     state.cover = Some(pixel::vinyl(state.theme.palette, state.theme.bg, 4, 2));
-    state.cover_bytes = Some(vec![1, 2, 3]);
 
     state.clear_cover();
 
     assert!(state.cover.is_none());
-    assert!(state.cover_bytes.is_none());
 }
 
 #[test]
@@ -737,9 +880,12 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         (4, 2),
         3,
         CoverRenderRequest {
+            surface: CoverSurface::Playing,
             generation: 7,
             cells: (4, 2),
             style_revision: 3,
+            song_id: 1,
+            source_key: "source".into(),
         },
         replacement.clone(),
     );
@@ -751,9 +897,12 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         (4, 2),
         3,
         CoverRenderRequest {
+            surface: CoverSurface::Playing,
             generation: 6,
             cells: (4, 2),
             style_revision: 3,
+            song_id: 1,
+            source_key: "source".into(),
         },
         current,
     );
@@ -763,9 +912,12 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         (4, 2),
         3,
         CoverRenderRequest {
+            surface: CoverSurface::Playing,
             generation: 7,
             cells: (8, 4),
             style_revision: 3,
+            song_id: 1,
+            source_key: "source".into(),
         },
         stale,
     );
@@ -777,9 +929,12 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         (4, 2),
         4,
         CoverRenderRequest {
+            surface: CoverSurface::Playing,
             generation: 7,
             cells: (4, 2),
             style_revision: 3,
+            song_id: 1,
+            source_key: "source".into(),
         },
         previous_theme,
     );
@@ -864,6 +1019,7 @@ async fn a_known_track_uses_the_shared_cache_before_resolving_a_url() {
         )),
         actions,
         cache_root: Some(cache_root),
+        covers: None,
         config_path: directory.path().join("config.toml"),
     };
     let mut state = AppState::new(&Config::default());

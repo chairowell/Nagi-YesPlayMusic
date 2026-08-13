@@ -24,9 +24,10 @@ use yesplaymusic_core::cache::{
     CacheKey, CacheLease, CacheMetadata, CacheWriteRequest, TrackCache,
 };
 
-use crate::action::{Action, CoverRenderRequest, View};
+use crate::action::{Action, CoverRenderRequest, CoverSurface, View};
 use crate::api::{self, Ncm, SongRow, Source};
 use crate::config::{self, Config, CoverMode};
+use crate::cover_cache::CoverCache;
 use crate::event;
 use crate::i18n::{self, Key};
 use crate::pixel::{self, PixelCover};
@@ -45,10 +46,12 @@ pub struct Effects {
     pub store: Arc<crate::store::LibraryStore>,
     pub actions: mpsc::UnboundedSender<Action>,
     pub cache_root: Option<std::path::PathBuf>,
+    pub covers: Option<Arc<CoverCache>>,
     pub config_path: std::path::PathBuf,
 }
 
 const COVER_SOURCE_EDGE: u32 = 500;
+pub(crate) const PREVIEW_CELLS: (u16, u16) = (26, 13);
 
 struct OriginalCover {
     picker: Picker,
@@ -124,6 +127,31 @@ fn initialize_audio_cache(config: &Config) -> Option<std::path::PathBuf> {
     Some(root)
 }
 
+fn initialize_cover_cache() -> Option<Arc<CoverCache>> {
+    match CoverCache::new(config::cache_dir().join("covers")) {
+        Ok(cache) => Some(Arc::new(cache)),
+        Err(error) => {
+            tracing::warn!(%error, "cover cache unavailable");
+            None
+        }
+    }
+}
+
+fn spawn_resize_worker(
+    mut requests: mpsc::UnboundedReceiver<ResizeRequest>,
+    responses: mpsc::UnboundedSender<ResizeResponse>,
+) {
+    tokio::spawn(async move {
+        while let Some(request) = requests.recv().await {
+            let response = tokio::task::spawn_blocking(move || request.resize_encode()).await;
+            let Ok(Ok(response)) = response else { continue };
+            if responses.send(response).is_err() {
+                break;
+            }
+        }
+    });
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayMode {
@@ -174,6 +202,34 @@ pub struct NowPlaying {
     pub album: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MarqueeTarget {
+    view: View,
+    source: Source,
+    underlying: usize,
+    id: i64,
+    title: String,
+    artist: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SelectionCoverKey {
+    view: View,
+    source: Source,
+    underlying: usize,
+    id: i64,
+    pic_url: Option<String>,
+    style_revision: u64,
+    original: bool,
+}
+
+struct SelectionCoverState {
+    generation: u64,
+    key: Option<SelectionCoverKey>,
+    pixel: Option<PixelCover>,
+    placeholder: PixelCover,
+}
+
 pub struct AppState {
     pub view: View,
     pub zen: bool,
@@ -182,6 +238,8 @@ pub struct AppState {
     pub(crate) settings: settings::SettingsState,
     pub library: Vec<SongRow>,
     pub selected: usize,
+    marquee_frame: u64,
+    marquee_target: Option<MarqueeTarget>,
     pub queue: Vec<SongRow>,
     pub queue_pos: Option<usize>,
     queue_source: Source,
@@ -212,6 +270,8 @@ pub struct AppState {
     pub thick_progress: bool,
     pixel_detail_scale: f32,
     original_cover: Option<OriginalCover>,
+    selected_original_cover: Option<OriginalCover>,
+    selected_cover: SelectionCoverState,
     pub idle_art: PixelCover,
     pub library_synced: bool,
     library_request: u64,
@@ -221,7 +281,6 @@ pub struct AppState {
     /// Source image for the idle art; None = procedural vinyl.
     idle_bytes: Option<Vec<u8>>,
     idle_path: Option<std::path::PathBuf>,
-    cover_bytes: Option<Vec<u8>>,
     pub lyrics: Vec<crate::lyrics::LyricLine>,
     pub position: Duration,
     pub duration: Option<Duration>,
@@ -273,6 +332,8 @@ impl AppState {
                 },
             ],
             selected: 0,
+            marquee_frame: 0,
+            marquee_target: None,
             queue: Vec::new(),
             queue_pos: None,
             queue_source: Source::Liked,
@@ -302,13 +363,24 @@ impl AppState {
             thick_progress: config.progress_style == "bar",
             pixel_detail_scale: config.pixel_scale.clamp(0.5, 2.0),
             original_cover: None,
+            selected_original_cover: None,
+            selected_cover: SelectionCoverState {
+                generation: 0,
+                key: None,
+                pixel: None,
+                placeholder: pixel::vinyl(
+                    theme.palette,
+                    theme.bg,
+                    PREVIEW_CELLS.0,
+                    PREVIEW_CELLS.1,
+                ),
+            },
             idle_art: pixel::vinyl(theme.palette, theme.bg, idle_cells.0, idle_cells.1),
             library_synced: false,
             library_request: 0,
             placeholder: None,
             idle_bytes,
             idle_path,
-            cover_bytes: None,
             lyrics: Vec::new(),
             position: Duration::ZERO,
             duration: None,
@@ -376,6 +448,71 @@ impl AppState {
         self.visible_rows(rows)
             .get(index)
             .map(|(underlying, row)| (*underlying, (*row).clone()))
+    }
+
+    fn active_marquee_target(&self) -> Option<MarqueeTarget> {
+        if self.show_help
+            || self.confirm_quit
+            || self.filter.input
+            || self.view == View::Library && self.sidebar_focus
+            || self.view == View::Search && self.search.input
+        {
+            return None;
+        }
+        let (title_width, artist_width) = match self.view {
+            View::Library | View::Queue => (24, 14),
+            View::Search => (26, 16),
+            _ => return None,
+        };
+        let (underlying, row) = self.visible_row(self.selected)?;
+        if ui::text::display_width(&row.title) <= title_width
+            && ui::text::display_width(&row.artist) <= artist_width
+        {
+            return None;
+        }
+        Some(MarqueeTarget {
+            view: self.view,
+            source: match self.view {
+                View::Library => self.library_source,
+                View::Search => Source::Search,
+                View::Queue => self.queue_source,
+                _ => return None,
+            },
+            underlying,
+            id: row.id,
+            title: row.title,
+            artist: row.artist,
+        })
+    }
+
+    fn advance_marquee(&mut self) {
+        let target = self.active_marquee_target();
+        if target.is_some() && target == self.marquee_target {
+            self.marquee_frame = self.marquee_frame.wrapping_add(1);
+        } else {
+            self.marquee_target = target;
+            self.marquee_frame = 0;
+        }
+    }
+
+    fn reconcile_marquee(&mut self) {
+        let target = self.active_marquee_target();
+        if target != self.marquee_target {
+            self.marquee_target = target;
+            self.marquee_frame = 0;
+        }
+    }
+
+    pub(crate) fn marquee_frame(&self) -> u64 {
+        if self.active_marquee_target() == self.marquee_target {
+            self.marquee_frame
+        } else {
+            0
+        }
+    }
+
+    fn marquee_active(&self) -> bool {
+        self.active_marquee_target().is_some()
     }
 
     fn visible_rows_owned(&self) -> Vec<SongRow> {
@@ -515,8 +652,14 @@ impl AppState {
 
     fn clear_cover(&mut self) {
         self.cover = None;
-        self.cover_bytes = None;
         if let Some(original) = &mut self.original_cover {
+            original.clear();
+        }
+    }
+
+    fn clear_selected_cover(&mut self) {
+        self.selected_cover.pixel = None;
+        if let Some(original) = &mut self.selected_original_cover {
             original.clear();
         }
     }
@@ -557,8 +700,170 @@ impl AppState {
         }
     }
 
+    pub(crate) fn preview_placeholder(&self) -> &PixelCover {
+        &self.selected_cover.placeholder
+    }
+
+    pub(crate) fn selected_pixel_cover(&self) -> Option<&PixelCover> {
+        self.selected_cover.pixel.as_ref()
+    }
+
+    pub(crate) fn selected_original_is_current(&self) -> bool {
+        self.selected_cover
+            .key
+            .as_ref()
+            .is_some_and(|key| key.original)
+            && self
+                .selected_original_cover
+                .as_ref()
+                .is_some_and(|cover| cover.generation == Some(self.selected_cover.generation))
+    }
+
+    pub(crate) fn render_selected_original(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        if let Some(original) = &mut self.selected_original_cover {
+            frame.render_stateful_widget(StatefulImage::new(), area, &mut original.protocol);
+        }
+    }
+
+    fn apply_selected_original_resize(&mut self, response: ResizeResponse) {
+        if let Some(original) = &mut self.selected_original_cover {
+            original.protocol.update_resized_protocol(response);
+        }
+    }
+
+    fn uses_original_cover(&self, surface: CoverSurface) -> bool {
+        if self.config.cover_mode != CoverMode::Original {
+            return false;
+        }
+        match surface {
+            CoverSurface::Playing => self.original_cover.is_some(),
+            CoverSurface::Selection => self.selected_original_cover.is_some(),
+        }
+    }
+
+    fn cover_request(
+        &self,
+        surface: CoverSurface,
+        generation: u64,
+        song_id: i64,
+        pic_url: &str,
+        cells: (u16, u16),
+    ) -> CoverRenderRequest {
+        CoverRenderRequest {
+            surface,
+            generation,
+            cells,
+            style_revision: self.style_revision,
+            song_id,
+            source_key: CoverCache::original_key(pic_url, COVER_SOURCE_EDGE),
+        }
+    }
+
+    fn load_playing_cover(&mut self, fx: &Effects, row: &SongRow) {
+        let Some(pic_url) = row.pic_url.as_deref() else {
+            return;
+        };
+        let request = self.cover_request(
+            CoverSurface::Playing,
+            self.generation,
+            row.id,
+            pic_url,
+            self.desired_cover_cells(),
+        );
+        spawn_cover_load(
+            fx,
+            request,
+            pic_url.to_owned(),
+            self.theme.palette,
+            self.theme.bg,
+            self.pixel_detail_scale,
+            self.uses_original_cover(CoverSurface::Playing),
+        );
+    }
+
+    fn selection_preview_visible(&self) -> bool {
+        let (cols, rows) = self.terminal_size;
+        match self.view {
+            View::Library => cols >= 96 && rows.saturating_sub(2) >= PREVIEW_CELLS.1,
+            View::Search => cols >= 81 && rows.saturating_sub(4) >= PREVIEW_CELLS.1,
+            _ => false,
+        }
+    }
+
+    fn selected_cover_candidate(&self) -> Option<(SelectionCoverKey, SongRow, Vec<String>)> {
+        if !self.selection_preview_visible()
+            || self.filter.input
+            || self.view == View::Library && self.sidebar_focus
+            || self.view == View::Search
+                && (self.search.input || self.search.searching || self.search.error.is_some())
+        {
+            return None;
+        }
+        let (underlying, row) = self.visible_row(self.selected)?;
+        let source = if self.view == View::Library {
+            self.library_source
+        } else {
+            Source::Search
+        };
+        let key = SelectionCoverKey {
+            view: self.view,
+            source,
+            underlying,
+            id: row.id,
+            pic_url: row.pic_url.clone(),
+            style_revision: self.style_revision,
+            original: self.uses_original_cover(CoverSurface::Selection),
+        };
+        let rows = match self.view {
+            View::Library => &self.library,
+            View::Search => &self.search.results,
+            _ => return None,
+        };
+        let visible = self.visible_rows(rows);
+        let start = self.selected.saturating_sub(3);
+        let end = (self.selected + 4).min(visible.len());
+        let mut neighbors = Vec::new();
+        for (_, neighbor) in &visible[start..end] {
+            let Some(url) = neighbor.pic_url.as_ref() else {
+                continue;
+            };
+            if row.pic_url.as_ref() != Some(url) && !neighbors.contains(url) {
+                neighbors.push(url.clone());
+            }
+        }
+        Some((key, row, neighbors))
+    }
+
+    fn reconcile_selected_cover(&mut self, fx: &Effects) {
+        let candidate = self.selected_cover_candidate();
+        let key = candidate.as_ref().map(|(key, _, _)| key);
+        if self.selected_cover.key.as_ref() == key {
+            return;
+        }
+        self.selected_cover.generation = self.selected_cover.generation.wrapping_add(1);
+        self.selected_cover.key = candidate.as_ref().map(|(key, _, _)| key.clone());
+        self.clear_selected_cover();
+        let Some((_, row, neighbors)) = candidate else {
+            return;
+        };
+        if row.pic_url.is_none() && neighbors.is_empty() {
+            return;
+        }
+        let generation = self.selected_cover.generation;
+        let actions = fx.actions.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            let _ = actions.send(Action::SelectionCoverDue {
+                generation,
+                row,
+                neighbors,
+            });
+        });
+    }
+
     fn apply_resolved(&mut self, fx: &Effects, generation: u64, track: api::ResolvedTrack) {
-        self.active_row = Some(song_row_from_resolved(&track));
+        let row = song_row_from_resolved(&track);
+        self.active_row = Some(row.clone());
         self.current_track_id = Some(track.id);
         self.now = Some(NowPlaying {
             title: track.title.clone(),
@@ -578,9 +883,7 @@ impl AppState {
                 .map(|root| player::CacheWritePlan { root, request }),
         });
         if !self.cover_prefetched {
-            if let Some(pic_url) = track.pic_url.clone() {
-                spawn_cover_fetch(fx, generation, pic_url);
-            }
+            self.load_playing_cover(fx, &row);
         }
         spawn_fetch_lyrics(fx, generation, track.id);
         self.prefetch_next(fx);
@@ -591,8 +894,8 @@ impl AppState {
         self.active_row = Some(row.clone());
         self.current_track_id = Some(row.id);
         self.now = Some(NowPlaying {
-            title: row.title,
-            artist: row.artist,
+            title: row.title.clone(),
+            artist: row.artist.clone(),
             album: String::new(),
         });
         self.duration =
@@ -601,9 +904,7 @@ impl AppState {
         fx.player
             .send(PlayerCommand::PlayCached { generation, lease });
         if !self.cover_prefetched {
-            if let Some(pic_url) = row.pic_url {
-                spawn_cover_fetch(fx, generation, pic_url);
-            }
+            self.load_playing_cover(fx, &row);
         }
         spawn_fetch_lyrics(fx, generation, row.id);
         self.prefetch_next(fx);
@@ -665,9 +966,7 @@ impl AppState {
         // Cover art is independent of URL resolution: start fetching now
         // (queue rows carry pic_url) instead of waiting for TrackResolved.
         self.cover_prefetched = row.pic_url.is_some();
-        if let Some(pic_url) = row.pic_url.clone() {
-            spawn_cover_fetch(fx, self.generation, pic_url);
-        }
+        self.load_playing_cover(fx, &row);
         // Prefetched? Play instantly, skip the resolve round-trip.
         if let Some((_, track)) = self
             .prefetched
@@ -982,49 +1281,160 @@ fn shuffled_order(len: usize, current: usize) -> Vec<usize> {
     order
 }
 
-fn spawn_cover_fetch(fx: &Effects, generation: u64, pic_url: String) {
-    let actions = fx.actions.clone();
-    tokio::spawn(async move {
-        let Ok(bytes) = api::fetch_cover(&pic_url, COVER_SOURCE_EDGE).await else {
-            return; // a missing cover is cosmetic; the idle art stays
-        };
-        let _ = actions.send(Action::CoverBytes { generation, bytes });
-    });
-}
-
-fn spawn_render_cover(
+fn spawn_cover_load(
     fx: &Effects,
     request: CoverRenderRequest,
-    bytes: Vec<u8>,
+    pic_url: String,
     palette: &'static [(u8, u8, u8)],
     background: Color,
     detail_scale: f32,
+    original: bool,
 ) {
+    let cache = fx.covers.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        let cover = tokio::task::spawn_blocking(move || {
-            pixel::from_image_bytes(
+        let pixel_key = (!original).then(|| {
+            CoverCache::pixel_key(
+                request.song_id,
+                &request.source_key,
+                request.cells,
+                detail_scale,
+                background,
+                palette,
+            )
+        });
+        if let (Some(cache), Some(pixel_key)) = (cache.clone(), pixel_key.clone()) {
+            match tokio::task::spawn_blocking(move || cache.get_pixel(&pixel_key)).await {
+                Ok(Ok(Some(cover))) => {
+                    let _ = actions.send(Action::CoverLoaded { request, cover });
+                    return;
+                }
+                Ok(Err(error)) => tracing::warn!(%error, "pixel cover cache read failed"),
+                Ok(Ok(None)) => {}
+                Err(error) => tracing::warn!(%error, "pixel cover cache worker failed"),
+            }
+        }
+
+        let source_key = request.source_key.clone();
+        let cached = match cache.clone() {
+            Some(cache) => {
+                match tokio::task::spawn_blocking(move || cache.get_original(&source_key)).await {
+                    Ok(Ok(bytes)) => bytes,
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "original cover cache read failed");
+                        None
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "original cover cache worker failed");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        let downloaded = cached.is_none();
+        let bytes = match cached {
+            Some(bytes) => bytes,
+            None => match api::fetch_cover(&pic_url, COVER_SOURCE_EDGE).await {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    tracing::warn!(%error, "cover fetch failed");
+                    return;
+                }
+            },
+        };
+
+        let source_key = request.source_key.clone();
+        let processed = tokio::task::spawn_blocking(move || {
+            if original {
+                let image = image::load_from_memory(&bytes)?;
+                write_original_cover(&cache, downloaded, &source_key, &bytes);
+                return Ok::<_, anyhow::Error>(EitherCover::Original(image));
+            }
+            let cover = pixel::from_image_bytes(
                 &bytes,
                 palette,
                 background,
                 request.cells.0,
                 request.cells.1,
                 detail_scale,
-            )
+            )?;
+            write_original_cover(&cache, downloaded, &source_key, &bytes);
+            if let (Some(cache), Some(pixel_key)) = (&cache, pixel_key) {
+                if let Err(error) = cache.put_pixel(&pixel_key, &cover) {
+                    tracing::warn!(%error, "pixel cover cache write failed");
+                }
+            }
+            Ok(EitherCover::Pixel(cover))
         })
         .await;
-        if let Ok(Ok(cover)) = cover {
-            let _ = actions.send(Action::CoverLoaded { request, cover });
+        match processed {
+            Ok(Ok(EitherCover::Pixel(cover))) => {
+                let _ = actions.send(Action::CoverLoaded { request, cover });
+            }
+            Ok(Ok(EitherCover::Original(image))) => {
+                let _ = actions.send(Action::CoverDecoded {
+                    surface: request.surface,
+                    generation: request.generation,
+                    style_revision: request.style_revision,
+                    image,
+                });
+            }
+            Ok(Err(error)) => tracing::warn!(%error, "cover decode failed"),
+            Err(error) => tracing::warn!(%error, "cover worker failed"),
         }
     });
 }
 
-fn spawn_decode_cover(fx: &Effects, generation: u64, bytes: Vec<u8>) {
-    let actions = fx.actions.clone();
+enum EitherCover {
+    Pixel(PixelCover),
+    Original(DynamicImage),
+}
+
+fn write_original_cover(
+    cache: &Option<Arc<CoverCache>>,
+    downloaded: bool,
+    source_key: &str,
+    bytes: &[u8],
+) {
+    if !downloaded {
+        return;
+    }
+    if let Some(cache) = cache {
+        if let Err(error) = cache.put_original(source_key, bytes) {
+            tracing::warn!(%error, "original cover cache write failed");
+        }
+    }
+}
+
+fn spawn_cover_prefetch(fx: &Effects, pic_urls: Vec<String>) {
+    let Some(cache) = fx.covers.clone() else {
+        return;
+    };
     tokio::spawn(async move {
-        let image = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes)).await;
-        if let Ok(Ok(image)) = image {
-            let _ = actions.send(Action::CoverDecoded { generation, image });
+        for pic_url in pic_urls {
+            let key = CoverCache::original_key(&pic_url, COVER_SOURCE_EDGE);
+            let read_cache = cache.clone();
+            let read_key = key.clone();
+            match tokio::task::spawn_blocking(move || read_cache.get_original(&read_key)).await {
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => tracing::warn!(%error, "cover prefetch cache read failed"),
+                Err(error) => tracing::warn!(%error, "cover prefetch worker failed"),
+            }
+            let Ok(bytes) = api::fetch_cover(&pic_url, COVER_SOURCE_EDGE).await else {
+                continue;
+            };
+            let write_cache = cache.clone();
+            let valid = tokio::task::spawn_blocking(move || {
+                image::load_from_memory(&bytes)?;
+                write_cache.put_original(&key, &bytes)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
+            if let Ok(Err(error)) = valid {
+                tracing::warn!(%error, "cover prefetch write failed");
+            }
         }
     });
 }
@@ -1120,24 +1530,22 @@ pub async fn run(config: Config) -> Result<()> {
 async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) -> Result<()> {
     let (player, mut player_events) = player::spawn(tokio::runtime::Handle::current());
     let (actions_tx, mut actions) = mpsc::unbounded_channel();
-    let (resize_requests_tx, mut resize_requests) = mpsc::unbounded_channel();
-    let (resize_responses_tx, mut resize_responses) = mpsc::unbounded_channel();
+    let (playing_resize_tx, playing_resize_rx) = mpsc::unbounded_channel();
+    let (playing_responses_tx, mut playing_responses) = mpsc::unbounded_channel();
+    let (selected_resize_tx, selected_resize_rx) = mpsc::unbounded_channel();
+    let (selected_responses_tx, mut selected_responses) = mpsc::unbounded_channel();
 
     // Graphics protocol queries must finish before EventStream starts reading
     // the same terminal response bytes.
     let theme = Theme::by_name(&config.theme);
-    let original_cover = query_graphics_picker(config.cover_mode, theme.bg)
-        .map(|picker| OriginalCover::new(picker, resize_requests_tx));
-
-    tokio::spawn(async move {
-        while let Some(request) = resize_requests.recv().await {
-            let response = tokio::task::spawn_blocking(move || request.resize_encode()).await;
-            let Ok(Ok(response)) = response else { continue };
-            if resize_responses_tx.send(response).is_err() {
-                break;
-            }
-        }
-    });
+    let picker = query_graphics_picker(config.cover_mode, theme.bg);
+    let original_cover = picker
+        .clone()
+        .map(|picker| OriginalCover::new(picker, playing_resize_tx));
+    let selected_original_cover =
+        picker.map(|picker| OriginalCover::new(picker, selected_resize_tx));
+    spawn_resize_worker(playing_resize_rx, playing_responses_tx);
+    spawn_resize_worker(selected_resize_rx, selected_responses_tx);
 
     let input_tx = actions_tx.clone();
     tokio::spawn(async move {
@@ -1171,21 +1579,33 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         )),
         actions: actions_tx,
         cache_root: initialize_audio_cache(config),
+        covers: initialize_cover_cache(),
         config_path: config::config_dir().join("config.toml"),
     };
     let mut state = AppState::new(config);
     state.original_cover = original_cover;
+    state.selected_original_cover = selected_original_cover;
     if let Some(playback) = fx.store.load_playback() {
         state.restore_playback(playback);
         fx.player.send(PlayerCommand::SetVolume(state.volume));
+        if let Some(row) = state.active_row.clone() {
+            state.ensure_placeholder();
+            state.load_playing_cover(&fx, &row);
+        }
     }
     state.load_idle_art(&fx);
     // Restore a persisted session: greet + load 我喜欢的音乐.
     if let Some(session) = fx.ncm.session_snapshot() {
         state.begin_session_restore(&fx, session);
     }
+    state.reconcile_selected_cover(&fx);
     let mut hits = ui::Hits::default();
     terminal.draw(|frame| ui::draw(frame, &mut state, &mut hits))?;
+    let mut ui_tick = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_millis(120),
+        Duration::from_millis(120),
+    );
+    ui_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
@@ -1197,9 +1617,16 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
                     apply(&mut state, action, &fx, &hits);
                 }
             }
-            response = resize_responses.recv(), if state.original_cover.is_some() => {
+            response = playing_responses.recv(), if state.original_cover.is_some() => {
                 let Some(response) = response else { break };
                 state.apply_original_resize(response);
+            }
+            response = selected_responses.recv(), if state.selected_original_cover.is_some() => {
+                let Some(response) = response else { break };
+                state.apply_selected_original_resize(response);
+            }
+            _ = ui_tick.tick(), if state.marquee_active() => {
+                state.update(Action::UiTick, &fx);
             }
         }
         if state.should_quit {
@@ -1220,22 +1647,24 @@ fn apply(state: &mut AppState, action: Action, fx: &Effects, hits: &ui::Hits) {
         Action::Mouse(mouse) => {
             if state.show_help {
                 state.update(Action::Mouse(mouse), fx);
-                return;
-            }
-            let selected = if state.view == View::Search && state.search.input
-                || state.view == View::Library && state.sidebar_focus
-                || state.filter.input
-            {
-                usize::MAX
             } else {
-                state.selected
-            };
-            if let Some(resolved) = event::mouse_action(mouse, hits, selected) {
-                state.update(resolved, fx);
+                let selected = if state.view == View::Search && state.search.input
+                    || state.view == View::Library && state.sidebar_focus
+                    || state.filter.input
+                {
+                    usize::MAX
+                } else {
+                    state.selected
+                };
+                if let Some(resolved) = event::mouse_action(mouse, hits, selected) {
+                    state.update(resolved, fx);
+                }
             }
         }
         other => state.update(other, fx),
     }
+    state.reconcile_marquee();
+    state.reconcile_selected_cover(fx);
 }
 
 #[cfg(test)]

@@ -5,10 +5,7 @@ use crate::config::{Config, CoverMode};
 use crate::i18n::{self, Key};
 use crate::theme::{Theme, BUILTIN_NAMES};
 
-use super::{
-    spawn_decode_cover, spawn_render_cover, spawn_render_idle, AppState, CoverRenderRequest,
-    Effects, PlayLayout,
-};
+use super::{spawn_render_idle, AppState, Effects, PlayLayout, PREVIEW_CELLS};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SettingField {
@@ -244,17 +241,16 @@ impl AppState {
             if let Some(original) = &mut self.original_cover {
                 original.set_background(self.theme.bg);
             }
-        }
-        if theme_changed || pixel_changed || layout_changed {
-            self.refresh_pixel_art(fx);
-        }
-        if (theme_changed || before.cover_mode != self.config.cover_mode)
-            && self.config.cover_mode == CoverMode::Original
-            && self.original_cover.is_some()
-        {
-            if let Some(bytes) = self.cover_bytes.clone() {
-                spawn_decode_cover(fx, self.generation, bytes);
+            if let Some(original) = &mut self.selected_original_cover {
+                original.set_background(self.theme.bg);
             }
+        }
+        if theme_changed
+            || pixel_changed
+            || layout_changed
+            || before.cover_mode != self.config.cover_mode
+        {
+            self.refresh_pixel_art(fx);
         }
     }
 
@@ -269,20 +265,15 @@ impl AppState {
                 desired.1,
             ));
         }
-        if let Some(bytes) = self.cover_bytes.clone() {
-            self.cover = None;
-            spawn_render_cover(
-                fx,
-                CoverRenderRequest {
-                    generation: self.generation,
-                    cells: desired,
-                    style_revision: self.style_revision,
-                },
-                bytes,
-                self.theme.palette,
-                self.theme.bg,
-                self.pixel_detail_scale,
-            );
+        self.selected_cover.placeholder = crate::pixel::vinyl(
+            self.theme.palette,
+            self.theme.bg,
+            PREVIEW_CELLS.0,
+            PREVIEW_CELLS.1,
+        );
+        self.cover = None;
+        if let Some(row) = self.active_row.clone() {
+            self.load_playing_cover(fx, &row);
         }
         if let Some(bytes) = self.idle_bytes.clone() {
             spawn_render_idle(

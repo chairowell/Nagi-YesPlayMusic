@@ -8,7 +8,7 @@ use ratatui::Frame;
 
 use crate::app::AppState;
 use crate::i18n::{self, Key};
-use crate::ui::text::pad_display;
+use crate::ui::text::pad_or_marquee;
 use crate::ui::Hits;
 
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
@@ -33,6 +33,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
 
     let visible = area.height as usize;
     let offset = super::scroll_offset(state.selected, rows.len(), visible);
+    let marquee_frame = state.marquee_frame();
     let mut lines = Vec::with_capacity(visible);
     for (visible_index, (index, row)) in rows.iter().enumerate().skip(offset).take(visible) {
         hits.rows.push((
@@ -58,8 +59,8 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
             format!(
                 "  {marker} {:>3}  {} {} {:>5}",
                 index + 1,
-                pad_display(&row.title, 24),
-                pad_display(&row.artist, 14),
+                pad_or_marquee(&row.title, 24, selected, marquee_frame),
+                pad_or_marquee(&row.artist, 14, selected, marquee_frame),
                 super::format_ms(row.duration_ms)
             ),
             style,

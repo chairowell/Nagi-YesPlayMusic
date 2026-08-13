@@ -11,19 +11,34 @@ use crate::app::AppState;
 use crate::i18n::{self, Key};
 use crate::ui::Hits;
 
-use super::text::pad_display;
+use super::cover_preview;
+use super::text::{pad_display, pad_or_marquee};
 
 const SIDEBAR_WIDTH: u16 = 16;
+const MIN_LIST_WIDTH: u16 = 52;
 pub const COLLAPSE_BELOW: u16 = 50;
 
-pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
-    if area.width >= COLLAPSE_BELOW {
-        let [sidebar, list] =
+pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
+    let content = if area.width >= COLLAPSE_BELOW {
+        let [sidebar, content] =
             Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(0)]).areas(area);
         draw_sidebar(frame, state, sidebar, hits);
-        draw_list(frame, state, list, hits);
+        content
     } else {
-        draw_list(frame, state, area, hits);
+        area
+    };
+
+    let has_selected_row = !state.sidebar_focus
+        && !state.filter.input
+        && state.library.iter().any(|row| state.filter.matches(row));
+    let (list, preview) = if has_selected_row {
+        cover_preview::split_preview(content, MIN_LIST_WIDTH)
+    } else {
+        (content, None)
+    };
+    draw_list(frame, state, list, hits);
+    if let Some(preview) = preview {
+        cover_preview::draw(frame, state, preview);
     }
 }
 
@@ -101,6 +116,7 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     }
     let visible = area.height.saturating_sub(1) as usize; // header row
     let offset = super::scroll_offset(state.selected, rows.len(), visible);
+    let marquee_frame = state.marquee_frame();
 
     let mut lines = Vec::with_capacity(visible + 1);
     lines.push(Line::from(Span::styled(
@@ -123,7 +139,8 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
             },
             visible_index,
         ));
-        let selected = visible_index == state.selected && !state.filter.input;
+        let selected =
+            visible_index == state.selected && !state.filter.input && !state.sidebar_focus;
         let style = if selected {
             Style::new().fg(theme.selection_fg()).bg(theme.sel)
         } else {
@@ -133,12 +150,56 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
             format!(
                 "  {:>3}  {} {} {:>5}",
                 index + 1,
-                pad_display(&row.title, 24),
-                pad_display(&row.artist, 14),
+                pad_or_marquee(&row.title, 24, selected, marquee_frame),
+                pad_or_marquee(&row.artist, 14, selected, marquee_frame),
                 super::format_ms(row.duration_ms)
             ),
             style,
         )));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    use super::*;
+    use crate::config::Config;
+
+    fn rendered_library(width: u16) -> (ratatui::buffer::Buffer, Hits) {
+        let backend = TestBackend::new(width, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new(&Config::default());
+        let mut hits = Hits::default();
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+        (terminal.backend().buffer().clone(), hits)
+    }
+
+    #[test]
+    fn preview_and_list_hits_share_the_library_at_width_96() {
+        let (buffer, hits) = rendered_library(96);
+
+        assert!(!hits.rows.is_empty());
+        assert!(hits
+            .rows
+            .iter()
+            .all(|(area, _)| area.x == 16 && area.width == 52));
+        assert_eq!(buffer[(70, 0)].symbol(), "▀");
+    }
+
+    #[test]
+    fn width_95_keeps_the_whole_content_area_clickable() {
+        let (buffer, hits) = rendered_library(95);
+
+        assert!(!hits.rows.is_empty());
+        assert!(hits
+            .rows
+            .iter()
+            .all(|(area, _)| area.x == 16 && area.width == 79));
+        assert_ne!(buffer[(70, 0)].symbol(), "▀");
+    }
 }

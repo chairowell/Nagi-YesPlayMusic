@@ -1,12 +1,13 @@
 //! Pure view layer: reads AppState, writes the frame. No side effects.
 
+mod cover_preview;
 pub(crate) mod library;
 mod login;
 mod now_playing;
 mod queue;
 mod search;
 mod settings;
-mod text;
+pub(crate) mod text;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
