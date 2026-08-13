@@ -68,7 +68,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都�
 
 # language = "zh"            # zh | en | ja
 # quality = "exhigh"          # 128 | 320 | exhigh | lossless | hires
-# theme = "db16"              # db16 | pico8 | gameboy | transparent，或 themes/ 里的自定义主题名
+# theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm | one-dark | transparent
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首

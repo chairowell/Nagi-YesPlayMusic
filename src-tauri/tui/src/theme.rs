@@ -1,4 +1,4 @@
-//! Theme = one retro palette plus role mappings shared by the UI and covers.
+//! Theme = one palette plus role mappings shared by the UI and covers.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,6 +64,87 @@ pub const GAMEBOY: &[Rgb] = &[
     (0x30, 0x62, 0x30),
     (0x8b, 0xac, 0x0f),
     (0x9b, 0xbc, 0x0f),
+];
+
+/// Everforest dark, medium contrast.
+pub const EVERFOREST: &[Rgb] = &[
+    (0x2d, 0x35, 0x3b),
+    (0x23, 0x2a, 0x2e),
+    (0x34, 0x3f, 0x44),
+    (0x3d, 0x48, 0x4d),
+    (0x47, 0x52, 0x58),
+    (0x4f, 0x58, 0x5e),
+    (0x56, 0x63, 0x5f),
+    (0xd3, 0xc6, 0xaa),
+    (0x7a, 0x84, 0x78),
+    (0x85, 0x92, 0x89),
+    (0x9d, 0xa9, 0xa0),
+    (0xe6, 0x7e, 0x80),
+    (0xdb, 0xbc, 0x7f),
+    (0xa7, 0xc0, 0x80),
+    (0x83, 0xc0, 0x92),
+    (0x7f, 0xbb, 0xb3),
+    (0xd6, 0x99, 0xb6),
+];
+
+/// Tokyo Night's official night palette.
+pub const TOKYO_NIGHT: &[Rgb] = &[
+    (0x1a, 0x1b, 0x26),
+    (0x16, 0x16, 0x1e),
+    (0x29, 0x2e, 0x42),
+    (0x41, 0x48, 0x68),
+    (0x56, 0x5f, 0x89),
+    (0x73, 0x7a, 0xa2),
+    (0xa9, 0xb1, 0xd6),
+    (0xc0, 0xca, 0xf5),
+    (0x7a, 0xa2, 0xf7),
+    (0x2a, 0xc3, 0xde),
+    (0x7d, 0xcf, 0xff),
+    (0x9e, 0xce, 0x6a),
+    (0xe0, 0xaf, 0x68),
+    (0xff, 0x9e, 0x64),
+    (0xf7, 0x76, 0x8e),
+    (0xbb, 0x9a, 0xf7),
+];
+
+/// Tokyo Night's official storm palette.
+pub const TOKYO_NIGHT_STORM: &[Rgb] = &[
+    (0x24, 0x28, 0x3b),
+    (0x1f, 0x23, 0x35),
+    (0x29, 0x2e, 0x42),
+    (0x41, 0x48, 0x68),
+    (0x56, 0x5f, 0x89),
+    (0x73, 0x7a, 0xa2),
+    (0xa9, 0xb1, 0xd6),
+    (0xc0, 0xca, 0xf5),
+    (0x7a, 0xa2, 0xf7),
+    (0x2a, 0xc3, 0xde),
+    (0x7d, 0xcf, 0xff),
+    (0x9e, 0xce, 0x6a),
+    (0xe0, 0xaf, 0x68),
+    (0xff, 0x9e, 0x64),
+    (0xf7, 0x76, 0x8e),
+    (0xbb, 0x9a, 0xf7),
+];
+
+/// Atom One Dark's reference palette.
+pub const ONE_DARK: &[Rgb] = &[
+    (0x28, 0x2c, 0x34),
+    (0x2c, 0x32, 0x3c),
+    (0x3b, 0x40, 0x48),
+    (0x3e, 0x44, 0x52),
+    (0x4b, 0x52, 0x63),
+    (0x5c, 0x63, 0x70),
+    (0x82, 0x89, 0x97),
+    (0xab, 0xb2, 0xbf),
+    (0xe0, 0x6c, 0x75),
+    (0xbe, 0x50, 0x46),
+    (0x98, 0xc3, 0x79),
+    (0xe5, 0xc0, 0x7b),
+    (0xd1, 0x9a, 0x66),
+    (0x61, 0xaf, 0xef),
+    (0xc6, 0x78, 0xdd),
+    (0x56, 0xb6, 0xc2),
 ];
 
 #[derive(Clone, Copy)]
@@ -151,11 +232,75 @@ impl Theme {
         )
     }
 
+    fn everforest() -> Self {
+        Self::from_palette(
+            EVERFOREST,
+            RoleIndices {
+                bg: 0,
+                fg: 7,
+                dim: 10,
+                faint: 8,
+                accent: 13,
+                accent2: 15,
+                sel: 13,
+            },
+        )
+    }
+
+    fn tokyo_night() -> Self {
+        Self::from_palette(
+            TOKYO_NIGHT,
+            RoleIndices {
+                bg: 0,
+                fg: 7,
+                dim: 5,
+                faint: 4,
+                accent: 8,
+                accent2: 15,
+                sel: 8,
+            },
+        )
+    }
+
+    fn tokyo_night_storm() -> Self {
+        Self::from_palette(
+            TOKYO_NIGHT_STORM,
+            RoleIndices {
+                bg: 0,
+                fg: 7,
+                dim: 5,
+                faint: 4,
+                accent: 8,
+                accent2: 15,
+                sel: 8,
+            },
+        )
+    }
+
+    fn one_dark() -> Self {
+        Self::from_palette(
+            ONE_DARK,
+            RoleIndices {
+                bg: 0,
+                fg: 7,
+                dim: 6,
+                faint: 5,
+                accent: 13,
+                accent2: 14,
+                sel: 13,
+            },
+        )
+    }
+
     fn builtin(name: &str) -> Option<Self> {
         match name {
             "db16" => Some(Self::db16()),
             "pico8" => Some(Self::pico8()),
             "gameboy" => Some(Self::gameboy()),
+            "everforest" => Some(Self::everforest()),
+            "tokyo-night" => Some(Self::tokyo_night()),
+            "tokyo-night-storm" => Some(Self::tokyo_night_storm()),
+            "one-dark" => Some(Self::one_dark()),
             "transparent" => Some(Self::transparent()),
             _ => None,
         }
@@ -324,6 +469,33 @@ mod tests {
         let gameboy = Theme::by_name_in_dir("gameboy", directory.path());
         assert_eq!(gameboy.bg, Color::Rgb(0x0f, 0x38, 0x0f));
         assert_eq!(gameboy.accent, Color::Rgb(0x9b, 0xbc, 0x0f));
+
+        let everforest = Theme::by_name_in_dir("everforest", directory.path());
+        assert_eq!(everforest.bg, Color::Rgb(0x2d, 0x35, 0x3b));
+        assert_eq!(everforest.accent, Color::Rgb(0xa7, 0xc0, 0x80));
+
+        let tokyo_night = Theme::by_name_in_dir("tokyo-night", directory.path());
+        assert_eq!(tokyo_night.bg, Color::Rgb(0x1a, 0x1b, 0x26));
+        assert_eq!(tokyo_night.accent, Color::Rgb(0x7a, 0xa2, 0xf7));
+
+        let storm = Theme::by_name_in_dir("tokyo-night-storm", directory.path());
+        assert_eq!(storm.bg, Color::Rgb(0x24, 0x28, 0x3b));
+        assert_eq!(storm.accent, Color::Rgb(0x7a, 0xa2, 0xf7));
+
+        let one_dark = Theme::by_name_in_dir("one-dark", directory.path());
+        assert_eq!(one_dark.bg, Color::Rgb(0x28, 0x2c, 0x34));
+        assert_eq!(one_dark.accent, Color::Rgb(0x61, 0xaf, 0xef));
+    }
+
+    #[test]
+    fn transparent_inherits_terminal_foreground_and_background() {
+        let directory = tempdir().unwrap();
+        let transparent = Theme::by_name_in_dir("transparent", directory.path());
+
+        assert_eq!(transparent.bg, Color::Reset);
+        assert_eq!(transparent.fg, Color::Reset);
+        assert_ne!(transparent.accent, Color::Reset);
+        assert_eq!(transparent.palette, DB16);
     }
 
     #[test]

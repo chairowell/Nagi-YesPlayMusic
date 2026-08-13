@@ -94,6 +94,43 @@ macOS 会拦一道。放行方法二选一：
 接收 stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 验签，这与
 Apple Developer ID 无关。普通本地构建没有发布公钥，因此自动更新保持未配置状态。
 
+## ypm 终端版
+
+同一 Release 会提供 `ypm-macos-aarch64`、`ypm-linux-x64` 和 `ypm-windows-x64.exe`。
+macOS / Linux 下载后先赋予执行权限，再直接启动：
+
+```bash
+chmod +x ypm-macos-aarch64 # Linux 对应 ypm-linux-x64
+./ypm-macos-aarch64
+```
+
+Linux x64 产物以 Ubuntu 22.04（glibc 2.35）为兼容基线，运行时需要 `libasound2`。
+Windows x64 建议使用 Windows Terminal。三平台也可以用 Rust 1.91 从源码构建：
+
+```bash
+cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui
+```
+
+首次启动会生成 `~/.config/ypm/config.toml`。内置主题有 `db16`、`pico8`、`gameboy`、
+`everforest`、`tokyo-night`、`tokyo-night-storm`、`one-dark` 和 `transparent`；
+其中 `transparent` 继承终端自己的前景色与背景色。
+
+自定义主题放在 `~/.config/ypm/themes/<name>.toml`，然后在配置中写 `theme = "<name>"`。
+色板需要 2–64 个 RGB 十六进制颜色，`roles` 的值是色板下标：
+
+```toml
+palette = ["#1a1b26", "#565f89", "#c0caf5", "#7aa2f7", "#bb9af7"]
+
+[roles]
+bg = 0
+fg = 2
+dim = 1
+faint = 1
+accent = 3
+accent2 = 4
+sel = 3
+```
+
 ## 自己构建
 
 需要 [Bun 1.3.12](https://bun.sh)、Rust 1.89 以上，以及对应平台的 Tauri 系统依赖。

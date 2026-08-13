@@ -600,7 +600,7 @@ jobs:
             target: aarch64-apple-darwin
             source: ypm
             dest: ypm-macos-aarch64
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             label: linux-x64
             target: x86_64-unknown-linux-gnu
             source: ypm
@@ -630,7 +630,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config
+          sudo apt-get install -y binutils libasound2-dev pkg-config
 
       - name: Test ypm and core
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui -p yesplaymusic-core --all-features
@@ -640,6 +640,23 @@ jobs:
 
       - name: Build ypm
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --target ${{ matrix.target }}
+
+      - name: Smoke ypm runtime
+        shell: bash
+        run: '"src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" --version'
+
+      - name: Verify Linux GLIBC 2.35 baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          YPM_BINARY="src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}"
+          YPM_MAX_GLIBC="$({ readelf --version-info "$YPM_BINARY" || exit 1; } \
+            | sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -Vu \
+            | tail -n 1)"
+          test -n "$YPM_MAX_GLIBC"
+          echo "Highest required GLIBC: $YPM_MAX_GLIBC"
+          dpkg --compare-versions "$YPM_MAX_GLIBC" le 2.35
 
       - name: Stage binary
         shell: bash
