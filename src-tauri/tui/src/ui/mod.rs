@@ -31,7 +31,7 @@ pub struct Hits {
     pub confirm: Vec<(Rect, bool)>,
 }
 
-pub fn draw(frame: &mut Frame, state: &AppState, hits: &mut Hits) {
+pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
     hits.tabs.clear();
     hits.rows.clear();
     hits.menu.clear();

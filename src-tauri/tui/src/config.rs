@@ -4,6 +4,14 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Deserializer};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CoverMode {
+    #[default]
+    Pixel,
+    Original,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -28,7 +36,10 @@ pub struct Config {
     /// Progress bar look: "dot" = thin line with a playhead dot,
     /// "bar" = thick block line, no dot.
     pub progress_style: String,
-    /// Pixel density multiplier for cover/idle art (0.5 chunky … 2.0 fine).
+    /// Cover renderer: palette pixel art or terminal graphics protocol.
+    pub cover_mode: CoverMode,
+    /// Pixel sampling detail (0.5 chunky … 2.0 fine). The final cell
+    /// footprint is unchanged.
     pub pixel_scale: f32,
 }
 
@@ -43,6 +54,7 @@ impl Default for Config {
             layout: "side".into(),
             idle_art: None,
             progress_style: "dot".into(),
+            cover_mode: CoverMode::Pixel,
             pixel_scale: 1.0,
         }
     }
@@ -71,6 +83,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都�
 # theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm | one-dark | transparent
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
+# cover_mode = "pixel"        # pixel（主题像素画）| original（终端原图协议，不支持时回退 pixel）
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 2048
@@ -130,6 +143,7 @@ mod tests {
         assert_eq!(config.language, "zh");
         assert_eq!(config.quality, "exhigh");
         assert_eq!(config.theme, "db16");
+        assert_eq!(config.cover_mode, CoverMode::Pixel);
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
         assert_eq!(parsed.quality, "lossless");
@@ -139,5 +153,8 @@ mod tests {
         assert_eq!(parsed.language, "ja");
         let parsed: Config = toml::from_str("language = \"fr\"").unwrap();
         assert_eq!(parsed.language, "zh");
+
+        let parsed: Config = toml::from_str("cover_mode = \"original\"").unwrap();
+        assert_eq!(parsed.cover_mode, CoverMode::Original);
     }
 }

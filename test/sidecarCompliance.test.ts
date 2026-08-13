@@ -264,9 +264,13 @@ async function createOptionalDependencyFixture(): Promise<{
     'core',
     'Cargo.toml'
   );
+  const manifest = await readFile(coreManifest, 'utf8');
   await writeFile(
     coreManifest,
-    `${await readFile(coreManifest, 'utf8')}\n[features]\ndefault = []\nfixture-cache = ["dep:optional-fixture"]\n\n[dependencies]\noptional-fixture = { version = "=1.0.0", optional = true }\n`,
+    manifest.replace(
+      '[dependencies]\n',
+      '[features]\ndefault = []\nfixture-cache = ["dep:optional-fixture"]\n\n[dependencies]\noptional-fixture = { version = "=1.0.0", optional = true }\n'
+    ),
     'utf8'
   );
 

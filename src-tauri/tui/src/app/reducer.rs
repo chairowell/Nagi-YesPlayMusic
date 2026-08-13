@@ -1,10 +1,11 @@
-use crate::action::{Action, View, SEEK_STEP};
+use crate::action::{Action, CoverRenderRequest, View, SEEK_STEP};
 use crate::api::Source;
 use crate::event;
 use crate::player::PlayerCommand;
 
 use super::{
-    desired_idle_cells, render_idle_art, scale_cells, spawn_render_cover, AppState, Effects,
+    apply_pixel_cover, desired_idle_cells, spawn_decode_cover, spawn_render_cover,
+    spawn_render_idle, AppState, Effects,
 };
 
 impl AppState {
@@ -255,18 +256,49 @@ impl AppState {
             Action::CoverBytes { generation, bytes } => {
                 if generation == self.generation {
                     self.cover_bytes = Some(bytes.clone());
+                    let original_bytes = self.original_cover.is_some().then(|| bytes.clone());
+                    let request = CoverRenderRequest {
+                        generation,
+                        cells: self.desired_cover_cells(),
+                    };
                     spawn_render_cover(
                         fx,
-                        generation,
+                        request,
                         bytes,
                         self.theme.palette,
-                        self.desired_cover_cells(),
+                        self.theme.bg,
+                        self.pixel_detail_scale,
                     );
+                    if let Some(bytes) = original_bytes {
+                        spawn_decode_cover(fx, generation, bytes);
+                    }
                 }
             }
-            Action::CoverLoaded { generation, cover } => {
+            Action::CoverLoaded { request, cover } => {
+                let desired = self.desired_cover_cells();
+                apply_pixel_cover(&mut self.cover, self.generation, desired, request, cover);
+            }
+            Action::CoverDecoded { generation, image } => {
                 if generation == self.generation {
-                    self.cover = Some(cover);
+                    if let Some(original) = &mut self.original_cover {
+                        original.replace(generation, image);
+                    }
+                }
+            }
+            Action::IdleArtBytes { bytes } => {
+                self.idle_bytes = Some(bytes.clone());
+                spawn_render_idle(
+                    fx,
+                    bytes,
+                    self.theme.palette,
+                    self.theme.bg,
+                    desired_idle_cells(),
+                    self.pixel_detail_scale,
+                );
+            }
+            Action::IdleArtLoaded { cells, cover } => {
+                if cells == desired_idle_cells() {
+                    self.idle_art = cover;
                 }
             }
             Action::Player(event) => {
@@ -279,22 +311,35 @@ impl AppState {
             Action::Resize => {
                 // Layout-dependent resolution: re-render cover and idle art
                 // from their kept source bytes when the desired grid changed.
-                if let (Some(bytes), Some(cover)) = (&self.cover_bytes, &self.cover) {
+                if let Some(bytes) = &self.cover_bytes {
                     let desired = self.desired_cover_cells();
-                    if (cover.width, cover.height) != desired {
+                    let current = self.cover.as_ref().map(|cover| (cover.width, cover.height));
+                    if current != Some(desired) {
                         spawn_render_cover(
                             fx,
-                            self.generation,
+                            CoverRenderRequest {
+                                generation: self.generation,
+                                cells: desired,
+                            },
                             bytes.clone(),
                             self.theme.palette,
-                            desired,
+                            self.theme.bg,
+                            self.pixel_detail_scale,
                         );
                     }
                 }
-                let desired = scale_cells(desired_idle_cells(), self.pixel_scale);
+                let desired = desired_idle_cells();
                 if (self.idle_art.width, self.idle_art.height) != desired {
-                    self.idle_art =
-                        render_idle_art(self.idle_bytes.as_deref(), self.theme.palette, desired);
+                    if let Some(bytes) = self.idle_bytes.clone() {
+                        spawn_render_idle(
+                            fx,
+                            bytes,
+                            self.theme.palette,
+                            self.theme.bg,
+                            desired,
+                            self.pixel_detail_scale,
+                        );
+                    }
                 }
                 if self.now.is_some() {
                     self.ensure_placeholder();

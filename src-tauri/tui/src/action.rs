@@ -8,6 +8,12 @@ use crate::api::{ResolvedTrack, SongRow, Source};
 use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoverRenderRequest {
+    pub generation: u64,
+    pub cells: (u16, u16),
+}
+
 /// Idle-dashboard menu entries; resolved to Actions at the input layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuEntry {
@@ -73,7 +79,18 @@ pub enum Action {
         bytes: Vec<u8>,
     },
     CoverLoaded {
+        request: CoverRenderRequest,
+        cover: PixelCover,
+    },
+    CoverDecoded {
         generation: u64,
+        image: image::DynamicImage,
+    },
+    IdleArtBytes {
+        bytes: Vec<u8>,
+    },
+    IdleArtLoaded {
+        cells: (u16, u16),
         cover: PixelCover,
     },
     StartLogin,

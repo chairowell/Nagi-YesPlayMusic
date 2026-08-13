@@ -18,7 +18,7 @@ use crate::ui::{format_duration, Hits};
 // border reads as a stretched rectangle.
 const COVER_GRID: (u16, u16) = (26, 13);
 
-pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
+pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
     if state.now.is_none() {
         draw_dashboard(frame, state, area, hits);
         return;
@@ -156,8 +156,16 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 
 // ── playing layout ──────────────────────────────────────────────────
 
-fn draw_cover(frame: &mut Frame, state: &AppState, area: Rect) {
+fn draw_cover(frame: &mut Frame, state: &mut AppState, area: Rect) {
     if area.height == 0 {
+        return;
+    }
+    if state.original_cover_is_current() {
+        frame.render_widget(
+            ratatui::widgets::Block::new().style(Style::new().bg(state.theme.bg)),
+            area,
+        );
+        state.render_original_cover(frame, area);
         return;
     }
     match (&state.cover, &state.placeholder) {

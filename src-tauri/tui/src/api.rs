@@ -448,6 +448,7 @@ pub async fn fetch_cover(pic_url: &str, edge: u32) -> Result<Vec<u8>> {
     let url = format!("{pic_url}?param={edge}y{edge}");
     let response = reqwest::get(&url)
         .await
+        .and_then(reqwest::Response::error_for_status)
         .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpFetchCover, error)))?;
     let bytes = response
         .bytes()
@@ -469,6 +470,8 @@ pub fn qr_unicode(url: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
 
     fn ncm(quality: &str) -> Ncm {
@@ -522,5 +525,31 @@ mod tests {
         }));
 
         assert!(error.is_err());
+    }
+
+    #[tokio::test]
+    async fn cover_fetch_accepts_success_and_rejects_http_error_status() {
+        let success_url = serve_once("200 OK", b"image bytes").await;
+        assert_eq!(fetch_cover(&success_url, 32).await.unwrap(), b"image bytes");
+
+        let missing_url = serve_once("404 Not Found", b"missing").await;
+        assert!(fetch_cover(&missing_url, 32).await.is_err());
+    }
+
+    async fn serve_once(status: &'static str, body: &'static [u8]) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            stream.write_all(body).await.unwrap();
+        });
+        format!("http://{address}/cover")
     }
 }

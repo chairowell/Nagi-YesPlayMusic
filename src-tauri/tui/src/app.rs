@@ -10,11 +10,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::StreamExt;
+use image::{DynamicImage, Rgba};
+use ratatui::layout::Rect;
+use ratatui::style::Color;
+use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::thread::{ResizeRequest, ResizeResponse, ThreadProtocol};
+use ratatui_image::StatefulImage;
 use tokio::sync::mpsc;
 
-use crate::action::{Action, View};
+use crate::action::{Action, CoverRenderRequest, View};
 use crate::api::{self, Ncm, SongRow, Source};
-use crate::config::{self, Config};
+use crate::config::{self, Config, CoverMode};
 use crate::event;
 use crate::i18n::{self, Key};
 use crate::pixel::{self, PixelCover};
@@ -34,6 +40,51 @@ pub struct Effects {
 }
 
 const COVER_SOURCE_EDGE: u32 = 500;
+
+struct OriginalCover {
+    picker: Picker,
+    protocol: ThreadProtocol,
+    generation: Option<u64>,
+}
+
+impl OriginalCover {
+    fn new(picker: Picker, requests: mpsc::UnboundedSender<ResizeRequest>) -> Self {
+        Self {
+            picker,
+            protocol: ThreadProtocol::new(requests, None),
+            generation: None,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.generation = None;
+        self.protocol.empty_protocol();
+    }
+
+    fn replace(&mut self, generation: u64, image: DynamicImage) {
+        self.protocol
+            .replace_protocol(self.picker.new_resize_protocol(image));
+        self.generation = Some(generation);
+    }
+}
+
+fn select_graphics_picker(mode: CoverMode, picker: Option<Picker>) -> Option<Picker> {
+    if mode != CoverMode::Original {
+        return None;
+    }
+    picker.filter(|picker| picker.protocol_type() != ProtocolType::Halfblocks)
+}
+
+fn query_graphics_picker(mode: CoverMode, background: Color) -> Option<Picker> {
+    if mode != CoverMode::Original {
+        return None;
+    }
+    let mut picker = select_graphics_picker(mode, Picker::from_query_stdio().ok())?;
+    if let Color::Rgb(red, green, blue) = background {
+        picker.set_background_color(Some(Rgba([red, green, blue, 255])));
+    }
+    Some(picker)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayMode {
@@ -110,7 +161,8 @@ pub struct AppState {
     pub cover: Option<PixelCover>,
     pub layout: PlayLayout,
     pub thick_progress: bool,
-    pixel_scale: f32,
+    pixel_detail_scale: f32,
+    original_cover: Option<OriginalCover>,
     pub idle_art: PixelCover,
     pub library_synced: bool,
     /// Idle art pre-rendered at the playing-cover size, so the loading
@@ -118,6 +170,7 @@ pub struct AppState {
     pub placeholder: Option<PixelCover>,
     /// Source image for the idle art; None = procedural vinyl.
     idle_bytes: Option<Vec<u8>>,
+    idle_path: Option<std::path::PathBuf>,
     cover_bytes: Option<Vec<u8>>,
     pub lyrics: Vec<crate::lyrics::LyricLine>,
     pub position: Duration,
@@ -135,10 +188,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: &Config) -> Self {
+        let theme = Theme::by_name(&config.theme);
+        let idle_cells = desired_idle_cells();
+        let idle_path = config.idle_art.as_deref().map(shellexpand_home);
+        let idle_bytes = idle_path.is_none().then(|| LOGO_BYTES.to_vec());
         Self {
             view: View::NowPlaying,
             zen: false,
-            theme: Theme::by_name(&config.theme),
+            theme,
             // Demo rows for the logged-out state; replaced by 我喜欢的音乐
             // right after login (id 0 = resolve via search).
             library: vec![
@@ -177,15 +234,13 @@ impl AppState {
             cover: None,
             layout: PlayLayout::from_config(&config.layout),
             thick_progress: config.progress_style == "bar",
-            pixel_scale: config.pixel_scale.clamp(0.5, 2.0),
-            idle_art: render_idle_art(
-                idle_art_bytes(config).as_deref(),
-                Theme::by_name(&config.theme).palette,
-                scale_cells(desired_idle_cells(), config.pixel_scale.clamp(0.5, 2.0)),
-            ),
+            pixel_detail_scale: config.pixel_scale.clamp(0.5, 2.0),
+            original_cover: None,
+            idle_art: pixel::vinyl(theme.palette, theme.bg, idle_cells.0, idle_cells.1),
             library_synced: false,
             placeholder: None,
-            idle_bytes: idle_art_bytes(config),
+            idle_bytes,
+            idle_path,
             cover_bytes: None,
             lyrics: Vec::new(),
             position: Duration::ZERO,
@@ -216,18 +271,60 @@ impl AppState {
             PlayLayout::Side => cols.saturating_sub(30).max(16),
             PlayLayout::Stacked => cols.saturating_sub(4).max(16),
         });
-        scale_cells((width, width / 2), self.pixel_scale)
+        (width, width / 2)
     }
 
     fn ensure_placeholder(&mut self) {
         let desired = self.desired_cover_cells();
         let current = self.placeholder.as_ref().map(|art| (art.width, art.height));
         if current != Some(desired) {
-            self.placeholder = Some(render_idle_art(
-                self.idle_bytes.as_deref(),
+            self.placeholder = Some(pixel::vinyl(
                 self.theme.palette,
-                desired,
+                self.theme.bg,
+                desired.0,
+                desired.1,
             ));
+        }
+    }
+
+    fn clear_cover(&mut self) {
+        self.cover = None;
+        self.cover_bytes = None;
+        if let Some(original) = &mut self.original_cover {
+            original.clear();
+        }
+    }
+
+    fn load_idle_art(&mut self, fx: &Effects) {
+        if let Some(bytes) = self.idle_bytes.clone() {
+            spawn_render_idle(
+                fx,
+                bytes,
+                self.theme.palette,
+                self.theme.bg,
+                desired_idle_cells(),
+                self.pixel_detail_scale,
+            );
+        } else if let Some(path) = self.idle_path.clone() {
+            spawn_idle_load(fx, path);
+        }
+    }
+
+    pub fn original_cover_is_current(&self) -> bool {
+        self.original_cover
+            .as_ref()
+            .is_some_and(|cover| cover.generation == Some(self.generation))
+    }
+
+    pub fn render_original_cover(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        if let Some(original) = &mut self.original_cover {
+            frame.render_stateful_widget(StatefulImage::new(), area, &mut original.protocol);
+        }
+    }
+
+    fn apply_original_resize(&mut self, response: ResizeResponse) {
+        if let Some(original) = &mut self.original_cover {
+            original.protocol.update_resized_protocol(response);
         }
     }
 
@@ -276,6 +373,10 @@ impl AppState {
 
     /// Reset the now-playing surface and kick off resolution for a row.
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
+        fx.player.send(PlayerCommand::Stop);
+        self.current_track_id = None;
+        self.paused = false;
+        self.clear_cover();
         self.ensure_placeholder();
         self.generation += 1;
         self.now = Some(NowPlaying {
@@ -283,8 +384,6 @@ impl AppState {
             artist: row.artist.clone(),
             album: String::new(),
         });
-        // Keep the previous cover on screen until the new one lands —
-        // no placeholder flash between tracks.
         self.lyrics.clear();
         self.position = Duration::ZERO;
         self.duration = None;
@@ -451,45 +550,85 @@ fn spawn_cover_fetch(fx: &Effects, generation: u64, pic_url: String) {
 
 fn spawn_render_cover(
     fx: &Effects,
-    generation: u64,
+    request: CoverRenderRequest,
     bytes: Vec<u8>,
     palette: &'static [(u8, u8, u8)],
-    cells: (u16, u16),
+    background: Color,
+    detail_scale: f32,
 ) {
     let actions = fx.actions.clone();
     tokio::spawn(async move {
         let cover = tokio::task::spawn_blocking(move || {
-            pixel::from_image_bytes(&bytes, palette, cells.0, cells.1)
+            pixel::from_image_bytes(
+                &bytes,
+                palette,
+                background,
+                request.cells.0,
+                request.cells.1,
+                detail_scale,
+            )
         })
         .await;
         if let Ok(Ok(cover)) = cover {
-            let _ = actions.send(Action::CoverLoaded { generation, cover });
+            let _ = actions.send(Action::CoverLoaded { request, cover });
         }
     });
+}
+
+fn spawn_decode_cover(fx: &Effects, generation: u64, bytes: Vec<u8>) {
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let image = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes)).await;
+        if let Ok(Ok(image)) = image {
+            let _ = actions.send(Action::CoverDecoded { generation, image });
+        }
+    });
+}
+
+fn apply_pixel_cover(
+    current: &mut Option<PixelCover>,
+    generation: u64,
+    desired_cells: (u16, u16),
+    request: CoverRenderRequest,
+    cover: PixelCover,
+) {
+    if request.generation == generation && request.cells == desired_cells {
+        *current = Some(cover);
+    }
 }
 
 /// The project's own logo (MIT, ships with the repo) — the default
 /// dashboard art, pixelated through the same pipeline as covers.
 const LOGO_BYTES: &[u8] = include_bytes!("../../../images/logo.png");
 
-/// The idle-art source: the user's configured image, else the logo.
-fn idle_art_bytes(config: &Config) -> Option<Vec<u8>> {
-    if let Some(path) = &config.idle_art {
-        if let Ok(bytes) = std::fs::read(shellexpand_home(path)) {
-            return Some(bytes);
+fn spawn_render_idle(
+    fx: &Effects,
+    bytes: Vec<u8>,
+    palette: &'static [(u8, u8, u8)],
+    background: Color,
+    cells: (u16, u16),
+    detail_scale: f32,
+) {
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let cover = tokio::task::spawn_blocking(move || {
+            pixel::from_image_bytes(&bytes, palette, background, cells.0, cells.1, detail_scale)
+        })
+        .await;
+        if let Ok(Ok(cover)) = cover {
+            let _ = actions.send(Action::IdleArtLoaded { cells, cover });
         }
-    }
-    Some(LOGO_BYTES.to_vec())
+    });
 }
 
-fn render_idle_art(
-    bytes: Option<&[u8]>,
-    palette: &'static [(u8, u8, u8)],
-    cells: (u16, u16),
-) -> PixelCover {
-    bytes
-        .and_then(|bytes| pixel::from_image_bytes(bytes, palette, cells.0, cells.1).ok())
-        .unwrap_or_else(|| pixel::vinyl(palette, cells.0, cells.1))
+fn spawn_idle_load(fx: &Effects, path: std::path::PathBuf) {
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let bytes = tokio::task::spawn_blocking(move || std::fs::read(path)).await;
+        if let Ok(Ok(bytes)) = bytes {
+            let _ = actions.send(Action::IdleArtBytes { bytes });
+        }
+    });
 }
 
 /// Idle art scales with the terminal like covers do.
@@ -497,13 +636,6 @@ fn desired_idle_cells() -> (u16, u16) {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let height = (rows * 2 / 5).clamp(12, 24);
     let width = (height * 2).min(cols.saturating_sub(4).max(16));
-    (width, width / 2)
-}
-
-/// Cell-grid scaling for the pixel-density setting; the widget itself
-/// still clips to the drawing area, so scale only changes granularity.
-fn scale_cells(cells: (u16, u16), factor: f32) -> (u16, u16) {
-    let width = ((cells.0 as f32 * factor).round() as u16).clamp(8, 120);
     (width, width / 2)
 }
 
@@ -536,6 +668,24 @@ pub async fn run(config: Config) -> Result<()> {
 async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) -> Result<()> {
     let (player, mut player_events) = player::spawn(tokio::runtime::Handle::current());
     let (actions_tx, mut actions) = mpsc::unbounded_channel();
+    let (resize_requests_tx, mut resize_requests) = mpsc::unbounded_channel();
+    let (resize_responses_tx, mut resize_responses) = mpsc::unbounded_channel();
+
+    // Graphics protocol queries must finish before EventStream starts reading
+    // the same terminal response bytes.
+    let theme = Theme::by_name(&config.theme);
+    let original_cover = query_graphics_picker(config.cover_mode, theme.bg)
+        .map(|picker| OriginalCover::new(picker, resize_requests_tx));
+
+    tokio::spawn(async move {
+        while let Some(request) = resize_requests.recv().await {
+            let response = tokio::task::spawn_blocking(move || request.resize_encode()).await;
+            let Ok(Ok(response)) = response else { continue };
+            if resize_responses_tx.send(response).is_err() {
+                break;
+            }
+        }
+    });
 
     let input_tx = actions_tx.clone();
     tokio::spawn(async move {
@@ -570,23 +720,34 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         actions: actions_tx,
     };
     let mut state = AppState::new(config);
+    state.original_cover = original_cover;
+    state.load_idle_art(&fx);
     // Restore a persisted session: greet + load 我喜欢的音乐.
     if let Some(session) = fx.ncm.session_snapshot() {
         state.begin_session_restore(&fx, session);
     }
     let mut hits = ui::Hits::default();
-    terminal.draw(|frame| ui::draw(frame, &state, &mut hits))?;
+    terminal.draw(|frame| ui::draw(frame, &mut state, &mut hits))?;
 
-    while let Some(action) = actions.recv().await {
-        apply(&mut state, action, &fx, &hits);
-        // Coalesce whatever queued up so one draw covers the burst.
-        while let Ok(action) = actions.try_recv() {
-            apply(&mut state, action, &fx, &hits);
+    loop {
+        tokio::select! {
+            action = actions.recv() => {
+                let Some(action) = action else { break };
+                apply(&mut state, action, &fx, &hits);
+                // Coalesce whatever queued up so one draw covers the burst.
+                while let Ok(action) = actions.try_recv() {
+                    apply(&mut state, action, &fx, &hits);
+                }
+            }
+            response = resize_responses.recv(), if state.original_cover.is_some() => {
+                let Some(response) = response else { break };
+                state.apply_original_resize(response);
+            }
         }
         if state.should_quit {
             break;
         }
-        terminal.draw(|frame| ui::draw(frame, &state, &mut hits))?;
+        terminal.draw(|frame| ui::draw(frame, &mut state, &mut hits))?;
     }
     Ok(())
 }

@@ -21,6 +21,7 @@ image = { version = "=0.25.10", default-features = false, features = ["gif", "jp
 ncm-api-rs = "=0.1.0"
 qrcode = { version = "=0.14.1", default-features = false }
 ratatui = "=0.30.2"
+ratatui-image = { version = "=11.0.6", default-features = false, features = ["crossterm", "tokio"] }
 reqwest = { version = "=0.12.23", default-features = false, features = ["rustls-tls"] }
 rodio = { version = "=0.22.2", features = ["symphonia-all"] }
 serde = { version = "=1.0.229", features = ["derive"] }
