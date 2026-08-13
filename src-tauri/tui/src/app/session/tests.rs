@@ -23,6 +23,7 @@ fn effects(directory: &TempDir) -> Effects {
         )),
         actions,
         cache_root: None,
+        config_path: directory.path().join("config.toml"),
     }
 }
 

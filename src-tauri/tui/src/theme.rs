@@ -8,6 +8,17 @@ use serde::Deserialize;
 
 type Rgb = (u8, u8, u8);
 
+pub const BUILTIN_NAMES: &[&str] = &[
+    "db16",
+    "pico8",
+    "gameboy",
+    "everforest",
+    "tokyo-night",
+    "tokyo-night-storm",
+    "one-dark",
+    "transparent",
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Theme {
     pub bg: Color,

@@ -1,11 +1,13 @@
 //! ~/.config/ypm/config.toml — strong defaults, every field optional.
 
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use tempfile::NamedTempFile;
 use yesplaymusic_core::cache::AudioQuality;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoverMode {
     #[default]
@@ -13,14 +15,17 @@ pub enum CoverMode {
     Original,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 pub struct Config {
     /// UI language: zh | en | ja
     #[serde(deserialize_with = "deserialize_language")]
     pub language: String,
     /// NCM quality level: 128 | 192 | 320/exhigh | lossless | hires
-    #[serde(deserialize_with = "deserialize_quality")]
+    #[serde(
+        deserialize_with = "deserialize_quality",
+        serialize_with = "serialize_quality"
+    )]
     pub quality: AudioQuality,
     /// Built-in theme name or a TOML file in themes/.
     pub theme: String,
@@ -76,9 +81,27 @@ impl Config {
             }
         }
     }
+
+    /// Write the complete config through a same-directory temporary file,
+    /// then atomically replace the destination.
+    pub fn save_to(&self, path: &Path) -> io::Result<()> {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+
+        let contents = toml::to_string_pretty(self).map_err(io::Error::other)?;
+        let mut temporary = NamedTempFile::new_in(parent)?;
+        temporary.write_all(contents.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(path).map_err(|error| error.error)?;
+        sync_directory(parent)
+    }
 }
 
-const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都可省略（用默认值）。
+const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修改；手动编辑后重启生效。
+# 所有项都可省略（使用默认值）。
 
 # language = "zh"            # zh | en | ja
 # quality = "exhigh"          # 128 | 192 | 320/exhigh | lossless | hires
@@ -134,6 +157,29 @@ where
         },
     };
     quality.ok_or_else(|| D::Error::custom("unsupported audio quality"))
+}
+
+fn serialize_quality<S>(quality: &AudioQuality, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(match quality {
+        AudioQuality::Low128 => "128",
+        AudioQuality::Medium192 => "192",
+        AudioQuality::High320 => "exhigh",
+        AudioQuality::Lossless => "lossless",
+        AudioQuality::HiRes => "hires",
+    })
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 fn write_template(path: &std::path::Path) -> std::io::Result<()> {
@@ -215,5 +261,58 @@ mod tests {
 
         let numeric: Config = toml::from_str("quality = 192").unwrap();
         assert_eq!(numeric.quality, AudioQuality::Medium192);
+    }
+
+    #[test]
+    fn config_round_trips_every_quality_name() {
+        let cases = [
+            (AudioQuality::Low128, "128"),
+            (AudioQuality::Medium192, "192"),
+            (AudioQuality::High320, "exhigh"),
+            (AudioQuality::Lossless, "lossless"),
+            (AudioQuality::HiRes, "hires"),
+        ];
+
+        for (quality, name) in cases {
+            let config = Config {
+                language: "ja".into(),
+                quality,
+                theme: "tokyo-night".into(),
+                cache_limit_mib: Some(2048),
+                enter_replaces_queue: false,
+                layout: "stacked".into(),
+                idle_art: Some("~/cover.png".into()),
+                progress_style: "bar".into(),
+                cover_mode: CoverMode::Original,
+                pixel_scale: 1.5,
+            };
+
+            let encoded = toml::to_string(&config).unwrap();
+            assert!(encoded.contains(&format!("quality = \"{name}\"")));
+            let decoded: Config = toml::from_str(&encoded).unwrap();
+            assert_eq!(decoded, config);
+        }
+    }
+
+    #[test]
+    fn save_to_atomically_replaces_without_leaving_a_temporary_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, "theme = \"old\"\n").unwrap();
+
+        let config = Config {
+            theme: "pico8".into(),
+            quality: AudioQuality::HiRes,
+            ..Config::default()
+        };
+        config.save_to(&path).unwrap();
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);
+        let entries = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(entries, [std::ffi::OsString::from("config.toml")]);
     }
 }

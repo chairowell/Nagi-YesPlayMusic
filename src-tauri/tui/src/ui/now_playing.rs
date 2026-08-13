@@ -141,6 +141,7 @@ fn menu_entries(state: &AppState) -> Vec<(String, &'static str, MenuEntry)> {
         Some(_) => (i18n::t(Key::Relogin).to_owned(), "i", MenuEntry::Login),
         None => (i18n::t(Key::ScanLogin).to_owned(), "i", MenuEntry::Login),
     });
+    entries.push((i18n::t(Key::Settings).to_owned(), ",", MenuEntry::Settings));
     entries.push((i18n::t(Key::Quit).to_owned(), "q", MenuEntry::Quit));
     entries
 }

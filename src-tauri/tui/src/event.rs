@@ -43,6 +43,28 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
         }
         return None;
     }
+    if let MouseEventKind::Down(crossterm::event::MouseButton::Left) = mouse.kind {
+        for (rect, delta) in &hits.settings_adjust {
+            if rect.contains(position) {
+                return Some(Action::AdjustSetting(*delta));
+            }
+        }
+        for rect in &hits.settings_save {
+            if rect.contains(position) {
+                return Some(Action::SaveSettings);
+            }
+        }
+        for rect in &hits.settings_cancel {
+            if rect.contains(position) {
+                return Some(Action::CancelSettings);
+            }
+        }
+        for (rect, index) in &hits.settings_rows {
+            if rect.contains(position) {
+                return Some(Action::SelectSetting(*index));
+            }
+        }
+    }
     // Battery-style volume bar: click or drag anywhere inside sets the level.
     if matches!(
         mouse.kind,
@@ -81,6 +103,7 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
                         crate::action::MenuEntry::Library => Action::SwitchView(View::Library),
                         crate::action::MenuEntry::Search => Action::SwitchView(View::Search),
                         crate::action::MenuEntry::Login => Action::StartLogin,
+                        crate::action::MenuEntry::Settings => Action::SwitchView(View::Settings),
                         crate::action::MenuEntry::Quit => Action::Quit,
                     });
                 }
@@ -120,6 +143,7 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
             Some(Action::SwitchView(View::Search))
         }
         KeyCode::Char('4') => Some(Action::SwitchView(View::Queue)),
+        KeyCode::Char('5') | KeyCode::Char(',') => Some(Action::SwitchView(View::Settings)),
         // vim: h backs out, l dives in (Backspace/Esc keep working)
         KeyCode::Backspace | KeyCode::Esc | KeyCode::Char('h') => Some(Action::Back),
         KeyCode::Char('l') | KeyCode::Enter => Some(Action::Activate),
@@ -140,6 +164,28 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('-') => Some(Action::VolumeBy(-0.05)),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::MoveSelection(1)),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::MoveSelection(-1)),
+        _ => None,
+    }
+}
+
+pub fn settings_key_action(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
+    }
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => Some(Action::CancelSettings),
+        KeyCode::Char('1') => Some(Action::SwitchView(View::NowPlaying)),
+        KeyCode::Char('2') => Some(Action::SwitchView(View::Library)),
+        KeyCode::Char('3') => Some(Action::SwitchView(View::Search)),
+        KeyCode::Char('4') => Some(Action::SwitchView(View::Queue)),
+        KeyCode::Char('5') | KeyCode::Char(',') => Some(Action::SwitchView(View::Settings)),
+        KeyCode::Enter => Some(Action::SaveSettings),
+        KeyCode::Left | KeyCode::Char('h') => Some(Action::AdjustSetting(-1)),
+        KeyCode::Right | KeyCode::Char('l') => Some(Action::AdjustSetting(1)),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::MoveSelection(1)),
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::MoveSelection(-1)),
+        KeyCode::Char('g') => Some(Action::GKey),
+        KeyCode::Char('G') => Some(Action::JumpBottom),
         _ => None,
     }
 }
@@ -171,5 +217,45 @@ mod tests {
         ));
         assert!(matches!(map(KeyCode::Char('z')), Some(Action::ToggleZen)));
         assert!(matches!(map(KeyCode::Char('i')), Some(Action::StartLogin)));
+        assert!(matches!(
+            map(KeyCode::Char(',')),
+            Some(Action::SwitchView(View::Settings))
+        ));
+    }
+
+    #[test]
+    fn settings_mouse_targets_use_the_drawn_geometry() {
+        let mut hits = Hits::default();
+        hits.settings_rows
+            .push((ratatui::layout::Rect::new(2, 2, 20, 1), 3));
+        hits.settings_adjust
+            .push((ratatui::layout::Rect::new(20, 2, 2, 1), 1));
+        hits.settings_save
+            .push(ratatui::layout::Rect::new(2, 5, 8, 1));
+        hits.settings_cancel
+            .push(ratatui::layout::Rect::new(12, 5, 8, 1));
+        let click = |column, row| MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        assert!(matches!(
+            mouse_action(click(3, 2), &hits, 0),
+            Some(Action::SelectSetting(3))
+        ));
+        assert!(matches!(
+            mouse_action(click(20, 2), &hits, 0),
+            Some(Action::AdjustSetting(1))
+        ));
+        assert!(matches!(
+            mouse_action(click(3, 5), &hits, 0),
+            Some(Action::SaveSettings)
+        ));
+        assert!(matches!(
+            mouse_action(click(13, 5), &hits, 0),
+            Some(Action::CancelSettings)
+        ));
     }
 }

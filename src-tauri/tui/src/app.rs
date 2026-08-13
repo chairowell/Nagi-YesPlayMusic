@@ -4,6 +4,7 @@
 mod reducer;
 mod search;
 mod session;
+pub(crate) mod settings;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,6 +42,7 @@ pub struct Effects {
     pub store: Arc<crate::store::LibraryStore>,
     pub actions: mpsc::UnboundedSender<Action>,
     pub cache_root: Option<std::path::PathBuf>,
+    pub config_path: std::path::PathBuf,
 }
 
 const COVER_SOURCE_EDGE: u32 = 500;
@@ -69,6 +71,14 @@ impl OriginalCover {
         self.protocol
             .replace_protocol(self.picker.new_resize_protocol(image));
         self.generation = Some(generation);
+    }
+
+    fn set_background(&mut self, background: Color) {
+        let color = match background {
+            Color::Rgb(red, green, blue) => Some(Rgba([red, green, blue, 255])),
+            _ => None,
+        };
+        self.picker.set_background_color(color);
     }
 }
 
@@ -164,6 +174,8 @@ pub struct AppState {
     pub view: View,
     pub zen: bool,
     pub theme: Theme,
+    pub config: Config,
+    pub(crate) settings: settings::SettingsState,
     pub library: Vec<SongRow>,
     pub selected: usize,
     pub queue: Vec<SongRow>,
@@ -209,6 +221,7 @@ pub struct AppState {
     pub volume: f32,
     pub status: Option<String>,
     pub generation: u64,
+    style_revision: u64,
     terminal_size: (u16, u16),
     pub confirm_quit: bool,
     pub show_help: bool,
@@ -228,6 +241,8 @@ impl AppState {
             view: View::NowPlaying,
             zen: false,
             theme,
+            config: config.clone(),
+            settings: settings::SettingsState::default(),
             // Demo rows for the logged-out state; replaced by 我喜欢的音乐
             // right after login (id 0 = resolve via search).
             library: vec![
@@ -286,6 +301,7 @@ impl AppState {
             volume: 1.0,
             status: None,
             generation: 0,
+            style_revision: 0,
             terminal_size,
             confirm_quit: false,
             show_help: false,
@@ -350,6 +366,7 @@ impl AppState {
                 self.theme.bg,
                 self.desired_idle_cells(),
                 self.pixel_detail_scale,
+                self.style_revision,
             );
         } else if let Some(path) = self.idle_path.clone() {
             spawn_idle_load(fx, path);
@@ -357,9 +374,11 @@ impl AppState {
     }
 
     pub fn original_cover_is_current(&self) -> bool {
-        self.original_cover
-            .as_ref()
-            .is_some_and(|cover| cover.generation == Some(self.generation))
+        self.config.cover_mode == CoverMode::Original
+            && self
+                .original_cover
+                .as_ref()
+                .is_some_and(|cover| cover.generation == Some(self.generation))
     }
 
     pub fn render_original_cover(&mut self, frame: &mut ratatui::Frame, area: Rect) {
@@ -805,10 +824,14 @@ fn apply_pixel_cover(
     current: &mut Option<PixelCover>,
     generation: u64,
     desired_cells: (u16, u16),
+    style_revision: u64,
     request: CoverRenderRequest,
     cover: PixelCover,
 ) {
-    if request.generation == generation && request.cells == desired_cells {
+    if request.generation == generation
+        && request.cells == desired_cells
+        && request.style_revision == style_revision
+    {
         *current = Some(cover);
     }
 }
@@ -824,6 +847,7 @@ fn spawn_render_idle(
     background: Color,
     cells: (u16, u16),
     detail_scale: f32,
+    style_revision: u64,
 ) {
     let actions = fx.actions.clone();
     tokio::spawn(async move {
@@ -832,7 +856,11 @@ fn spawn_render_idle(
         })
         .await;
         if let Ok(Ok(cover)) = cover {
-            let _ = actions.send(Action::IdleArtLoaded { cells, cover });
+            let _ = actions.send(Action::IdleArtLoaded {
+                cells,
+                style_revision,
+                cover,
+            });
         }
     });
 }
@@ -934,6 +962,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         )),
         actions: actions_tx,
         cache_root: initialize_audio_cache(config),
+        config_path: config::config_dir().join("config.toml"),
     };
     let mut state = AppState::new(config);
     state.original_cover = original_cover;

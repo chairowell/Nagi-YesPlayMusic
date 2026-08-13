@@ -61,7 +61,7 @@ macOS Tauri 重构版，不再跟随上游发版。原项目的界面和主要�
 
 ![菜单栏歌词](images/menubar.png)
 
-**Anon 进度条。** 在原有的彩虹猫之外多加了一种进度条皮肤，设置里可以切换，两者互斥。
+**Anon 进度条。** 在原有的彩虹猫之外多加了一种进度条皮肤，桌面版设置里可以切换，两者互斥。
 
 **修了一个切歌的老问题。** 网络慢的时候快速切歌，前一首的歌词响应可能晚于后一首到达，
 把新歌的歌词覆盖成上一首的。现在请求前会记住是哪首歌，回来发现已经切歌就直接丢弃。
@@ -90,7 +90,7 @@ macOS 会拦一道。放行方法二选一：
 
 自己从源码构建的话没有这个问题，本地产物不带隔离属性。
 
-从 tag 构建的包会在启动时静默检查更新，也可以在设置页手动检查、下载和安装。stable 只
+从 tag 构建的包会在启动时静默检查更新，也可以在桌面版设置页手动检查、下载和安装。stable 只
 接收 stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 验签，这与
 Apple Developer ID 无关。普通本地构建没有发布公钥，因此自动更新保持未配置状态。
 
@@ -115,7 +115,10 @@ cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymu
 `everforest`、`tokyo-night`、`tokyo-night-storm`、`one-dark` 和 `transparent`；
 其中 `transparent` 继承终端自己的前景色与背景色。
 
-音质和封面可以直接在该文件里调整：
+按 `5` 或 `,` 打开设置页；`j/k` 选项、`h/l` 或左右键调整，主题会即时预览。
+`Enter` 原子保存到配置文件，`Esc` 取消并恢复原值。语言和封面模式在下次启动后生效。
+
+配置文件仍可直接编辑，适合设置自定义主题、开屏图片和缓存上限：
 
 ```toml
 quality = "exhigh"       # 128 | 192 | 320/exhigh | lossless | hires

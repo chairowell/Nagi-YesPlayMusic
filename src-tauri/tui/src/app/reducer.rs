@@ -44,6 +44,12 @@ impl AppState {
         }
         // Text-input mode: the search box owns the keyboard.
         if let Action::RawKey(key) = &action {
+            if self.view == View::Settings {
+                if let Some(mapped) = event::settings_key_action(*key) {
+                    self.update(mapped, fx);
+                }
+                return;
+            }
             if self.view == View::Search && self.search.input && !self.confirm_quit {
                 self.handle_search_key(fx, *key);
                 return;
@@ -66,7 +72,11 @@ impl AppState {
         match action {
             Action::GKey => {
                 if was_pending_g {
-                    self.selected = 0;
+                    if self.view == View::Settings {
+                        self.settings.selected = 0;
+                    } else {
+                        self.selected = 0;
+                    }
                 } else {
                     self.pending_g = true;
                 }
@@ -76,20 +86,34 @@ impl AppState {
                     View::Library => self.library.len(),
                     View::Search => self.search.results.len(),
                     View::Queue => self.queue.len(),
+                    View::Settings => super::settings::SettingField::ALL.len(),
                     _ => 0,
                 };
-                self.selected = len.saturating_sub(1);
+                if self.view == View::Settings {
+                    self.settings.selected = len.saturating_sub(1);
+                } else {
+                    self.selected = len.saturating_sub(1);
+                }
             }
             Action::ConfirmYes => {}
             Action::Quit => self.confirm_quit = true,
             Action::SwitchView(view) => {
-                self.view = view;
+                if view == View::Settings {
+                    self.open_settings();
+                } else {
+                    if self.view == View::Settings {
+                        self.cancel_settings(fx);
+                    }
+                    self.view = view;
+                }
                 if view == View::Search {
                     self.search.input = true;
                 }
             }
             Action::Back => {
-                if self.view == View::Search && !self.search.input {
+                if self.view == View::Settings {
+                    self.cancel_settings(fx);
+                } else if self.view == View::Search && !self.search.input {
                     self.search.input = true;
                 } else if self.view == View::Library
                     && !self.sidebar_focus
@@ -122,6 +146,10 @@ impl AppState {
                 fx.player.send(PlayerCommand::SetVolume(self.volume));
             }
             Action::MoveSelection(delta) => {
+                if self.view == View::Settings {
+                    self.move_setting_selection(delta);
+                    return;
+                }
                 if self.view == View::Library && self.sidebar_focus {
                     let next = (self.sidebar_selected as i32 + delta.signum()).clamp(0, 3);
                     self.sidebar_selected = next as usize;
@@ -140,6 +168,7 @@ impl AppState {
                 }
             }
             Action::Activate => match self.view {
+                View::Settings => self.save_settings(fx),
                 View::Library if self.sidebar_focus => {
                     self.open_source(fx, self.sidebar_selected);
                 }
@@ -195,6 +224,10 @@ impl AppState {
             }
             Action::ToggleLike => self.toggle_like(fx),
             Action::OpenSource(index) => self.open_source(fx, index),
+            Action::SelectSetting(index) => self.select_setting(index),
+            Action::AdjustSetting(delta) => self.adjust_setting(fx, delta),
+            Action::SaveSettings => self.save_settings(fx),
+            Action::CancelSettings => self.cancel_settings(fx),
             Action::LikedIds { session, ids } => self.apply_liked_ids(session, ids),
             Action::FmMore { session, rows } => self.apply_fm_more(fx, session, rows),
             Action::FmLoadFailed { session, message } => {
@@ -314,8 +347,11 @@ impl AppState {
             }
             Action::PrefetchReady { index, track } => {
                 // Guard against a rebuilt queue: only keep it if the row
-                // at that index is still the same song.
-                if self.queue.get(index).is_some_and(|row| row.id == track.id) {
+                // at that index is still the same song and the quality
+                // request still matches the current setting.
+                if self.queue.get(index).is_some_and(|row| row.id == track.id)
+                    && track.cache_key.quality == fx.ncm.quality()
+                {
                     self.prefetched = Some((index, track));
                 }
             }
@@ -334,6 +370,7 @@ impl AppState {
                     let request = CoverRenderRequest {
                         generation,
                         cells: self.desired_cover_cells(),
+                        style_revision: self.style_revision,
                     };
                     spawn_render_cover(
                         fx,
@@ -350,7 +387,14 @@ impl AppState {
             }
             Action::CoverLoaded { request, cover } => {
                 let desired = self.desired_cover_cells();
-                apply_pixel_cover(&mut self.cover, self.generation, desired, request, cover);
+                apply_pixel_cover(
+                    &mut self.cover,
+                    self.generation,
+                    desired,
+                    self.style_revision,
+                    request,
+                    cover,
+                );
             }
             Action::CoverDecoded { generation, image } => {
                 if generation == self.generation {
@@ -368,10 +412,15 @@ impl AppState {
                     self.theme.bg,
                     self.desired_idle_cells(),
                     self.pixel_detail_scale,
+                    self.style_revision,
                 );
             }
-            Action::IdleArtLoaded { cells, cover } => {
-                if cells == self.desired_idle_cells() {
+            Action::IdleArtLoaded {
+                cells,
+                style_revision,
+                cover,
+            } => {
+                if cells == self.desired_idle_cells() && style_revision == self.style_revision {
                     self.idle_art = cover;
                 }
             }
@@ -398,6 +447,7 @@ impl AppState {
                             CoverRenderRequest {
                                 generation: self.generation,
                                 cells: desired,
+                                style_revision: self.style_revision,
                             },
                             bytes.clone(),
                             self.theme.palette,
@@ -416,6 +466,7 @@ impl AppState {
                             self.theme.bg,
                             desired,
                             self.pixel_detail_scale,
+                            self.style_revision,
                         );
                     }
                 }

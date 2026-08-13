@@ -72,7 +72,7 @@ pub struct Ncm {
     client: ApiClient,
     store: SessionStore,
     session: RwLock<Option<Session>>,
-    quality: AudioQuality,
+    quality: RwLock<AudioQuality>,
 }
 
 impl Ncm {
@@ -83,7 +83,7 @@ impl Ncm {
             client: ApiClient::new(None),
             store,
             session,
-            quality,
+            quality: RwLock::new(quality),
         }
     }
 
@@ -92,7 +92,11 @@ impl Ncm {
     }
 
     pub(crate) fn quality(&self) -> AudioQuality {
-        self.quality
+        *self.quality.read().expect("quality lock")
+    }
+
+    pub(crate) fn set_quality(&self, quality: AudioQuality) {
+        *self.quality.write().expect("quality lock") = quality;
     }
 
     pub fn commit_session(&self, session: &Session) -> Result<()> {
@@ -114,12 +118,6 @@ impl Ncm {
             Some(cookie) => Query::new().cookie(&cookie),
             None => Query::new(),
         }
-    }
-
-    /// NCM `br` parameter for the configured quality; the server
-    /// downgrades automatically when VIP or licensing says no.
-    fn bitrate(&self) -> u32 {
-        self.quality.bitrate()
     }
 
     // ── login ────────────────────────────────────────────────────────
@@ -295,8 +293,9 @@ impl Ncm {
 
     // ── playback resolution ──────────────────────────────────────────
 
-    async fn song_url(&self, id: i64) -> Result<PlaybackSource> {
-        let bitrate = self.bitrate().to_string();
+    async fn song_url(&self, id: i64) -> Result<(AudioQuality, PlaybackSource)> {
+        let requested_quality = self.quality();
+        let bitrate = requested_quality.bitrate().to_string();
         let query = self
             .query()
             .param("id", &id.to_string())
@@ -306,7 +305,10 @@ impl Ncm {
             .song_url(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))?;
-        parse_playback_source(&response.body["data"][0])
+        Ok((
+            requested_quality,
+            parse_playback_source(&response.body["data"][0])?,
+        ))
     }
 
     /// Raw LRC text pair (original, translation) for a song.
@@ -355,8 +357,8 @@ impl Ncm {
 
     /// Resolve a known song id straight to a playable track.
     pub async fn resolve_by_id(&self, row: &SongRow) -> Result<ResolvedTrack> {
-        let source = self.song_url(row.id).await?;
-        Ok(self.resolved_track(row.clone(), source))
+        let (requested_quality, source) = self.song_url(row.id).await?;
+        Ok(self.resolved_track(row.clone(), requested_quality, source))
     }
 
     /// Search by "title artist" and resolve the first *playable* match —
@@ -371,7 +373,7 @@ impl Ncm {
             let Some(id) = song["id"].as_i64() else {
                 continue;
             };
-            let Ok(source) = self.song_url(id).await else {
+            let Ok((requested_quality, source)) = self.song_url(id).await else {
                 continue;
             };
             let row = SongRow {
@@ -381,18 +383,23 @@ impl Ncm {
                 duration_ms: song["dt"].as_i64().unwrap_or(0),
                 pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
             };
-            return Ok(self.resolved_track(row, source));
+            return Ok(self.resolved_track(row, requested_quality, source));
         }
         Err(anyhow!(i18n::t_candidates_unavailable(&keywords)))
     }
 
-    fn resolved_track(&self, row: SongRow, source: PlaybackSource) -> ResolvedTrack {
+    fn resolved_track(
+        &self,
+        row: SongRow,
+        requested_quality: AudioQuality,
+        source: PlaybackSource,
+    ) -> ResolvedTrack {
         ResolvedTrack {
             id: row.id,
             title: row.title,
             artist: row.artist,
             kind: source.codec.extension().to_owned(),
-            cache_key: CacheKey::new(row.id, self.quality),
+            cache_key: CacheKey::new(row.id, requested_quality),
             codec: source.codec,
             actual_bitrate: source.actual_bitrate,
             expected_bytes: source.expected_bytes,
@@ -605,7 +612,7 @@ mod tests {
             (AudioQuality::HiRes, 999_000),
         ];
         for (quality, expected) in cases {
-            assert_eq!(ncm(quality).bitrate(), expected);
+            assert_eq!(ncm(quality).quality().bitrate(), expected);
         }
     }
 
@@ -767,7 +774,9 @@ mod tests {
 
     #[test]
     fn resolved_track_keeps_requested_quality_separate_from_actual_audio() {
-        let ncm = ncm(AudioQuality::HiRes);
+        let ncm = ncm(AudioQuality::High320);
+        let requested_quality = ncm.quality();
+        ncm.set_quality(AudioQuality::HiRes);
         let track = ncm.resolved_track(
             SongRow {
                 id: 42,
@@ -776,6 +785,7 @@ mod tests {
                 duration_ms: 180_000,
                 pic_url: None,
             },
+            requested_quality,
             PlaybackSource {
                 url: "https://example.test/audio.mp3".into(),
                 codec: AudioCodec::Mp3,
@@ -785,7 +795,7 @@ mod tests {
             },
         );
 
-        assert_eq!(track.cache_key, CacheKey::new(42, AudioQuality::HiRes));
+        assert_eq!(track.cache_key, CacheKey::new(42, AudioQuality::High320));
         assert_eq!(track.codec, AudioCodec::Mp3);
         assert_eq!(track.kind, "mp3");
         assert_eq!(track.actual_bitrate, 320_000);

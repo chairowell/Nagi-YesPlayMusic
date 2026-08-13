@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::layout::Rect;
 use std::io::Write;
 use tempfile::TempDir;
+use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 
 use super::*;
 
@@ -19,6 +20,7 @@ fn effects(directory: &TempDir) -> Effects {
         )),
         actions,
         cache_root: None,
+        config_path: directory.path().join("config.toml"),
     }
 }
 
@@ -63,6 +65,105 @@ async fn quit_dialog_handles_raw_confirm_and_cancel_keys() {
         &fx,
     );
     assert!(state.should_quit);
+}
+
+#[tokio::test]
+async fn settings_preview_can_be_cancelled_without_touching_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let original_theme = state.theme;
+
+    state.update(raw_key(KeyCode::Char(',')), &fx);
+    assert_eq!(state.view, View::Settings);
+    state.update(raw_key(KeyCode::Right), &fx);
+
+    assert_eq!(state.config.theme, "pico8");
+    assert_ne!(state.theme, original_theme);
+    assert!(!fx.config_path.exists());
+
+    state.update(raw_key(KeyCode::Esc), &fx);
+
+    assert_eq!(state.view, View::NowPlaying);
+    assert_eq!(state.config.theme, "db16");
+    assert_eq!(state.theme, original_theme);
+    assert!(!fx.config_path.exists());
+}
+
+#[tokio::test]
+async fn settings_save_persists_the_preview_and_updates_playback_quality() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+
+    state.update(Action::SwitchView(View::Settings), &fx);
+    state.update(Action::AdjustSetting(1), &fx);
+    state.update(Action::MoveSelection(1), &fx);
+    state.update(Action::MoveSelection(1), &fx);
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.quality, AudioQuality::Lossless);
+    assert_eq!(fx.ncm.quality(), AudioQuality::Lossless);
+
+    state.update(Action::SaveSettings, &fx);
+
+    assert_eq!(state.view, View::Library);
+    let reloaded: Config =
+        toml::from_str(&std::fs::read_to_string(&fx.config_path).unwrap()).unwrap();
+    assert_eq!(reloaded.theme, "pico8");
+    assert_eq!(reloaded.quality, AudioQuality::Lossless);
+}
+
+#[tokio::test]
+async fn quality_preview_rejects_a_prefetch_from_the_previous_setting() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(42)];
+    state.update(Action::SwitchView(View::Settings), &fx);
+    state.update(Action::MoveSelection(1), &fx);
+    state.update(Action::MoveSelection(1), &fx);
+    state.update(Action::AdjustSetting(1), &fx);
+
+    state.update(
+        Action::PrefetchReady {
+            index: 0,
+            track: api::ResolvedTrack {
+                id: 42,
+                title: "Track 42".into(),
+                artist: "Artist".into(),
+                url: "https://example.test/audio.mp3".into(),
+                kind: "mp3".into(),
+                cache_key: CacheKey::new(42, AudioQuality::High320),
+                codec: AudioCodec::Mp3,
+                actual_bitrate: 320_000,
+                expected_bytes: None,
+                expected_md5: None,
+                duration_ms: 180_000,
+                pic_url: None,
+            },
+        },
+        &fx,
+    );
+
+    assert!(state.prefetched.is_none());
+}
+
+#[tokio::test]
+async fn a_settings_save_failure_keeps_the_editor_and_preview_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.config_path = directory.path().to_path_buf();
+    let mut state = AppState::new(&Config::default());
+    state.update(Action::SwitchView(View::Settings), &fx);
+    state.update(Action::AdjustSetting(1), &fx);
+
+    state.update(Action::SaveSettings, &fx);
+
+    assert_eq!(state.view, View::Settings);
+    assert_eq!(state.config.theme, "pico8");
+    assert!(state.status.is_some());
+    assert!(directory.path().is_dir());
 }
 
 #[tokio::test]
@@ -354,9 +455,11 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         &mut slot,
         7,
         (4, 2),
+        3,
         CoverRenderRequest {
             generation: 7,
             cells: (4, 2),
+            style_revision: 3,
         },
         replacement.clone(),
     );
@@ -366,9 +469,11 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         &mut slot,
         7,
         (4, 2),
+        3,
         CoverRenderRequest {
             generation: 6,
             cells: (4, 2),
+            style_revision: 3,
         },
         current,
     );
@@ -376,11 +481,27 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         &mut slot,
         7,
         (4, 2),
+        3,
         CoverRenderRequest {
             generation: 7,
             cells: (8, 4),
+            style_revision: 3,
         },
         stale,
+    );
+
+    let previous_theme = pixel::vinyl(Theme::db16().palette, Color::Rgb(9, 9, 9), 4, 2);
+    apply_pixel_cover(
+        &mut slot,
+        7,
+        (4, 2),
+        4,
+        CoverRenderRequest {
+            generation: 7,
+            cells: (4, 2),
+            style_revision: 3,
+        },
+        previous_theme,
     );
 
     assert_eq!(slot, Some(replacement));
@@ -449,6 +570,7 @@ async fn a_known_track_uses_the_shared_cache_before_resolving_a_url() {
         )),
         actions,
         cache_root: Some(cache_root),
+        config_path: directory.path().join("config.toml"),
     };
     let mut state = AppState::new(&Config::default());
     state.play_row(&fx, row(42));

@@ -13,6 +13,7 @@ use crate::player::PlayerEvent;
 pub struct CoverRenderRequest {
     pub generation: u64,
     pub cells: (u16, u16),
+    pub style_revision: u64,
 }
 
 /// Idle-dashboard menu entries; resolved to Actions at the input layer.
@@ -21,6 +22,7 @@ pub enum MenuEntry {
     Library,
     Search,
     Login,
+    Settings,
     Quit,
 }
 
@@ -31,6 +33,7 @@ pub enum View {
     Search,
     Queue,
     Login,
+    Settings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +63,10 @@ pub enum Action {
     ToggleLike,
     SetVolumeTo(f32),
     OpenSource(usize),
+    SelectSetting(usize),
+    AdjustSetting(i32),
+    SaveSettings,
+    CancelSettings,
     JumpBottom,
     ConfirmYes,
     Mouse(crossterm::event::MouseEvent),
@@ -109,6 +116,7 @@ pub enum Action {
     },
     IdleArtLoaded {
         cells: (u16, u16),
+        style_revision: u64,
         cover: PixelCover,
     },
     StartLogin,

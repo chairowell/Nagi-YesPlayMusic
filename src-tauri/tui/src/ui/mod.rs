@@ -5,6 +5,7 @@ mod login;
 mod now_playing;
 mod queue;
 mod search;
+mod settings;
 mod text;
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -29,6 +30,10 @@ pub struct Hits {
     pub volume: Vec<(Rect, ())>,
     /// Quit-confirm buttons: true = 确定退出, false = 点错了.
     pub confirm: Vec<(Rect, bool)>,
+    pub settings_rows: Vec<(Rect, usize)>,
+    pub settings_adjust: Vec<(Rect, i32)>,
+    pub settings_save: Vec<Rect>,
+    pub settings_cancel: Vec<Rect>,
 }
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
@@ -39,6 +44,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
     hits.heart.clear();
     hits.volume.clear();
     hits.confirm.clear();
+    hits.settings_rows.clear();
+    hits.settings_adjust.clear();
+    hits.settings_save.clear();
+    hits.settings_cancel.clear();
 
     let theme = &state.theme;
     let area = frame.area();
@@ -61,6 +70,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
             View::Search => search::draw(frame, state, body, hits),
             View::Queue => queue::draw(frame, state, body, hits),
             View::Login => login::draw(frame, state, body),
+            View::Settings => settings::draw(frame, state, body, hits),
         }
         draw_hints(frame, state, hints_area);
     }
@@ -76,7 +86,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
 fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
     let rows: Vec<(&str, Key)> = vec![
-        ("1-4", Key::NowPlaying),
+        ("1-5", Key::NowPlaying),
         ("j/k ↑/↓", Key::Select),
         ("l/Enter", Key::Play),
         ("h/Esc", Key::Back),
@@ -91,6 +101,7 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
         ("i", Key::LoginTitle),
         ("z", Key::Zen),
         ("?", Key::LabelHelp),
+        (",", Key::Settings),
         ("q", Key::Quit),
     ];
     let height = (rows.len() as u16 + 4).min(area.height);
@@ -124,11 +135,12 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-const TABS: [(&str, Key, View); 4] = [
+const TABS: [(&str, Key, View); 5] = [
     ("1", Key::NowPlaying, View::NowPlaying),
     ("2", Key::Library, View::Library),
     ("3", Key::Search, View::Search),
     ("4", Key::Queue, View::Queue),
+    ("5", Key::Settings, View::Settings),
 ];
 
 fn draw_tabs(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
@@ -250,6 +262,12 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
             ("Enter", Key::Search),
             ("Tab/↓", Key::Select),
             ("Esc", Key::Back),
+        ],
+        View::Settings => &[
+            ("j/k", Key::Select),
+            ("h/l", Key::SettingAdjust),
+            ("Enter", Key::Save),
+            ("Esc", Key::Cancel),
         ],
         _ => &[
             ("Space", Key::Pause),
