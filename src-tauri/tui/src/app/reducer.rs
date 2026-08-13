@@ -7,8 +7,8 @@ use crate::i18n::Key;
 use crate::player::PlayerCommand;
 
 use super::{
-    apply_pixel_cover, song_row_from_resolved, spawn_cover_load, spawn_cover_prefetch,
-    spawn_render_idle, spawn_resolve, AppState, Effects, PlaybackModeSlot, PREVIEW_CELLS,
+    apply_pixel_cover, song_row_from_resolved, spawn_cover_prefetch, spawn_render_idle,
+    spawn_resolve, AppState, CoverLoad, CoverStyle, Effects, PlaybackModeSlot, PREVIEW_CELLS,
 };
 
 impl AppState {
@@ -427,14 +427,18 @@ impl AppState {
                         request,
                         cover,
                     ),
-                    CoverSurface::Selection => apply_pixel_cover(
-                        &mut self.selected_cover.pixel,
-                        self.selected_cover.generation,
-                        PREVIEW_CELLS,
-                        self.style_revision,
-                        request,
-                        cover,
-                    ),
+                    CoverSurface::Selection => {
+                        if request.generation == self.selected_cover.generation
+                            && request.cells == PREVIEW_CELLS
+                            && request.style_revision == self.style_revision
+                        {
+                            let pixel_key = self.pixel_cover_key(&request);
+                            self.hot_pixel_covers
+                                .insert(pixel_key.clone(), cover.clone());
+                            self.selected_cover.pixel = Some(cover);
+                            self.selected_cover.pixel_key = Some(pixel_key);
+                        }
+                    }
                 }
             }
             Action::CoverDecoded {
@@ -463,6 +467,7 @@ impl AppState {
                 generation,
                 row,
                 neighbors,
+                needs_network,
             } => {
                 let current = self.selected_cover.key.as_ref();
                 if generation == self.selected_cover.generation
@@ -470,25 +475,51 @@ impl AppState {
                         key.id == row.id && key.pic_url.as_ref() == row.pic_url.as_ref()
                     })
                 {
-                    if let Some(pic_url) = row.pic_url.as_deref() {
-                        let request = self.cover_request(
-                            CoverSurface::Selection,
-                            generation,
-                            row.id,
-                            pic_url,
-                            PREVIEW_CELLS,
-                        );
-                        spawn_cover_load(
-                            fx,
-                            request,
-                            pic_url.to_owned(),
-                            self.theme.palette,
-                            self.theme.bg,
-                            self.pixel_detail_scale,
-                            self.uses_original_cover(CoverSurface::Selection),
-                        );
+                    if needs_network && !self.selection_cover_is_ready(&row) {
+                        if let Some(pic_url) = row.pic_url.as_deref() {
+                            let request = self.cover_request(
+                                CoverSurface::Selection,
+                                generation,
+                                row.id,
+                                pic_url,
+                                PREVIEW_CELLS,
+                            );
+                            let load = CoverLoad {
+                                request,
+                                style: CoverStyle {
+                                    palette: self.theme.palette,
+                                    background: self.theme.bg,
+                                    detail_scale: self.pixel_detail_scale,
+                                    original: self.uses_original_cover(CoverSurface::Selection),
+                                },
+                            };
+                            super::spawn_cover_download(fx, load, pic_url.to_owned());
+                        }
                     }
-                    spawn_cover_prefetch(fx, neighbors);
+                    spawn_cover_prefetch(
+                        fx,
+                        generation,
+                        self.style_revision,
+                        neighbors,
+                        CoverStyle {
+                            palette: self.theme.palette,
+                            background: self.theme.bg,
+                            detail_scale: self.pixel_detail_scale,
+                            original: self.uses_original_cover(CoverSurface::Selection),
+                        },
+                    );
+                }
+            }
+            Action::SelectionCoverWarmed {
+                generation,
+                style_revision,
+                pixel_key,
+                cover,
+            } => {
+                if generation == self.selected_cover.generation
+                    && style_revision == self.style_revision
+                {
+                    self.hot_pixel_covers.insert(pixel_key, cover);
                 }
             }
             Action::IdleArtBytes { bytes } => {

@@ -56,6 +56,20 @@ fn covered_row(id: i64) -> SongRow {
     }
 }
 
+fn solid_preview(color: ratatui::style::Color) -> PixelCover {
+    PixelCover {
+        width: PREVIEW_CELLS.0,
+        height: PREVIEW_CELLS.1,
+        cells: vec![
+            crate::pixel::PixelCell {
+                upper: color,
+                lower: color,
+            };
+            usize::from(PREVIEW_CELLS.0) * usize::from(PREVIEW_CELLS.1)
+        ],
+    }
+}
+
 #[tokio::test]
 async fn paused_ui_ticks_advance_the_marquee_without_consuming_the_gg_prefix() {
     let directory = tempfile::tempdir().unwrap();
@@ -102,7 +116,7 @@ async fn returning_to_a_long_row_restarts_the_marquee_pause() {
 }
 
 #[tokio::test]
-async fn selected_cover_waits_for_debounce_and_schedules_three_neighbors_each_side() {
+async fn a_network_cover_waits_for_debounce_and_schedules_three_neighbors_each_side() {
     let directory = tempfile::tempdir().unwrap();
     let (player, _events) = player::spawn(tokio::runtime::Handle::current());
     let (actions, mut receiver) = mpsc::unbounded_channel();
@@ -141,16 +155,336 @@ async fn selected_cover_waits_for_debounce_and_schedules_three_neighbors_each_si
         generation,
         row,
         neighbors,
+        needs_network,
     } = due
     else {
         panic!("unexpected action");
     };
     assert_eq!(generation, state.selected_cover.generation);
     assert_eq!(row.id, 4);
+    assert!(needs_network);
     assert_eq!(
-        neighbors,
-        [1, 2, 3, 5, 6, 7].map(|id| format!("https://example.test/{id}.jpg"))
+        neighbors.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [1, 2, 3, 5, 6, 7]
     );
+}
+
+#[tokio::test]
+async fn a_hot_selected_cover_replaces_the_placeholder_synchronously() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let selected = covered_row(7);
+    let pic_url = selected.pic_url.as_deref().unwrap();
+    state.view = View::Library;
+    state.terminal_size = (96, 15);
+    state.library = vec![selected.clone()];
+
+    let request = state.cover_request(
+        CoverSurface::Selection,
+        1,
+        selected.id,
+        pic_url,
+        PREVIEW_CELLS,
+    );
+    let pixel_key = CoverCache::pixel_key(
+        request.song_id,
+        &request.source_key,
+        request.cells,
+        state.pixel_detail_scale,
+        state.theme.bg,
+        state.theme.palette,
+    );
+    let hot = solid_preview(ratatui::style::Color::Red);
+    assert_ne!(&hot, state.preview_placeholder());
+    state.hot_pixel_covers.insert(pixel_key, hot.clone());
+
+    state.reconcile_selected_cover(&fx);
+
+    assert_eq!(state.selected_pixel_cover(), Some(&hot));
+}
+
+#[tokio::test]
+async fn an_l2_hit_is_loaded_before_the_network_debounce() {
+    let directory = tempfile::tempdir().unwrap();
+    let covers = Arc::new(CoverCache::new(directory.path().join("covers")).unwrap());
+    let (player, _events) = player::spawn(tokio::runtime::Handle::current());
+    let (actions, mut receiver) = mpsc::unbounded_channel();
+    let fx = Effects {
+        player,
+        ncm: Arc::new(Ncm::new(
+            directory.path().join("session.json"),
+            AudioQuality::High320,
+        )),
+        store: Arc::new(crate::store::LibraryStore::new(
+            directory.path().join("library"),
+        )),
+        actions,
+        cache_root: None,
+        covers: Some(covers.clone()),
+        config_path: directory.path().join("config.toml"),
+    };
+    let mut state = AppState::new(&Config::default());
+    let selected = covered_row(8);
+    let pic_url = selected.pic_url.as_deref().unwrap();
+    state.view = View::Library;
+    state.terminal_size = (96, 15);
+    state.library = vec![selected.clone()];
+    let request = state.cover_request(
+        CoverSurface::Selection,
+        1,
+        selected.id,
+        pic_url,
+        PREVIEW_CELLS,
+    );
+    let pixel_key = state.pixel_cover_key(&request);
+    let cached = solid_preview(ratatui::style::Color::Rgb(10, 20, 200));
+    covers.put_pixel(&pixel_key, &cached).unwrap();
+
+    state.reconcile_selected_cover(&fx);
+
+    let action = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+        .await
+        .expect("L2 lookup must not wait for the network debounce")
+        .expect("cover action channel");
+    let Action::CoverLoaded { request, cover } = action else {
+        panic!("unexpected action");
+    };
+    assert_eq!(request.generation, state.selected_cover.generation);
+    assert_eq!(cover, cached);
+}
+
+#[tokio::test]
+async fn a_cold_selection_holds_the_last_pixel_cover() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.terminal_size = (96, 15);
+    state.library = vec![covered_row(1), covered_row(2)];
+    let (first_key, _, _) = state.selected_cover_candidate().unwrap();
+    let previous = solid_preview(ratatui::style::Color::Green);
+    state.selected_cover.key = Some(first_key);
+    state.selected_cover.pixel = Some(previous.clone());
+    state.selected_cover.pixel_key = Some("previous".into());
+
+    state.selected = 1;
+    state.reconcile_selected_cover(&fx);
+
+    assert_eq!(state.selected_cover.key.as_ref().map(|key| key.id), Some(2));
+    assert_eq!(state.selected_pixel_cover(), Some(&previous));
+    assert_eq!(state.selected_cover.pixel_key.as_deref(), Some("previous"));
+}
+
+#[test]
+fn hot_pixel_covers_evict_the_least_recently_used_entry() {
+    let cover = solid_preview(ratatui::style::Color::Cyan);
+    let mut hot = HotPixelCovers::default();
+    for index in 0..=HOT_PIXEL_COVER_LIMIT {
+        hot.insert(index.to_string(), cover.clone());
+    }
+    assert!(hot.get("0").is_none());
+    assert!(hot.get("1").is_some());
+
+    hot.insert("next".into(), cover);
+
+    assert!(hot.get("2").is_none());
+    assert!(hot.get("1").is_some());
+}
+
+#[test]
+fn original_preview_keeps_the_previous_protocol_until_the_replacement_is_ready() {
+    let (main_tx, mut main_rx) = mpsc::unbounded_channel();
+    let (pending_tx, mut pending_rx) = mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(Picker::halfblocks(), main_tx, pending_tx);
+    let image = DynamicImage::new_rgb8(100, 100);
+    cover.replace(1, image.clone());
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut cover.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let first = main_rx.try_recv().expect("initial resize request");
+    cover
+        .protocol
+        .update_resized_protocol(first.resize_encode().unwrap());
+
+    cover.replace(2, image);
+    let pending = cover.pending.as_mut().expect("pending replacement");
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut pending.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+
+    assert_eq!(cover.generation, Some(1));
+    assert!(cover.protocol.protocol_type().is_some());
+    assert!(pending.protocol.protocol_type().is_none());
+
+    let replacement = pending_rx.try_recv().expect("replacement resize request");
+    cover.update_pending(replacement.resize_encode().unwrap(), 2);
+    assert_eq!(cover.generation, Some(2));
+    assert!(cover.pending.is_none());
+    assert!(cover.protocol.protocol_type().is_some());
+}
+
+#[test]
+fn stale_original_replacement_cannot_displace_the_held_frame() {
+    let (main_tx, mut main_rx) = mpsc::unbounded_channel();
+    let (pending_tx, mut pending_rx) = mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(Picker::halfblocks(), main_tx, pending_tx);
+    let image = DynamicImage::new_rgb8(100, 100);
+    cover.replace(1, image.clone());
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut cover.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let first = main_rx.try_recv().expect("initial resize request");
+    cover
+        .protocol
+        .update_resized_protocol(first.resize_encode().unwrap());
+    cover.replace(2, image.clone());
+    let pending = cover.pending.as_mut().expect("pending replacement");
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut pending.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let stale = pending_rx.try_recv().expect("stale resize request");
+
+    cover.cancel_pending();
+    cover.replace(3, image);
+    let pending = cover.pending.as_mut().expect("current replacement");
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut pending.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let current = pending_rx.try_recv().expect("current resize request");
+    cover.update_pending(stale.resize_encode().unwrap(), 3);
+
+    assert_eq!(cover.generation, Some(1));
+    assert!(cover.pending.is_some());
+    assert!(cover.protocol.protocol_type().is_some());
+
+    cover.update_pending(current.resize_encode().unwrap(), 3);
+    assert_eq!(cover.generation, Some(3));
+    assert!(cover.pending.is_none());
+}
+
+#[test]
+fn hidden_preview_rejects_a_stale_original_resize_after_it_returns() {
+    let (main_tx, mut main_rx) = mpsc::unbounded_channel();
+    let (pending_tx, mut pending_rx) = mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(Picker::halfblocks(), main_tx, pending_tx);
+    let image = DynamicImage::new_rgb8(100, 100);
+    cover.replace(1, image.clone());
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut cover.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let first = main_rx.try_recv().expect("initial resize request");
+    cover
+        .protocol
+        .update_resized_protocol(first.resize_encode().unwrap());
+    cover.replace(2, image.clone());
+    let pending = cover.pending.as_mut().expect("stale replacement");
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut pending.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let stale = pending_rx.try_recv().expect("stale resize request");
+
+    cover.clear();
+    cover.replace(3, image.clone());
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut cover.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let current_main = main_rx.try_recv().expect("current primary resize request");
+    cover
+        .protocol
+        .update_resized_protocol(current_main.resize_encode().unwrap());
+    cover.replace(4, image);
+    let pending = cover.pending.as_mut().expect("current replacement");
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut pending.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let current = pending_rx
+        .try_recv()
+        .expect("current pending resize request");
+
+    cover.update_pending(stale.resize_encode().unwrap(), 4);
+    assert_eq!(cover.generation, Some(3));
+    assert!(cover.pending.is_some());
+
+    cover.update_pending(current.resize_encode().unwrap(), 4);
+    assert_eq!(cover.generation, Some(4));
+    assert!(cover.pending.is_none());
+}
+
+#[tokio::test]
+async fn a_prefetched_pixel_warms_the_next_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let covers = Arc::new(CoverCache::new(directory.path().join("covers")).unwrap());
+    let (player, _events) = player::spawn(tokio::runtime::Handle::current());
+    let (actions, mut receiver) = mpsc::unbounded_channel();
+    let fx = Effects {
+        player,
+        ncm: Arc::new(Ncm::new(
+            directory.path().join("session.json"),
+            AudioQuality::High320,
+        )),
+        store: Arc::new(crate::store::LibraryStore::new(
+            directory.path().join("library"),
+        )),
+        actions,
+        cache_root: None,
+        covers: Some(covers.clone()),
+        config_path: directory.path().join("config.toml"),
+    };
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.terminal_size = (96, 15);
+    state.library = vec![row(1), covered_row(2)];
+    let next = state.library[1].clone();
+    let request = state.cover_request(
+        CoverSurface::Selection,
+        1,
+        next.id,
+        next.pic_url.as_deref().unwrap(),
+        PREVIEW_CELLS,
+    );
+    let pixel_key = state.pixel_cover_key(&request);
+    let disk_prefetched = solid_preview(ratatui::style::Color::Rgb(180, 20, 180));
+    covers.put_pixel(&pixel_key, &disk_prefetched).unwrap();
+
+    state.reconcile_selected_cover(&fx);
+    let due = tokio::time::timeout(Duration::from_millis(250), receiver.recv())
+        .await
+        .expect("neighbor prefetch debounce")
+        .expect("cover action channel");
+    state.update(due, &fx);
+    let warmed = tokio::time::timeout(Duration::from_millis(250), receiver.recv())
+        .await
+        .expect("prefetched L2 result")
+        .expect("cover action channel");
+    let Action::SelectionCoverWarmed { cover, .. } = &warmed else {
+        panic!("unexpected action");
+    };
+    assert_eq!(cover, &disk_prefetched);
+    state.update(warmed, &fx);
+
+    state.selected = 1;
+    state.reconcile_selected_cover(&fx);
+
+    assert_eq!(state.selected_pixel_cover(), Some(&disk_prefetched));
 }
 
 #[tokio::test]
@@ -177,19 +511,30 @@ async fn a_selection_without_art_still_prefetches_neighbor_originals() {
     state.terminal_size = (96, 15);
     state.library = vec![covered_row(1), row(2), covered_row(3)];
     state.selected = 1;
+    let previous = solid_preview(ratatui::style::Color::Green);
+    state.selected_cover.pixel = Some(previous.clone());
+    state.selected_cover.pixel_key = Some("previous".into());
 
     state.reconcile_selected_cover(&fx);
+    assert_eq!(state.selected_pixel_cover(), Some(&previous));
     let due = tokio::time::timeout(Duration::from_millis(250), receiver.recv())
         .await
         .expect("neighbor prefetch request")
         .expect("cover action channel");
-    let Action::SelectionCoverDue { row, neighbors, .. } = due else {
+    let Action::SelectionCoverDue {
+        row,
+        neighbors,
+        needs_network,
+        ..
+    } = due
+    else {
         panic!("unexpected action");
     };
     assert_eq!(row.id, 2);
+    assert!(!needs_network);
     assert_eq!(
-        neighbors,
-        [1, 3].map(|id| format!("https://example.test/{id}.jpg"))
+        neighbors.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [1, 3]
     );
 }
 

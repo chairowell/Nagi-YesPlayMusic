@@ -129,7 +129,14 @@ pub enum Action {
     SelectionCoverDue {
         generation: u64,
         row: SongRow,
-        neighbors: Vec<String>,
+        neighbors: Vec<SongRow>,
+        needs_network: bool,
+    },
+    SelectionCoverWarmed {
+        generation: u64,
+        style_revision: u64,
+        pixel_key: String,
+        cover: PixelCover,
     },
     IdleArtBytes {
         bytes: Vec<u8>,

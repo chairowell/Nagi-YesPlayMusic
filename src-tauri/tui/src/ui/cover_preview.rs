@@ -28,11 +28,17 @@ pub fn split_preview(area: Rect, min_list_width: u16) -> (Rect, Option<Rect>) {
 }
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
-    frame.render_widget(state.preview_placeholder(), area);
-    if state.selected_original_is_current() {
+    if state.selected_original_is_available() {
+        if let Some(cover) = state.selected_pixel_cover() {
+            frame.render_widget(cover, area);
+        } else {
+            frame.render_widget(state.preview_placeholder(), area);
+        }
         state.render_selected_original(frame, area);
     } else if let Some(cover) = state.selected_pixel_cover() {
         frame.render_widget(cover, area);
+    } else {
+        frame.render_widget(state.preview_placeholder(), area);
     }
 }
 
