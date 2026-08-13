@@ -78,6 +78,7 @@ pub enum CacheError {
     ExistingFileLeased,
 }
 
+#[derive(Debug)]
 pub struct CacheLease {
     file: File,
     metadata: CacheMetadata,
