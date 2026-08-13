@@ -1,5 +1,6 @@
 use crate::action::{Action, View};
 use crate::api::SongRow;
+use crate::i18n::{self, Key};
 
 use super::{AppState, Effects};
 
@@ -149,10 +150,10 @@ pub(super) fn spawn_search(fx: &Effects, request: SearchRequest) {
                 query: request.query,
                 rows,
             },
-            Err(error) => Action::SearchFailed {
+            Err(_) => Action::SearchFailed {
                 seq: request.seq,
                 query: request.query,
-                message: error.to_string(),
+                message: i18n::t(Key::SearchFailed).into(),
             },
         };
         let _ = actions.send(action);

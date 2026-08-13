@@ -311,6 +311,24 @@ impl AppState {
             self.status = Some(message);
         }
     }
+
+    pub(super) fn apply_like_failed(
+        &mut self,
+        session: SessionStamp,
+        id: i64,
+        attempted_like: bool,
+        message: String,
+    ) {
+        if !self.session.matches(session) || self.liked.contains(&id) != attempted_like {
+            return;
+        }
+        if attempted_like {
+            self.liked.remove(&id);
+        } else {
+            self.liked.insert(id);
+        }
+        self.status = Some(message);
+    }
 }
 
 fn spawn_restore(fx: &Effects, epoch: u64, session: Session) {
@@ -497,8 +515,10 @@ fn spawn_toggle_like(fx: &Effects, stamp: SessionStamp, session: Session, id: i6
     let actions = fx.actions.clone();
     tokio::spawn(async move {
         if let Err(error) = ncm.set_like(id, like, Some(&session)).await {
-            let _ = actions.send(Action::PersonalNotice {
+            let _ = actions.send(Action::LikeFailed {
                 session: stamp,
+                id,
+                attempted_like: like,
                 message: error.to_string(),
             });
         }

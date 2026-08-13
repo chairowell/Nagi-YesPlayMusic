@@ -84,12 +84,6 @@ impl LibraryStore {
         Ok(())
     }
 
-    #[allow(dead_code)] // surfaced by a future "last synced" caption
-    pub fn age_secs(&self, uid: i64, source: &str) -> Option<u64> {
-        let saved_at = self.read_snapshot(uid, source)?.saved_at_unix;
-        Some(unix_now().ok()?.saturating_sub(saved_at))
-    }
-
     fn read_snapshot(&self, uid: i64, source: &str) -> Option<Snapshot> {
         validate_source(source).ok()?;
         let bytes = fs::read(self.snapshot_path(uid, source)).ok()?;
@@ -158,7 +152,6 @@ mod tests {
         assert_eq!(restored.artist, source.artist);
         assert_eq!(restored.duration_ms, source.duration_ms);
         assert_eq!(restored.pic_url, source.pic_url);
-        assert!(store.age_secs(7, "liked").is_some_and(|age| age <= 1));
     }
 
     #[test]
@@ -170,7 +163,6 @@ mod tests {
         let store = LibraryStore::new(root);
 
         assert_eq!(store.load(9, "daily"), None);
-        assert_eq!(store.age_secs(9, "daily"), None);
     }
 
     #[test]
@@ -186,7 +178,6 @@ mod tests {
         let store = LibraryStore::new(root);
 
         assert_eq!(store.load(11, "cloud"), None);
-        assert_eq!(store.age_secs(11, "cloud"), None);
     }
 
     #[test]
@@ -225,7 +216,6 @@ mod tests {
 
         assert_eq!(error.kind(), ErrorKind::InvalidInput);
         assert_eq!(store.load(17, "../x"), None);
-        assert_eq!(store.age_secs(17, "../x"), None);
         assert!(!root.exists());
         assert!(!directory.path().join("x.json").exists());
     }

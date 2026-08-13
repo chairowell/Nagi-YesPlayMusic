@@ -6,7 +6,6 @@ mod app;
 mod config;
 mod event;
 mod i18n;
-#[allow(dead_code)] // wired in lyrics view stage
 mod lyrics;
 pub mod pixel;
 mod player;

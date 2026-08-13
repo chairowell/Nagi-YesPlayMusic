@@ -202,3 +202,86 @@ async fn personal_results_from_the_previous_account_are_ignored_and_not_saved_fo
         second.uid
     );
 }
+
+#[tokio::test]
+async fn current_like_failure_rolls_back_only_the_requested_song() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let attempt = state.session.begin_login();
+    let session = state
+        .session
+        .accept_login(attempt, 42, "listener".into())
+        .unwrap();
+    state.liked = HashSet::from([7, 9]);
+
+    state.update(
+        Action::LikeFailed {
+            session,
+            id: 7,
+            attempted_like: true,
+            message: "like failed".into(),
+        },
+        &fx,
+    );
+
+    assert_eq!(state.liked, HashSet::from([9]));
+    assert_eq!(state.status.as_deref(), Some("like failed"));
+
+    state.update(
+        Action::LikeFailed {
+            session,
+            id: 7,
+            attempted_like: false,
+            message: "unlike failed".into(),
+        },
+        &fx,
+    );
+
+    assert_eq!(state.liked, HashSet::from([7, 9]));
+    assert_eq!(state.status.as_deref(), Some("unlike failed"));
+}
+
+#[tokio::test]
+async fn like_failure_cannot_undo_a_newer_choice_or_another_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let first_attempt = state.session.begin_login();
+    let old_session = state
+        .session
+        .accept_login(first_attempt, 11, "first".into())
+        .unwrap();
+    let current_attempt = state.session.begin_login();
+    let current_session = state
+        .session
+        .accept_login(current_attempt, 22, "second".into())
+        .unwrap();
+    state.liked.insert(7);
+    state.status = Some("current state".into());
+
+    state.update(
+        Action::LikeFailed {
+            session: old_session,
+            id: 7,
+            attempted_like: true,
+            message: "old account failure".into(),
+        },
+        &fx,
+    );
+    assert!(state.liked.contains(&7));
+
+    state.liked.remove(&7);
+    state.update(
+        Action::LikeFailed {
+            session: current_session,
+            id: 7,
+            attempted_like: true,
+            message: "superseded failure".into(),
+        },
+        &fx,
+    );
+
+    assert!(!state.liked.contains(&7));
+    assert_eq!(state.status.as_deref(), Some("current state"));
+}

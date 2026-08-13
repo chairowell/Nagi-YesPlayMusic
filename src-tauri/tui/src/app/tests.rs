@@ -66,7 +66,7 @@ async fn quit_dialog_handles_raw_confirm_and_cancel_keys() {
 }
 
 #[tokio::test]
-async fn editing_search_rejects_the_result_for_the_previous_query() {
+async fn editing_search_rejects_results_and_failures_for_the_previous_query() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);
     let edits = [
@@ -80,6 +80,8 @@ async fn editing_search_rejects_the_result_for_the_previous_query() {
         state.view = View::Search;
         state.search.query = "old".into();
         let request = state.search.submit().unwrap();
+        let stale_seq = request.seq;
+        let stale_query = request.query.clone();
 
         state.update(edit, &fx);
         state.update(
@@ -90,8 +92,17 @@ async fn editing_search_rejects_the_result_for_the_previous_query() {
             },
             &fx,
         );
+        state.update(
+            Action::SearchFailed {
+                seq: stale_seq,
+                query: stale_query,
+                message: "old failure".into(),
+            },
+            &fx,
+        );
 
         assert!(state.search.results.is_empty());
+        assert!(state.search.error.is_none());
         assert!(!state.search.searching);
         assert!(state.search.input);
     }

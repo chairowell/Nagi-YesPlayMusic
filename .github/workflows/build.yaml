@@ -638,6 +638,9 @@ jobs:
       - name: Clippy ypm
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --all-targets -- -D warnings
 
+      - name: Check ypm formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui -- --check
+
       - name: Build ypm
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --target ${{ matrix.target }}
 

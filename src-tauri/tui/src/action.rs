@@ -163,6 +163,12 @@ pub enum Action {
         session: SessionStamp,
         ids: std::collections::HashSet<i64>,
     },
+    LikeFailed {
+        session: SessionStamp,
+        id: i64,
+        attempted_like: bool,
+        message: String,
+    },
     PersonalNotice {
         session: SessionStamp,
         message: String,

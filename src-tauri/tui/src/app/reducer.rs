@@ -232,6 +232,12 @@ impl AppState {
             } => {
                 self.search.fail(seq, &query, message);
             }
+            Action::LikeFailed {
+                session,
+                id,
+                attempted_like,
+                message,
+            } => self.apply_like_failed(session, id, attempted_like, message),
             Action::PersonalNotice { session, message } => {
                 self.apply_personal_notice(session, message);
             }
