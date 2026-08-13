@@ -90,6 +90,12 @@ impl CacheLease {
     }
 }
 
+impl Drop for CacheLease {
+    fn drop(&mut self) {
+        let _ = File::unlock(&self.file);
+    }
+}
+
 impl Read for CacheLease {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.file.read(buffer)
