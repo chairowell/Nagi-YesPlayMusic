@@ -214,23 +214,25 @@ async function assertSafeOutput(outputDirectory, projectRoot) {
   }
 }
 
-async function runCargoMetadata(projectRoot) {
+async function runCargoMetadata(projectRoot, allFeatures = false) {
   const manifestPath = path.join(
     projectRoot,
     'src-tauri',
     'sidecar',
     'Cargo.toml'
   );
+  const arguments_ = [
+    'metadata',
+    '--manifest-path',
+    manifestPath,
+    '--format-version',
+    '1',
+    '--locked',
+  ];
+  if (allFeatures) arguments_.push('--all-features');
   const { stdout } = await execFileAsync(
     'cargo',
-    [
-      'metadata',
-      '--manifest-path',
-      manifestPath,
-      '--format-version',
-      '1',
-      '--locked',
-    ],
+    arguments_,
     { cwd: projectRoot, maxBuffer: 64 * 1024 * 1024 }
   );
   return JSON.parse(stdout);
@@ -890,6 +892,7 @@ export async function buildSidecarCompliance({
     ? defaultCompleteSourceOutput
     : `${outputDirectory}-complete-source`,
   metadata,
+  sourceMetadata,
   binaryProvenance,
   skipOfflineRebuild = false,
   noticesOnly = false,
@@ -905,6 +908,10 @@ export async function buildSidecarCompliance({
   }
   const cargoMetadata = metadata ?? (await runCargoMetadata(projectRoot));
   const workspacePackages = reachablePackages(cargoMetadata);
+  const sourcePackages = reachablePackages(
+    sourceMetadata ??
+      (metadata ? cargoMetadata : await runCargoMetadata(projectRoot, true))
+  );
   const { gplDependency, unmPackages } =
     validateCopyleftClosure(workspacePackages);
   const rootPackage = workspacePackages.find(
@@ -1061,13 +1068,14 @@ export async function buildSidecarCompliance({
       ]);
 
       sourceManifestPackages = await vendorDependencySources(
-        workspacePackages,
+        sourcePackages,
         lockText,
         vendorDirectory
       );
-      if (sourceManifestPackages.length !== dependencyPackages.length) {
+      const sourceDependencies = thirdPartyPackages(sourcePackages);
+      if (sourceManifestPackages.length !== sourceDependencies.length) {
         throw new Error(
-          `Complete source closure has ${sourceManifestPackages.length} packages; expected ${dependencyPackages.length}`
+          `Complete source closure has ${sourceManifestPackages.length} packages; expected ${sourceDependencies.length}`
         );
       }
       if (!skipOfflineRebuild) {
@@ -1080,7 +1088,7 @@ export async function buildSidecarCompliance({
           dependencyCoordinates(distributionPackages)
         );
         await Promise.all(
-          dependencyPackages
+          sourceDependencies
             .filter(
               ({ name, version }) =>
                 !resolvedCoordinates.has(`${name}@${version}`)

@@ -212,7 +212,106 @@ async function createFixture(): Promise<{
   };
 }
 
+async function createOptionalDependencyFixture(): Promise<{
+  root: string;
+  metadata: CargoMetadata;
+  sourceMetadata: CargoMetadata;
+}> {
+  const fixture = await createFixture();
+  const coreManifest = path.join(
+    fixture.root,
+    'src-tauri',
+    'core',
+    'Cargo.toml'
+  );
+  await writeFile(
+    coreManifest,
+    `${await readFile(coreManifest, 'utf8')}\n[features]\ndefault = []\nfixture-cache = ["dep:optional-fixture"]\n\n[dependencies]\noptional-fixture = { version = "=1.0.0", optional = true }\n`,
+    'utf8'
+  );
+
+  const optionalPackage = await createPackage(
+    path.join(fixture.root, 'registry'),
+    'optional-fixture',
+    '1.0.0',
+    'MIT',
+    'https://example.invalid/optional-fixture'
+  );
+  await writeFile(
+    path.join(fixture.root, 'src-tauri', 'Cargo.lock'),
+    `${await readFile(
+      path.join(fixture.root, 'src-tauri', 'Cargo.lock'),
+      'utf8'
+    )}\n[[package]]\nname = "optional-fixture"\nversion = "1.0.0"\nchecksum = "${'b'.repeat(64)}"\n`,
+    'utf8'
+  );
+
+  const corePackage = fixture.metadata.packages.find(
+    candidate => candidate.name === 'yesplaymusic-core'
+  );
+  if (!corePackage) throw new Error('missing core fixture package');
+  const sourceMetadata: CargoMetadata = {
+    packages: [...fixture.metadata.packages, optionalPackage],
+    resolve: {
+      nodes: [
+        ...fixture.metadata.resolve.nodes.map(node =>
+          node.id === corePackage.id
+            ? {
+                ...node,
+                deps: [
+                  ...node.deps,
+                  { pkg: optionalPackage.id, dep_kinds: [{ kind: null }] },
+                ],
+              }
+            : node
+        ),
+        { id: optionalPackage.id, deps: [] },
+      ],
+    },
+  };
+  return { ...fixture, sourceMetadata };
+}
+
 describe('Rust Sidecar copyleft distribution bundle', () => {
+  test('complete source rebuild resolves disabled optional dependencies offline', async () => {
+    const fixture = await createOptionalDependencyFixture();
+    const { stdout } = await execFileAsync('rustc', ['-vV']);
+    const targetTriple = stdout.match(/^host: (.+)$/m)?.[1];
+    if (!targetTriple) throw new Error('rustc did not report its host triple');
+
+    const outputDirectory = path.join(fixture.root, 'optional-output');
+    const completeSourceDirectory = path.join(
+      fixture.root,
+      'optional-complete-source'
+    );
+    const result = await buildSidecarCompliance({
+      projectRoot: fixture.root,
+      outputDirectory,
+      completeSourceDirectory,
+      metadata: fixture.metadata,
+      sourceMetadata: fixture.sourceMetadata,
+      binaryProvenance: {
+        targetTriple,
+        fileName: `yesplaymusic-sidecar-${targetTriple}`,
+        sha256: 'c'.repeat(64),
+        rustMarker: 'YPM_RUST_SIDECAR_V1',
+        machOUuid: null,
+      },
+    });
+
+    expect(result.dependencyCount).toBe(13);
+    const manifest = JSON.parse(
+      await readFile(path.join(outputDirectory, 'SOURCE-MANIFEST.json'), 'utf8')
+    ) as {
+      completeSource: { offlineRebuildVerified: boolean };
+      dependencySourcePackages: Array<{ name: string }>;
+    };
+    expect(manifest.completeSource.offlineRebuildVerified).toBe(true);
+    expect(
+      manifest.dependencySourcePackages.map(({ name }) => name)
+    ).not.toContain('optional-fixture');
+  });
+
   test('refuses linked output ancestors without deleting the external target', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'ypm-compliance-link-'));
     temporaryDirectories.push(root);
