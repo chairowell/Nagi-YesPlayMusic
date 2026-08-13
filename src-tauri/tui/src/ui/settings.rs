@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::app::settings::SettingField;
 use crate::app::AppState;
+use crate::config::IconStyle;
 use crate::i18n::{self, Key};
 
 use super::{text::display_width, Hits};
@@ -37,8 +38,15 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         Constraint::Length(2),
     ])
     .areas(inner);
+    let hint = if SettingField::ALL.get(state.settings.selected) == Some(&SettingField::Icons)
+        && state.config.icons == IconStyle::Nerd
+    {
+        Key::NerdFontHint
+    } else {
+        Key::SettingsHint
+    };
     frame.render_widget(
-        Paragraph::new(i18n::t(Key::SettingsHint)).style(Style::new().fg(theme.dim)),
+        Paragraph::new(i18n::t(hint)).style(Style::new().fg(theme.dim)),
         hint_area,
     );
 
@@ -188,5 +196,35 @@ mod tests {
         let (_buffer, hits) = rendered_settings(16, 24, 0);
 
         assert!(hits.settings_adjust.is_empty());
+    }
+
+    #[test]
+    fn selected_nerd_icons_show_the_terminal_font_hint() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let config = Config {
+            icons: IconStyle::Nerd,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::Icons)
+            .unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Nerd Font"));
+        assert!(rendered.contains("brew install font-symbols-only-nerd-font"));
     }
 }

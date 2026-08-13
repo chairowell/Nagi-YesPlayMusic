@@ -118,6 +118,12 @@ cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymu
 按 `5` 或 `,` 打开设置页；`j/k` 选项、`h/l` 或左右键调整，主题会即时预览。
 `Enter` 原子保存到配置文件，`Esc` 取消并恢复原值。语言和封面模式在下次启动后生效。
 
+要使用 Nerd Font 图标，可在设置页把「图标」切到 `nerd`：
+
+- macOS：`brew install font-symbols-only-nerd-font`
+- Linux：安装任一 Nerd Font 后，fontconfig 会自动 fallback
+- Windows Terminal：建议直接把终端字体换成 Nerd Font 变体
+
 配置文件仍可直接编辑，适合设置自定义主题、开屏图片和缓存上限：
 
 ```toml

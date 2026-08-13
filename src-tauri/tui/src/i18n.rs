@@ -47,6 +47,7 @@ pub enum Key {
     SettingQueueSingle,
     SettingAdjust,
     SettingsHint,
+    NerdFontHint,
     SettingsSaved,
     SettingsSaveFailed,
     Save,
@@ -249,6 +250,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingQueueSingle => "只播单曲",
             Key::SettingAdjust => "调整",
             Key::SettingsHint => "j/k 选择 · h/l 即时预览 · Enter 保存 · Esc 取消",
+            Key::NerdFontHint => {
+                "终端字体需支持 Nerd Font\nmacOS：brew install font-symbols-only-nerd-font"
+            }
             Key::SettingsSaved => "设置已保存",
             Key::SettingsSaveFailed => "设置保存失败",
             Key::Save => "保存",
@@ -353,6 +357,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingQueueSingle => "Play one track",
             Key::SettingAdjust => "Adjust",
             Key::SettingsHint => "j/k select · h/l preview · Enter save · Esc cancel",
+            Key::NerdFontHint => {
+                "Your terminal font must support Nerd Font\nmacOS: brew install font-symbols-only-nerd-font"
+            }
             Key::SettingsSaved => "Settings saved",
             Key::SettingsSaveFailed => "Could not save settings",
             Key::Save => "Save",
@@ -457,6 +464,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingQueueSingle => "1曲だけ再生",
             Key::SettingAdjust => "調整",
             Key::SettingsHint => "j/k 選択 · h/l プレビュー · Enter 保存 · Esc キャンセル",
+            Key::NerdFontHint => {
+                "端末のフォントはNerd Font対応が必要です\nmacOS: brew install font-symbols-only-nerd-font"
+            }
             Key::SettingsSaved => "設定を保存しました",
             Key::SettingsSaveFailed => "設定を保存できませんでした",
             Key::Save => "保存",
