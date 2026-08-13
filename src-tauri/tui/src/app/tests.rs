@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
+use std::io::Write;
 use tempfile::TempDir;
 
 use super::*;
@@ -17,6 +18,7 @@ fn effects(directory: &TempDir) -> Effects {
             directory.path().join("library"),
         )),
         actions,
+        cache_root: None,
     }
 }
 
@@ -238,5 +240,60 @@ async fn starting_a_new_track_clears_the_old_track_identity_immediately() {
     assert_eq!(
         state.now.as_ref().map(|now| now.title.as_str()),
         Some("Track 1")
+    );
+}
+
+#[tokio::test]
+async fn a_known_track_uses_the_shared_cache_before_resolving_a_url() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache_root = directory.path().join("audio");
+    let key = CacheKey::new(42, yesplaymusic_core::cache::AudioQuality::High320);
+    let cache = TrackCache::open(&cache_root).unwrap();
+    let mut writer = cache
+        .begin_write(CacheWriteRequest::new(
+            key,
+            yesplaymusic_core::cache::AudioCodec::Mp3,
+            320_000,
+        ))
+        .unwrap();
+    writer.write_all(b"cached audio").unwrap();
+    writer.finish().unwrap();
+    drop(cache);
+
+    let (player, _events) = player::spawn(tokio::runtime::Handle::current());
+    let (actions, mut receiver) = mpsc::unbounded_channel();
+    let fx = Effects {
+        player,
+        ncm: Arc::new(Ncm::new(
+            directory.path().join("session.json"),
+            yesplaymusic_core::cache::AudioQuality::High320,
+        )),
+        store: Arc::new(crate::store::LibraryStore::new(
+            directory.path().join("library"),
+        )),
+        actions,
+        cache_root: Some(cache_root),
+    };
+    let mut state = AppState::new(&Config::default());
+    state.play_row(&fx, row(42));
+
+    let action = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+        .await
+        .expect("cache lookup should finish")
+        .expect("cache lookup action");
+    assert!(matches!(
+        &action,
+        Action::RowCacheReady {
+            generation: 1,
+            row: cached_row,
+            lease: Some(_),
+        } if cached_row.id == 42
+    ));
+    state.update(action, &fx);
+
+    assert_eq!(state.current_track_id, Some(42));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 42")
     );
 }

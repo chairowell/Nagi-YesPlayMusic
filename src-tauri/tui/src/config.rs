@@ -24,8 +24,8 @@ pub struct Config {
     pub quality: AudioQuality,
     /// Built-in theme name; later also a file in themes/.
     pub theme: String,
-    /// Song cache cap in MiB.
-    pub cache_limit_mib: u64,
+    /// Explicit shared song-cache cap in MiB. None keeps the database policy.
+    pub cache_limit_mib: Option<u64>,
     /// Enter on a list: true = the list becomes the queue from that song
     /// (desktop/NCM semantics), false = play just that one song.
     pub enter_replaces_queue: bool,
@@ -51,7 +51,7 @@ impl Default for Config {
             language: "zh".into(),
             quality: AudioQuality::High320,
             theme: "db16".into(),
-            cache_limit_mib: 2048,
+            cache_limit_mib: None,
             enter_replaces_queue: true,
             layout: "side".into(),
             idle_art: None,
@@ -88,7 +88,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 保存后重启生效。所有项都�
 # cover_mode = "pixel"        # pixel（主题像素画）| original（终端原图协议，不支持时回退 pixel）
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
-# cache_limit_mib = 2048
+# cache_limit_mib = 8192       # 仅显式设置时更新 GUI/TUI 共用上限
 # pixel_scale = 1.0            # 像素细腻度：0.5 更复古块状，2.0 更细腻
 "#;
 
@@ -179,6 +179,7 @@ mod tests {
         assert_eq!(config.quality, AudioQuality::High320);
         assert_eq!(config.theme, "db16");
         assert_eq!(config.cover_mode, CoverMode::Pixel);
+        assert_eq!(config.cache_limit_mib, None);
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
         assert_eq!(parsed.quality, AudioQuality::Lossless);
@@ -191,6 +192,9 @@ mod tests {
 
         let parsed: Config = toml::from_str("cover_mode = \"original\"").unwrap();
         assert_eq!(parsed.cover_mode, CoverMode::Original);
+
+        let parsed: Config = toml::from_str("cache_limit_mib = 4096").unwrap();
+        assert_eq!(parsed.cache_limit_mib, Some(4096));
     }
 
     #[test]

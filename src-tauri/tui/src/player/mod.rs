@@ -21,7 +21,6 @@ pub use cache_stream::CacheWritePlan;
 use cache_stream::{CacheImportReader, CacheStreamProvider};
 
 pub enum PlayerCommand {
-    #[allow(dead_code)] // constructed when the cache lookup lands in app integration
     PlayCached {
         generation: u64,
         lease: CacheLease,
@@ -58,7 +57,6 @@ pub enum PlayerEvent {
     Failed {
         generation: u64,
         message: String,
-        #[allow(dead_code)] // consumed by the cache invalidation integration
         cached: Option<CacheMetadata>,
     },
 }

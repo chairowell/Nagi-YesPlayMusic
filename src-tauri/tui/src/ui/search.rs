@@ -53,6 +53,17 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         );
         return;
     }
+    if let Some(message) = &state.search.error {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                message.as_str(),
+                Style::new().fg(theme.accent),
+            )))
+            .centered(),
+            list_area,
+        );
+        return;
+    }
     if state.search.results.is_empty() {
         let message = if state.search.query.is_empty() {
             i18n::t(Key::SearchPrompt)

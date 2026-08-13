@@ -115,6 +115,17 @@ cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymu
 `everforest`、`tokyo-night`、`tokyo-night-storm`、`one-dark` 和 `transparent`；
 其中 `transparent` 继承终端自己的前景色与背景色。
 
+音质和封面可以直接在该文件里调整：
+
+```toml
+quality = "exhigh"       # 128 | 192 | 320/exhigh | lossless | hires
+cover_mode = "original" # 终端不支持原图协议时自动回退到 pixel
+pixel_scale = 1.0        # pixel 模式采样细节；不会放大封面占用区域
+# cache_limit_mib = 8192 # 仅显式设置时更新桌面版与 TUI 共用的缓存上限
+```
+
+不设置 `cache_limit_mib` 时，TUI 会沿用共享缓存数据库里的上限，不会因启动顺序覆盖桌面版设置。
+
 自定义主题放在 `~/.config/ypm/themes/<name>.toml`，然后在配置中写 `theme = "<name>"`。
 色板需要 2–64 个 RGB 十六进制颜色，`roles` 的值是色板下标：
 

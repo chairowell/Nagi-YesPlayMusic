@@ -49,6 +49,7 @@ pub(super) struct SearchRequest {
 pub struct SearchState {
     pub query: String,
     pub results: Vec<SongRow>,
+    pub error: Option<String>,
     pub input: bool,
     pub searching: bool,
     seq: u64,
@@ -88,6 +89,7 @@ impl SearchState {
         self.active = None;
         self.searching = false;
         self.results.clear();
+        self.error = None;
     }
 
     pub(super) fn submit(&mut self) -> Option<SearchRequest> {
@@ -101,6 +103,7 @@ impl SearchState {
             query,
         };
         self.searching = true;
+        self.error = None;
         self.active = Some(request.clone());
         Some(request)
     }
@@ -116,6 +119,22 @@ impl SearchState {
         self.active = None;
         self.searching = false;
         self.results = rows;
+        self.error = None;
+        true
+    }
+
+    pub(super) fn fail(&mut self, seq: u64, query: &str, message: String) -> bool {
+        let matches = self
+            .active
+            .as_ref()
+            .is_some_and(|request| request.seq == seq && request.query == query);
+        if !matches {
+            return false;
+        }
+        self.active = None;
+        self.searching = false;
+        self.results.clear();
+        self.error = Some(message);
         true
     }
 }
@@ -124,15 +143,19 @@ pub(super) fn spawn_search(fx: &Effects, request: SearchRequest) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        let rows = ncm
-            .search_rows(&request.query, 30)
-            .await
-            .unwrap_or_default();
-        let _ = actions.send(Action::SearchResults {
-            seq: request.seq,
-            query: request.query,
-            rows,
-        });
+        let action = match ncm.search_rows(&request.query, 30).await {
+            Ok(rows) => Action::SearchResults {
+                seq: request.seq,
+                query: request.query,
+                rows,
+            },
+            Err(error) => Action::SearchFailed {
+                seq: request.seq,
+                query: request.query,
+                message: error.to_string(),
+            },
+        };
+        let _ = actions.send(action);
     });
 }
 
@@ -168,5 +191,25 @@ mod tests {
         assert_eq!(state.results[0].id, 3);
         assert!(!state.searching);
         assert!(state.input);
+    }
+
+    #[test]
+    fn failure_requires_the_active_sequence_and_query() {
+        let mut state = SearchState::new();
+        state.query = "first".into();
+        let first = state.submit().unwrap();
+        state.push('!');
+        state.query = "second".into();
+        let second = state.submit().unwrap();
+
+        assert!(!state.fail(first.seq, &first.query, "old failure".into()));
+        assert!(state.error.is_none());
+        assert!(state.searching);
+
+        assert!(!state.fail(second.seq, "different", "wrong query".into()));
+        assert!(state.fail(second.seq, &second.query, "search unavailable".into()));
+        assert_eq!(state.error.as_deref(), Some("search unavailable"));
+        assert!(!state.searching);
+        assert!(state.results.is_empty());
     }
 }

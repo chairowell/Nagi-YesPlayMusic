@@ -17,6 +17,9 @@ use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::thread::{ResizeRequest, ResizeResponse, ThreadProtocol};
 use ratatui_image::StatefulImage;
 use tokio::sync::mpsc;
+use yesplaymusic_core::cache::{
+    CacheKey, CacheLease, CacheMetadata, CacheWriteRequest, TrackCache,
+};
 
 use crate::action::{Action, CoverRenderRequest, View};
 use crate::api::{self, Ncm, SongRow, Source};
@@ -37,6 +40,7 @@ pub struct Effects {
     pub ncm: Arc<Ncm>,
     pub store: Arc<crate::store::LibraryStore>,
     pub actions: mpsc::UnboundedSender<Action>,
+    pub cache_root: Option<std::path::PathBuf>,
 }
 
 const COVER_SOURCE_EDGE: u32 = 500;
@@ -84,6 +88,27 @@ fn query_graphics_picker(mode: CoverMode, background: Color) -> Option<Picker> {
         picker.set_background_color(Some(Rgba([red, green, blue, 255])));
     }
     Some(picker)
+}
+
+fn initialize_audio_cache(config: &Config) -> Option<std::path::PathBuf> {
+    let root = config::cache_dir().join("audio");
+    let cache = match TrackCache::open(&root) {
+        Ok(cache) => cache,
+        Err(error) => {
+            tracing::warn!(%error, "audio cache unavailable");
+            return None;
+        }
+    };
+    if let Some(limit_mib) = config.cache_limit_mib {
+        let Some(max_bytes) = limit_mib.checked_mul(1024 * 1024) else {
+            tracing::warn!("audio cache limit is too large");
+            return Some(root);
+        };
+        if let Err(error) = cache.set_max_bytes(max_bytes) {
+            tracing::warn!(%error, "audio cache policy update failed");
+        }
+    }
+    Some(root)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +172,7 @@ pub struct AppState {
     pub play_mode: PlayMode,
     pub liked: std::collections::HashSet<i64>,
     pub current_track_id: Option<i64>,
+    active_row: Option<SongRow>,
     pub library_source: Source,
     pub sidebar_focus: bool,
     pub sidebar_selected: usize,
@@ -221,6 +247,7 @@ impl AppState {
             play_mode: PlayMode::Sequential,
             liked: std::collections::HashSet::new(),
             current_track_id: None,
+            active_row: None,
             library_source: Source::Liked,
             sidebar_focus: false,
             sidebar_selected: 0,
@@ -329,6 +356,7 @@ impl AppState {
     }
 
     fn apply_resolved(&mut self, fx: &Effects, generation: u64, track: api::ResolvedTrack) {
+        self.active_row = Some(song_row_from_resolved(&track));
         self.current_track_id = Some(track.id);
         self.now = Some(NowPlaying {
             title: track.title.clone(),
@@ -338,10 +366,14 @@ impl AppState {
         self.duration =
             (track.duration_ms > 0).then(|| Duration::from_millis(track.duration_ms as u64));
         self.status = Some(i18n::t_playing(&track.kind));
+        let request = cache_write_request(&track);
         fx.player.send(PlayerCommand::PlayUrl {
             generation,
             url: track.url.clone(),
-            cache: None,
+            cache: fx
+                .cache_root
+                .clone()
+                .map(|root| player::CacheWritePlan { root, request }),
         });
         if !self.cover_prefetched {
             if let Some(pic_url) = track.pic_url.clone() {
@@ -350,6 +382,37 @@ impl AppState {
         }
         spawn_fetch_lyrics(fx, generation, track.id);
         self.prefetch_next(fx);
+    }
+
+    fn apply_cached(&mut self, fx: &Effects, generation: u64, row: SongRow, lease: CacheLease) {
+        let kind = lease.metadata().codec.extension();
+        self.active_row = Some(row.clone());
+        self.current_track_id = Some(row.id);
+        self.now = Some(NowPlaying {
+            title: row.title,
+            artist: row.artist,
+            album: String::new(),
+        });
+        self.duration =
+            (row.duration_ms > 0).then(|| Duration::from_millis(row.duration_ms as u64));
+        self.status = Some(i18n::t_playing(kind));
+        fx.player
+            .send(PlayerCommand::PlayCached { generation, lease });
+        if !self.cover_prefetched {
+            if let Some(pic_url) = row.pic_url {
+                spawn_cover_fetch(fx, generation, pic_url);
+            }
+        }
+        spawn_fetch_lyrics(fx, generation, row.id);
+        self.prefetch_next(fx);
+    }
+
+    fn prepare_resolved(&mut self, fx: &Effects, generation: u64, track: api::ResolvedTrack) {
+        if let Some(root) = fx.cache_root.clone() {
+            spawn_resolved_cache_lookup(fx, generation, root, track);
+        } else {
+            self.apply_resolved(fx, generation, track);
+        }
     }
 
     /// Resolve the sequential next queue item ahead of time (shuffle is
@@ -376,6 +439,7 @@ impl AppState {
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
         fx.player.send(PlayerCommand::Stop);
         self.current_track_id = None;
+        self.active_row = Some(row.clone());
         self.paused = false;
         self.clear_cover();
         self.ensure_placeholder();
@@ -401,8 +465,20 @@ impl AppState {
             .take_if(|(_, track)| track.id == row.id && row.id > 0)
         {
             let generation = self.generation;
-            self.apply_resolved(fx, generation, track);
+            self.prepare_resolved(fx, generation, track);
             return;
+        }
+        if row.id > 0 {
+            if let Some(root) = fx.cache_root.clone() {
+                spawn_row_cache_lookup(
+                    fx,
+                    self.generation,
+                    root,
+                    CacheKey::new(row.id, fx.ncm.quality()),
+                    row,
+                );
+                return;
+            }
         }
         spawn_resolve(fx, self.generation, row);
     }
@@ -443,7 +519,7 @@ impl AppState {
         }
     }
 
-    fn apply_player_event(&mut self, event: PlayerEvent) {
+    fn apply_player_event(&mut self, fx: &Effects, event: PlayerEvent) {
         match event {
             PlayerEvent::Started { generation, total } => {
                 if generation == self.generation {
@@ -473,14 +549,40 @@ impl AppState {
             PlayerEvent::Failed {
                 generation,
                 message,
-                ..
+                cached,
             } => {
                 if generation == self.generation {
-                    self.status = Some(message);
+                    if let (Some(metadata), Some(row)) = (cached, self.active_row.clone()) {
+                        self.status = Some(i18n::t(Key::Resolving).into());
+                        spawn_cache_fallback(fx, generation, metadata, row);
+                    } else {
+                        self.status = Some(message);
+                    }
                 }
             }
         }
     }
+}
+
+fn song_row_from_resolved(track: &api::ResolvedTrack) -> SongRow {
+    SongRow {
+        id: track.id,
+        title: track.title.clone(),
+        artist: track.artist.clone(),
+        duration_ms: track.duration_ms,
+        pic_url: track.pic_url.clone(),
+    }
+}
+
+fn cache_write_request(track: &api::ResolvedTrack) -> CacheWriteRequest {
+    let mut request = CacheWriteRequest::new(track.cache_key, track.codec, track.actual_bitrate);
+    if let Some(bytes) = track.expected_bytes {
+        request = request.with_expected_bytes(bytes);
+    }
+    if let Some(md5) = track.expected_md5 {
+        request = request.with_expected_md5(md5);
+    }
+    request
 }
 
 fn spawn_resolve(fx: &Effects, generation: u64, row: SongRow) {
@@ -494,6 +596,99 @@ fn spawn_resolve(fx: &Effects, generation: u64, row: SongRow) {
         };
         let action = match resolved {
             Ok(track) => Action::TrackResolved { generation, track },
+            Err(error) => Action::ResolveFailed {
+                generation,
+                message: error.to_string(),
+            },
+        };
+        let _ = actions.send(action);
+    });
+}
+
+fn spawn_row_cache_lookup(
+    fx: &Effects,
+    generation: u64,
+    root: std::path::PathBuf,
+    key: CacheKey,
+    row: SongRow,
+) {
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let lease = tokio::task::spawn_blocking(move || {
+            TrackCache::open(root).and_then(|cache| cache.lookup(key))
+        })
+        .await;
+        let lease = match lease {
+            Ok(Ok(lease)) => lease,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "audio cache lookup failed");
+                None
+            }
+            Err(error) => {
+                tracing::warn!(%error, "audio cache worker failed");
+                None
+            }
+        };
+        let _ = actions.send(Action::RowCacheReady {
+            generation,
+            row,
+            lease,
+        });
+    });
+}
+
+fn spawn_resolved_cache_lookup(
+    fx: &Effects,
+    generation: u64,
+    root: std::path::PathBuf,
+    track: api::ResolvedTrack,
+) {
+    let key = track.cache_key;
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let lease = tokio::task::spawn_blocking(move || {
+            TrackCache::open(root).and_then(|cache| cache.lookup(key))
+        })
+        .await;
+        let lease = match lease {
+            Ok(Ok(lease)) => lease,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "audio cache lookup failed");
+                None
+            }
+            Err(error) => {
+                tracing::warn!(%error, "audio cache worker failed");
+                None
+            }
+        };
+        let _ = actions.send(Action::ResolvedCacheReady {
+            generation,
+            track,
+            lease,
+        });
+    });
+}
+
+fn spawn_cache_fallback(fx: &Effects, generation: u64, metadata: CacheMetadata, row: SongRow) {
+    let Some(root) = fx.cache_root.clone() else {
+        spawn_resolve(fx, generation, row);
+        return;
+    };
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let invalidated = tokio::task::spawn_blocking(move || {
+            TrackCache::open(root).and_then(|cache| cache.invalidate(&metadata))
+        })
+        .await;
+        match invalidated {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "audio cache invalidation failed"),
+            Err(error) => tracing::warn!(%error, "audio cache worker failed"),
+        }
+
+        let action = match ncm.resolve_by_id(&row).await {
+            Ok(track) => Action::CacheFallbackResolved { generation, track },
             Err(error) => Action::ResolveFailed {
                 generation,
                 message: error.to_string(),
@@ -720,6 +915,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
             config::cache_dir().join("library"),
         )),
         actions: actions_tx,
+        cache_root: initialize_audio_cache(config),
     };
     let mut state = AppState::new(config);
     state.original_cover = original_cover;

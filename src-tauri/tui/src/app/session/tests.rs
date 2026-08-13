@@ -22,6 +22,7 @@ fn effects(directory: &TempDir) -> Effects {
             directory.path().join("library"),
         )),
         actions,
+        cache_root: None,
     }
 }
 

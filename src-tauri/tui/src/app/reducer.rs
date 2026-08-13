@@ -4,8 +4,8 @@ use crate::event;
 use crate::player::PlayerCommand;
 
 use super::{
-    apply_pixel_cover, desired_idle_cells, spawn_decode_cover, spawn_render_cover,
-    spawn_render_idle, AppState, Effects,
+    apply_pixel_cover, desired_idle_cells, song_row_from_resolved, spawn_decode_cover,
+    spawn_render_cover, spawn_render_idle, spawn_resolve, AppState, Effects,
 };
 
 impl AppState {
@@ -22,7 +22,7 @@ impl AppState {
             match action {
                 Action::ConfirmYes | Action::Quit | Action::Activate => self.should_quit = true,
                 Action::Back | Action::NextTrack => self.confirm_quit = false,
-                Action::Player(event) => self.apply_player_event(event),
+                Action::Player(event) => self.apply_player_event(fx, event),
                 _ => {}
             }
             return;
@@ -225,6 +225,13 @@ impl AppState {
                     self.selected = 0;
                 }
             }
+            Action::SearchFailed {
+                seq,
+                query,
+                message,
+            } => {
+                self.search.fail(seq, &query, message);
+            }
             Action::PersonalNotice { session, message } => {
                 self.apply_personal_notice(session, message);
             }
@@ -234,6 +241,38 @@ impl AppState {
                 }
             }
             Action::TrackResolved { generation, track } => {
+                if generation == self.generation {
+                    self.prepare_resolved(fx, generation, track);
+                }
+            }
+            Action::RowCacheReady {
+                generation,
+                row,
+                lease,
+            } => {
+                if generation == self.generation {
+                    if let Some(lease) = lease {
+                        self.apply_cached(fx, generation, row, lease);
+                    } else {
+                        spawn_resolve(fx, generation, row);
+                    }
+                }
+            }
+            Action::ResolvedCacheReady {
+                generation,
+                track,
+                lease,
+            } => {
+                if generation == self.generation {
+                    if let Some(lease) = lease {
+                        let row = song_row_from_resolved(&track);
+                        self.apply_cached(fx, generation, row, lease);
+                    } else {
+                        self.apply_resolved(fx, generation, track);
+                    }
+                }
+            }
+            Action::CacheFallbackResolved { generation, track } => {
                 if generation == self.generation {
                     self.apply_resolved(fx, generation, track);
                 }
@@ -302,7 +341,7 @@ impl AppState {
                 }
             }
             Action::Player(event) => {
-                self.apply_player_event(event);
+                self.apply_player_event(fx, event);
                 if self.pending_auto_next {
                     self.pending_auto_next = false;
                     self.step_queue(fx, 1, true);

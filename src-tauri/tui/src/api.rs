@@ -15,10 +15,6 @@ use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 use crate::i18n::{self, Key};
 
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "consumed by the cache playback integration")
-)]
 pub struct ResolvedTrack {
     pub id: i64,
     pub title: String,
@@ -93,20 +89,16 @@ impl Ncm {
         self.session.read().ok().and_then(|session| session.clone())
     }
 
+    pub(crate) fn quality(&self) -> AudioQuality {
+        self.quality
+    }
+
     pub fn commit_session(&self, session: &Session) -> Result<()> {
         self.store
             .save(session)
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPersistSession, error)))?;
         *self.session.write().expect("session lock") = Some(session.clone());
         Ok(())
-    }
-
-    #[allow(dead_code)] // wired by the future `:` command palette
-    pub fn logout(&self) -> Result<()> {
-        *self.session.write().expect("session lock") = None;
-        self.store
-            .clear()
-            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpClearSession, error)))
     }
 
     fn query(&self) -> Query {

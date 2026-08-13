@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use yesplaymusic_core::auth::Session;
+use yesplaymusic_core::cache::CacheLease;
 
 use crate::api::{ResolvedTrack, SongRow, Source};
 use crate::pixel::PixelCover;
@@ -67,6 +68,20 @@ pub enum Action {
     Resize,
     Player(PlayerEvent),
     TrackResolved {
+        generation: u64,
+        track: ResolvedTrack,
+    },
+    RowCacheReady {
+        generation: u64,
+        row: SongRow,
+        lease: Option<CacheLease>,
+    },
+    ResolvedCacheReady {
+        generation: u64,
+        track: ResolvedTrack,
+        lease: Option<CacheLease>,
+    },
+    CacheFallbackResolved {
         generation: u64,
         track: ResolvedTrack,
     },
@@ -138,6 +153,11 @@ pub enum Action {
         seq: u64,
         query: String,
         rows: Vec<SongRow>,
+    },
+    SearchFailed {
+        seq: u64,
+        query: String,
+        message: String,
     },
     LikedIds {
         session: SessionStamp,
