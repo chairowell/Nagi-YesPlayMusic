@@ -6,28 +6,30 @@
 //! - every Decoder must know its byte length, or backward seeks fail;
 //! - rodio is pinned to 0.22.x (0.20 panics opening M4A).
 
-use std::fs::File;
-use std::io::{BufReader, Read, Seek};
-use std::path::PathBuf;
+mod cache_stream;
+
+use std::io::{Read, Seek};
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
 
 use rodio::{Decoder, Player};
-use stream_download::storage::temp::TempStorageProvider;
-use stream_download::{Settings, StreamDownload};
-use tokio::sync::mpsc;
+use stream_download::{Settings, StreamDownload, StreamHandle, StreamPhase};
+use tokio::sync::{mpsc, oneshot};
+use yesplaymusic_core::cache::{CacheLease, CacheMetadata};
 
-#[derive(Debug)]
+pub use cache_stream::CacheWritePlan;
+use cache_stream::{CacheImportReader, CacheStreamProvider};
+
 pub enum PlayerCommand {
-    /// Local-file playback: reserved for the core cache integration.
-    #[allow(dead_code)]
-    PlayFile {
+    #[allow(dead_code)] // constructed when the cache lookup lands in app integration
+    PlayCached {
         generation: u64,
-        path: PathBuf,
+        lease: CacheLease,
     },
     PlayUrl {
         generation: u64,
         url: String,
+        cache: Option<CacheWritePlan>,
     },
     TogglePause,
     SeekTo(Duration),
@@ -56,6 +58,8 @@ pub enum PlayerEvent {
     Failed {
         generation: u64,
         message: String,
+        #[allow(dead_code)] // consumed by the cache invalidation integration
+        cached: Option<CacheMetadata>,
     },
 }
 
@@ -107,6 +111,7 @@ impl<T: Read + Seek + Send + Sync> MediaSource for T {}
 struct Media {
     reader: Box<dyn MediaSource>,
     byte_len: Option<u64>,
+    cached: Option<CacheMetadata>,
 }
 
 struct Opened {
@@ -166,16 +171,21 @@ fn actor(
             };
 
             match command {
-                PlayerCommand::PlayFile {
+                PlayerCommand::PlayCached {
                     generation: g,
-                    path,
+                    lease,
                 } => {
                     drop(pending.take());
                     stop(&engine);
                     active_generation =
-                        start(&mut engine, volume, g, &events, || open_file(&path)).then_some(g);
+                        start(&mut engine, volume, g, &events, || Ok(open_cached(lease)))
+                            .then_some(g);
                 }
-                PlayerCommand::PlayUrl { generation: g, url } => {
+                PlayerCommand::PlayUrl {
+                    generation: g,
+                    url,
+                    cache,
+                } => {
                     drop(pending.take());
                     stop(&engine);
                     active_generation = None;
@@ -186,6 +196,7 @@ fn actor(
                         request,
                         g,
                         url,
+                        cache,
                         opened_tx.clone(),
                         wake_tx.clone(),
                     ));
@@ -207,6 +218,7 @@ fn actor(
                             let _ = events.send(PlayerEvent::Failed {
                                 generation,
                                 message: format!("seek failed: {error}"),
+                                cached: None,
                             });
                         }
                     }
@@ -272,11 +284,12 @@ fn spawn_open(
     request: u64,
     generation: u64,
     url: String,
+    cache: Option<CacheWritePlan>,
     opened: std_mpsc::Sender<Opened>,
     wake: std_mpsc::Sender<()>,
 ) -> PendingOpen {
     let task = runtime.spawn(async move {
-        let result = open_url(&url).await;
+        let result = open_url(&url, cache).await;
         let _ = opened.send(Opened {
             request,
             generation,
@@ -291,27 +304,55 @@ fn spawn_open(
     }
 }
 
-fn open_file(path: &PathBuf) -> anyhow::Result<Media> {
-    let file = File::open(path)?;
-    let byte_len = file.metadata().ok().map(|meta| meta.len());
-    Ok(Media {
-        reader: Box::new(BufReader::new(file)),
-        byte_len,
-    })
+fn open_cached(lease: CacheLease) -> Media {
+    let metadata = *lease.metadata();
+    Media {
+        reader: Box::new(lease),
+        byte_len: Some(metadata.bytes),
+        cached: Some(metadata),
+    }
 }
 
-async fn open_url(url: &str) -> anyhow::Result<Media> {
-    let reader = StreamDownload::new_http(
-        url.parse()?,
-        TempStorageProvider::new(),
-        Settings::default(),
-    )
-    .await?;
+async fn open_url(url: &str, cache: Option<CacheWritePlan>) -> anyhow::Result<Media> {
+    let (provider, import) = CacheStreamProvider::new()?;
+    let (complete_tx, complete_rx) = oneshot::channel();
+    let mut complete_tx = cache.as_ref().map(|_| complete_tx);
+    let settings = Settings::default().on_progress(move |_, state, _| {
+        if matches!(state.phase, StreamPhase::Complete) {
+            if let Some(complete) = complete_tx.take() {
+                let _ = complete.send(());
+            }
+        }
+    });
+    let reader = StreamDownload::new_http(url.parse()?, provider, settings).await?;
     let byte_len = reader.content_length();
+    if let Some(plan) = cache {
+        spawn_cache_publish(reader.handle(), complete_rx, import, plan);
+    }
     Ok(Media {
         reader: Box::new(reader),
         byte_len,
+        cached: None,
     })
+}
+
+fn spawn_cache_publish(
+    handle: StreamHandle,
+    complete: oneshot::Receiver<()>,
+    import: CacheImportReader,
+    plan: CacheWritePlan,
+) {
+    tokio::spawn(async move {
+        if complete.await.is_err() {
+            return;
+        }
+        handle.wait_for_completion().await;
+        match tokio::task::spawn_blocking(move || cache_stream::publish(import, plan)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "audio cache write failed"),
+            Err(error) => tracing::warn!(%error, "audio cache worker failed"),
+        }
+    });
 }
 
 fn start<F>(
@@ -324,21 +365,32 @@ fn start<F>(
 where
     F: FnOnce() -> anyhow::Result<Media>,
 {
-    let decoder = open().and_then(|media| {
-        let mut builder = Decoder::builder()
-            .with_data(media.reader)
-            .with_seekable(true);
-        if let Some(byte_len) = media.byte_len {
-            builder = builder.with_byte_len(byte_len);
+    let media = match open() {
+        Ok(media) => media,
+        Err(error) => {
+            let _ = events.send(PlayerEvent::Failed {
+                generation,
+                message: error.to_string(),
+                cached: None,
+            });
+            return false;
         }
-        builder.build().map_err(Into::into)
-    });
+    };
+    let cached = media.cached;
+    let mut builder = Decoder::builder()
+        .with_data(media.reader)
+        .with_seekable(true);
+    if let Some(byte_len) = media.byte_len {
+        builder = builder.with_byte_len(byte_len);
+    }
+    let decoder = builder.build().map_err(anyhow::Error::from);
     let decoder = match decoder {
         Ok(decoder) => decoder,
         Err(error) => {
             let _ = events.send(PlayerEvent::Failed {
                 generation,
                 message: error.to_string(),
+                cached,
             });
             return false;
         }
@@ -352,6 +404,7 @@ where
                 let _ = events.send(PlayerEvent::Failed {
                     generation,
                     message: format!("audio device unavailable: {error}"),
+                    cached: None,
                 });
                 return false;
             }
@@ -379,15 +432,129 @@ fn open_engine(volume: f32) -> anyhow::Result<Engine> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::path::Path;
     use std::sync::mpsc as std_mpsc;
     use std::thread;
     use std::time::Duration;
 
-    use tokio::sync::oneshot;
+    use tokio::sync::{mpsc, oneshot};
+    use yesplaymusic_core::cache::{
+        AudioCodec, AudioQuality, CacheKey, CacheWriteRequest, TrackCache,
+    };
 
-    use super::{spawn, PlayerCommand, PlayerEvent};
+    use super::{open_cached, open_url, spawn, start, CacheWritePlan, PlayerCommand, PlayerEvent};
+
+    const AUDIO_BODY: &[u8] = b"complete cache body";
+
+    fn cache_request(track_id: i64, expected_bytes: u64) -> CacheWriteRequest {
+        CacheWriteRequest::new(
+            CacheKey::new(track_id, AudioQuality::High320),
+            AudioCodec::Mp3,
+            320_000,
+        )
+        .with_expected_bytes(expected_bytes)
+        .with_expected_md5([
+            0xe8, 0xa9, 0x92, 0x1b, 0xe8, 0x6b, 0xc2, 0x3f, 0x73, 0x2f, 0xa2, 0x62, 0x13, 0xec,
+            0x6e, 0x05,
+        ])
+    }
+
+    struct HttpServer {
+        url: String,
+        thread: thread::JoinHandle<()>,
+    }
+
+    impl HttpServer {
+        fn complete(body: &'static [u8]) -> Self {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind complete server");
+            let address = listener.local_addr().expect("server address");
+            let thread = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().expect("accept player request");
+                read_request(&mut socket);
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("write response headers");
+                socket.write_all(body).expect("write response body");
+            });
+            Self {
+                url: format!("http://{address}/audio"),
+                thread,
+            }
+        }
+
+        fn stalled_prefix(
+            prefix: &'static [u8],
+            content_length: usize,
+        ) -> (Self, oneshot::Receiver<()>, std_mpsc::Receiver<()>) {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind partial server");
+            let address = listener.local_addr().expect("server address");
+            let (prefix_tx, prefix_sent) = oneshot::channel();
+            let (closed_tx, closed) = std_mpsc::channel();
+            let thread = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().expect("accept player request");
+                read_request(&mut socket);
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+                )
+                .expect("write response headers");
+                socket.write_all(prefix).expect("write response prefix");
+                socket.flush().expect("flush response prefix");
+                let _ = prefix_tx.send(());
+                let mut buffer = [0_u8; 256];
+                while socket.read(&mut buffer).is_ok_and(|read| read != 0) {}
+                let _ = closed_tx.send(());
+            });
+            (
+                Self {
+                    url: format!("http://{address}/audio"),
+                    thread,
+                },
+                prefix_sent,
+                closed,
+            )
+        }
+
+        fn join(self) {
+            self.thread.join().expect("join HTTP server");
+        }
+    }
+
+    fn read_request(socket: &mut std::net::TcpStream) {
+        socket
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("set request timeout");
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 256];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = socket.read(&mut buffer).expect("read request");
+            assert_ne!(read, 0, "request ended before headers");
+            request.extend_from_slice(&buffer[..read]);
+        }
+    }
+
+    async fn wait_for_cache(root: &Path, key: CacheKey) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if TrackCache::open(root)
+                    .expect("open cache")
+                    .lookup(key)
+                    .expect("lookup cache")
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("completed stream should be cached");
+    }
 
     struct StalledServer {
         url: String,
@@ -463,6 +630,7 @@ mod tests {
         player.send(PlayerCommand::PlayUrl {
             generation: 1,
             url: server.url.clone(),
+            cache: None,
         });
         server.wait_until_requested().await;
 
@@ -486,12 +654,14 @@ mod tests {
         player.send(PlayerCommand::PlayUrl {
             generation: 1,
             url: server.url.clone(),
+            cache: None,
         });
         server.wait_until_requested().await;
 
         player.send(PlayerCommand::PlayUrl {
             generation: 2,
             url: "not a url".into(),
+            cache: None,
         });
         let event = tokio::time::timeout(Duration::from_millis(500), events.recv())
             .await
@@ -508,5 +678,133 @@ mod tests {
 
         drop(player);
         server.join();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn naturally_completed_stream_is_published_with_validated_bytes_and_md5() {
+        let cache_dir = tempfile::tempdir().expect("cache directory");
+        let server = HttpServer::complete(AUDIO_BODY);
+        let request = cache_request(31, AUDIO_BODY.len() as u64);
+        let key = request.key;
+        let media = open_url(
+            &server.url,
+            Some(CacheWritePlan {
+                root: cache_dir.path().to_path_buf(),
+                request,
+            }),
+        )
+        .await
+        .expect("open complete stream");
+
+        let downloaded = tokio::task::spawn_blocking(move || {
+            let mut reader = media.reader;
+            let mut downloaded = Vec::new();
+            reader.read_to_end(&mut downloaded).expect("read stream");
+            downloaded
+        })
+        .await
+        .expect("join stream reader");
+        assert_eq!(downloaded, AUDIO_BODY);
+        wait_for_cache(cache_dir.path(), key).await;
+
+        let cache = TrackCache::open(cache_dir.path()).expect("open published cache");
+        let mut lease = cache
+            .lookup(key)
+            .expect("lookup published cache")
+            .expect("published cache entry");
+        assert_eq!(lease.metadata().bytes, AUDIO_BODY.len() as u64);
+        let mut cached = Vec::new();
+        lease.read_to_end(&mut cached).expect("read cached bytes");
+        assert_eq!(cached, AUDIO_BODY);
+        server.join();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stopping_a_partial_stream_does_not_publish_it() {
+        let cache_dir = tempfile::tempdir().expect("cache directory");
+        let (server, prefix_sent, closed) = HttpServer::stalled_prefix(b"part", AUDIO_BODY.len());
+        let request = cache_request(32, AUDIO_BODY.len() as u64);
+        let key = request.key;
+        let media = open_url(
+            &server.url,
+            Some(CacheWritePlan {
+                root: cache_dir.path().to_path_buf(),
+                request,
+            }),
+        )
+        .await
+        .expect("open partial stream");
+        tokio::time::timeout(Duration::from_secs(1), prefix_sent)
+            .await
+            .expect("server should send a prefix")
+            .expect("prefix signal should arrive");
+
+        drop(media);
+        closed
+            .recv_timeout(Duration::from_millis(500))
+            .expect("stopping the stream should close the response");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let cache = TrackCache::open(cache_dir.path()).expect("open cache");
+        assert!(cache.lookup(key).expect("lookup cache").is_none());
+        server.join();
+    }
+
+    #[test]
+    fn cached_media_keeps_its_lease_until_the_decoder_source_is_dropped() {
+        let cache_dir = tempfile::tempdir().expect("cache directory");
+        let key = CacheKey::new(33, AudioQuality::High320);
+        let cache = TrackCache::open(cache_dir.path()).expect("open cache");
+        let mut writer = cache
+            .begin_write(
+                CacheWriteRequest::new(key, AudioCodec::Mp3, 320_000)
+                    .with_expected_bytes(AUDIO_BODY.len() as u64),
+            )
+            .expect("begin cache write");
+        writer.write_all(AUDIO_BODY).expect("write cache entry");
+        writer.finish().expect("finish cache entry");
+        let lease = cache
+            .lookup(key)
+            .expect("lookup cache")
+            .expect("cache lease");
+        let media = open_cached(lease);
+
+        cache.set_max_bytes(0).expect("evict leased cache");
+        assert_eq!(cache.total_bytes().expect("leased cache size"), 19);
+
+        drop(media);
+        cache.set_max_bytes(0).expect("evict released cache");
+        assert_eq!(cache.total_bytes().expect("released cache size"), 0);
+    }
+
+    #[test]
+    fn cached_decoder_failure_reports_the_entry_that_must_be_invalidated() {
+        let cache_dir = tempfile::tempdir().expect("cache directory");
+        let key = CacheKey::new(34, AudioQuality::High320);
+        let cache = TrackCache::open(cache_dir.path()).expect("open cache");
+        let mut writer = cache
+            .begin_write(CacheWriteRequest::new(key, AudioCodec::Mp3, 320_000))
+            .expect("begin cache write");
+        writer.write_all(b"not audio").expect("write cache entry");
+        let metadata = writer.finish().expect("finish cache entry");
+        let lease = cache
+            .lookup(key)
+            .expect("lookup cache")
+            .expect("cache lease");
+        let (events, mut received) = mpsc::unbounded_channel();
+        let mut engine = None;
+
+        assert!(!start(&mut engine, 1.0, 8, &events, || {
+            Ok(open_cached(lease))
+        }));
+        let event = received.try_recv().expect("decoder failure event");
+        assert!(matches!(
+            event,
+            PlayerEvent::Failed {
+                generation: 8,
+                cached: Some(failed),
+                ..
+            } if failed == metadata
+        ));
     }
 }

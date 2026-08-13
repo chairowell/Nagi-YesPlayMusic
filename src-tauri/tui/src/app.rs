@@ -341,6 +341,7 @@ impl AppState {
         fx.player.send(PlayerCommand::PlayUrl {
             generation,
             url: track.url.clone(),
+            cache: None,
         });
         if !self.cover_prefetched {
             if let Some(pic_url) = track.pic_url.clone() {
@@ -472,6 +473,7 @@ impl AppState {
             PlayerEvent::Failed {
                 generation,
                 message,
+                ..
             } => {
                 if generation == self.generation {
                     self.status = Some(message);
