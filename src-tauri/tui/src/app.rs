@@ -360,7 +360,11 @@ impl AppState {
                     self.position = position;
                 }
             }
-            PlayerEvent::Paused(paused) => self.paused = paused,
+            PlayerEvent::Paused { generation, paused } => {
+                if generation == self.generation {
+                    self.paused = paused;
+                }
+            }
             PlayerEvent::Ended { generation } => {
                 if generation == self.generation {
                     self.pending_auto_next = true;
