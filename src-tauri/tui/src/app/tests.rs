@@ -904,8 +904,11 @@ async fn restored_playback_stays_paused_until_space_then_seeks_after_start() {
         state.now.as_ref().map(|now| now.album.as_str()),
         Some("Album")
     );
+    // A restored session parks on the dashboard until the user engages.
+    assert!(state.dashboard_hold);
 
     state.update(Action::TogglePlay, &fx);
+    assert!(!state.dashboard_hold, "space reveals the player");
     assert_eq!(state.generation, 1);
     assert_eq!(state.position, Duration::from_secs(42));
     assert_eq!(state.status.as_deref(), Some(i18n::t(Key::Resolving)));
@@ -1312,6 +1315,51 @@ async fn spectrum_setting_reflows_cover_geometry_immediately() {
     let side_on = state.desired_cover_cells();
     state.config.spectrum_enabled = false;
     assert_eq!(state.desired_cover_cells(), side_on);
+}
+
+#[tokio::test]
+async fn escape_walks_out_of_search_instead_of_bouncing_back_to_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.update(Action::SwitchView(View::Search), &fx);
+    assert!(state.search.input);
+    state.search.query = "rain".into();
+    let request = state.search.submit().unwrap();
+    assert!(state.search.accept(
+        request.seq,
+        &request.query,
+        request.channel,
+        crate::api::SearchPayload::Songs(crate::api::SearchPage {
+            items: vec![row(1)],
+            total: 1,
+        }),
+    ));
+
+    // First Esc hands focus to the result list, second Esc leaves the
+    // view; navigate_back must not bounce focus back into the input.
+    state.update(raw_key(KeyCode::Esc), &fx);
+    assert!(!state.search.input);
+    state.update(raw_key(KeyCode::Esc), &fx);
+    assert_eq!(state.view, View::NowPlaying);
+    assert_eq!(state.search.current_len(), 1, "results survive the exit");
+}
+
+#[tokio::test]
+async fn side_layout_spectrum_toggle_keeps_the_cover_art() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.layout = PlayLayout::Side;
+    let revision = state.style_revision;
+
+    state.update(raw_key(KeyCode::Char('v')), &fx);
+
+    assert!(state.config.spectrum_enabled);
+    assert_eq!(
+        state.style_revision, revision,
+        "the side layout hosts the spectrum in the panel; the cover must not reload"
+    );
 }
 
 #[tokio::test]

@@ -372,6 +372,16 @@ impl HotPixelCovers {
 pub struct AppState {
     pub view: View,
     pub zen: bool,
+    /// Restored sessions land on the dashboard first; the now-playing
+    /// layout appears once the user actually engages with playback.
+    pub dashboard_hold: bool,
+    /// Mirrors terminal mouse capture; the `mouse` palette command
+    /// releases it so native text selection works.
+    pub(crate) mouse_captured: bool,
+    /// Newer release tag found by the startup check, if any.
+    pub update_available: Option<String>,
+    /// Whether this binary lives in a Homebrew Cellar (decides the hint).
+    pub brew_install: bool,
     pub theme: Theme,
     pub(crate) terminal_background: Option<Color>,
     pub(crate) terminal_is_light: Option<bool>,
@@ -549,6 +559,10 @@ impl AppState {
             volume: 1.0,
             volume_before_mute: None,
             resume_on_play: None,
+            dashboard_hold: false,
+            mouse_captured: true,
+            update_available: None,
+            brew_install: crate::update::installed_via_brew(),
             seek_after_start: None,
             status: None,
             command_feedback: None,
@@ -585,14 +599,26 @@ impl AppState {
             ui::HEADER_HEIGHT + ui::FOOTER_HEIGHT + ui::PANEL_GAP_Y * 2
         };
         let playing_rows = rows.saturating_sub(shell_rows);
+        let progress_rows = if self.zen {
+            0
+        } else {
+            ui::now_playing::PROGRESS_HEIGHT
+        };
         let spectrum_rows = ui::now_playing::spectrum_band_height(
             playing_rows,
             self.config.spectrum_enabled,
             self.layout,
+            progress_rows,
+        );
+        // Mirror the draw-side breather row exactly, or the cover art is
+        // rendered one row taller than its slot and gets bottom-cropped.
+        let breather = u16::from(
+            playing_rows >= ui::now_playing::MAIN_BREATHER_MIN_HEIGHT && progress_rows > 0,
         );
         let main_rows = playing_rows
-            .saturating_sub(ui::now_playing::PROGRESS_HEIGHT)
-            .saturating_sub(spectrum_rows);
+            .saturating_sub(progress_rows)
+            .saturating_sub(spectrum_rows)
+            .saturating_sub(breather);
         let height = match self.layout {
             PlayLayout::Side => main_rows,
             PlayLayout::Stacked => main_rows / 2,
@@ -859,6 +885,8 @@ impl AppState {
                 album: row.album.clone(),
             });
             self.resume_on_play = Some(self.position);
+            // Land on the dashboard; 1/Space/next reveal the player.
+            self.dashboard_hold = true;
         } else {
             self.current_track_id = None;
             self.duration = None;
@@ -869,6 +897,7 @@ impl AppState {
     }
 
     fn toggle_play(&mut self, fx: &Effects) {
+        self.dashboard_hold = false;
         let Some(position) = self.resume_on_play else {
             fx.player.send(PlayerCommand::TogglePause);
             return;
@@ -1305,6 +1334,7 @@ impl AppState {
     /// Reset the now-playing surface and kick off resolution for a row.
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
         fx.player.send(PlayerCommand::Stop);
+        self.dashboard_hold = false;
         self.current_track_id = (row.id > 0).then_some(row.id);
         self.active_row = Some(row.clone());
         self.paused = false;
@@ -2040,9 +2070,10 @@ fn spawn_idle_load(fx: &Effects, path: std::path::PathBuf) {
     });
 }
 
-/// Idle art scales with the terminal like covers do.
+/// Idle art scales with the terminal like covers do, but stays a badge:
+/// past 18 rows the logo reads as a wall instead of a mark.
 fn desired_idle_cells((cols, rows): (u16, u16)) -> (u16, u16) {
-    let height = (rows * 2 / 5).clamp(12, 24);
+    let height = (rows * 2 / 5).clamp(12, 18);
     let width = (height * 2).min(cols.saturating_sub(4).max(16));
     (width, width / 2)
 }
@@ -2122,6 +2153,15 @@ async fn event_loop(
     spawn_resize_worker(playing_resize_rx, playing_responses_tx);
     spawn_resize_worker(selected_resize_rx, selected_responses_tx);
     spawn_resize_worker(selected_pending_resize_rx, selected_pending_responses_tx);
+
+    if config.update_check {
+        let update_tx = actions_tx.clone();
+        tokio::spawn(async move {
+            if let Some(tag) = crate::update::check(env!("CARGO_PKG_VERSION")).await {
+                let _ = update_tx.send(Action::UpdateAvailable(tag));
+            }
+        });
+    }
 
     let input_tx = actions_tx.clone();
     tokio::spawn(async move {

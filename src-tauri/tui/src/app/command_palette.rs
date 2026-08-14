@@ -1,6 +1,7 @@
 use yesplaymusic_core::cache::AudioQuality;
 
 use crate::action::View;
+use crate::i18n::Key;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CommandKind {
@@ -17,6 +18,7 @@ enum CommandKind {
     Volume,
     Theme,
     Quality,
+    Mouse,
     Goto,
     Quit,
 }
@@ -25,7 +27,7 @@ enum CommandKind {
 pub(crate) struct CommandSpec {
     kind: CommandKind,
     pub(crate) usage: &'static str,
-    pub(crate) aliases: &'static str,
+    pub(crate) alias: Key,
     keywords: &'static [&'static str],
 }
 
@@ -33,91 +35,97 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         kind: CommandKind::TogglePlay,
         usage: "play/pause",
-        aliases: "播放 / 暂停",
+        alias: Key::CommandPlayPause,
         keywords: &["play/pause", "play", "pause", "播放/暂停", "播放", "暂停"],
     },
     CommandSpec {
         kind: CommandKind::Next,
         usage: "next",
-        aliases: "下一首",
+        alias: Key::CommandNext,
         keywords: &["next", "下一首", "下一曲"],
     },
     CommandSpec {
         kind: CommandKind::Prev,
         usage: "prev",
-        aliases: "上一首",
+        alias: Key::CommandPrev,
         keywords: &["prev", "previous", "上一首", "上一曲"],
     },
     CommandSpec {
         kind: CommandKind::Shuffle,
         usage: "shuffle",
-        aliases: "随机",
+        alias: Key::CommandShuffle,
         keywords: &["shuffle", "random", "随机", "随机播放"],
     },
     CommandSpec {
         kind: CommandKind::Repeat,
         usage: "repeat",
-        aliases: "循环",
+        alias: Key::CommandRepeat,
         keywords: &["repeat", "循环", "重复"],
     },
     CommandSpec {
         kind: CommandKind::Like,
         usage: "like",
-        aliases: "喜欢 / 收藏",
+        alias: Key::CommandLike,
         keywords: &["like", "喜欢", "收藏"],
     },
     CommandSpec {
         kind: CommandKind::Zen,
         usage: "zen",
-        aliases: "纯净",
+        alias: Key::CommandZen,
         keywords: &["zen", "纯净", "专注"],
     },
     CommandSpec {
         kind: CommandKind::Spectrum,
         usage: "spectrum",
-        aliases: "频谱",
+        alias: Key::CommandSpectrum,
         keywords: &["spectrum", "visualizer", "频谱", "可视化"],
     },
     CommandSpec {
         kind: CommandKind::Mute,
         usage: "mute",
-        aliases: "静音",
+        alias: Key::CommandMute,
         keywords: &["mute", "静音"],
     },
     CommandSpec {
         kind: CommandKind::Seek,
         usage: "seek <±seconds>",
-        aliases: "跳转 <±秒>",
+        alias: Key::CommandSeek,
         keywords: &["seek", "跳转", "定位", "快进", "快退"],
     },
     CommandSpec {
         kind: CommandKind::Volume,
         usage: "volume <0-100>",
-        aliases: "音量 <0-100>",
+        alias: Key::CommandVolume,
         keywords: &["volume", "vol", "音量"],
     },
     CommandSpec {
         kind: CommandKind::Theme,
         usage: "theme <name>",
-        aliases: "主题 <名称>",
+        alias: Key::CommandTheme,
         keywords: &["theme", "主题", "配色"],
     },
     CommandSpec {
         kind: CommandKind::Quality,
         usage: "quality <level>",
-        aliases: "音质 <档位>",
+        alias: Key::CommandQuality,
         keywords: &["quality", "音质", "品质"],
+    },
+    CommandSpec {
+        kind: CommandKind::Mouse,
+        usage: "mouse",
+        alias: Key::CommandMouse,
+        keywords: &["mouse", "select", "copy", "鼠标", "选择", "复制"],
     },
     CommandSpec {
         kind: CommandKind::Goto,
         usage: "goto <view>",
-        aliases: "前往 <视图>",
+        alias: Key::CommandGoto,
         keywords: &["goto", "go", "前往", "转到", "视图"],
     },
     CommandSpec {
         kind: CommandKind::Quit,
         usage: "quit",
-        aliases: "退出",
+        alias: Key::CommandQuit,
         keywords: &["quit", "exit", "退出", "离开"],
     },
 ];
@@ -137,6 +145,7 @@ pub(crate) enum CommandInvocation {
     Volume(u8),
     Theme(String),
     Quality(AudioQuality),
+    Mouse,
     Goto(View),
     Quit,
 }
@@ -157,6 +166,7 @@ impl CommandInvocation {
             Self::Volume(_) => "volume",
             Self::Theme(_) => "theme",
             Self::Quality(_) => "quality",
+            Self::Mouse => "mouse",
             Self::Goto(_) => "goto",
             Self::Quit => "quit",
         }
@@ -230,7 +240,8 @@ impl CommandPaletteState {
             self.selected = 0;
             return;
         }
-        self.selected = (self.selected as i32 + delta).clamp(0, len as i32 - 1) as usize;
+        // Wrap around like every palette does.
+        self.selected = (self.selected as i32 + delta).rem_euclid(len as i32) as usize;
     }
 
     pub(crate) fn select_first(&mut self) {
@@ -277,9 +288,13 @@ fn filtered_commands(token: &str) -> Vec<&'static CommandSpec> {
         .iter()
         .enumerate()
         .filter_map(|(index, command)| {
+            // The alias shown by the UI follows the locale; whatever the
+            // user reads on screen must also be typeable.
             command
                 .keywords
                 .iter()
+                .copied()
+                .chain(std::iter::once(crate::i18n::t(command.alias)))
                 .filter_map(|keyword| fuzzy_score(token, keyword))
                 .min()
                 .map(|score| (score, index, command))
@@ -294,6 +309,8 @@ fn command_for_keyword(token: &str) -> Option<&'static CommandSpec> {
         command
             .keywords
             .iter()
+            .copied()
+            .chain(std::iter::once(crate::i18n::t(command.alias)))
             .any(|keyword| keyword.eq_ignore_ascii_case(token))
     })
 }
@@ -347,6 +364,7 @@ fn invocation_for(
         CommandKind::Zen => no_arguments(spec, arguments, CommandInvocation::Zen),
         CommandKind::Spectrum => no_arguments(spec, arguments, CommandInvocation::Spectrum),
         CommandKind::Mute => no_arguments(spec, arguments, CommandInvocation::Mute),
+        CommandKind::Mouse => no_arguments(spec, arguments, CommandInvocation::Mouse),
         CommandKind::Quit => no_arguments(spec, arguments, CommandInvocation::Quit),
         CommandKind::Seek => {
             let value = one_argument(spec, arguments, "<±seconds>")?;

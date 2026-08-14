@@ -174,6 +174,9 @@ impl AppState {
             Action::MoveCommandSelection(delta) => self.command_palette.move_selection(delta),
             Action::ExecuteCommand => self.execute_command_palette(fx),
             Action::SwitchView(view) => {
+                if view == View::NowPlaying {
+                    self.dashboard_hold = false;
+                }
                 if self.view == View::Search {
                     let selected = self
                         .visible_row(self.selected)
@@ -198,6 +201,21 @@ impl AppState {
             Action::Escape => {
                 if self.filter.is_active() {
                     self.clear_filter();
+                } else if self.view == View::Search
+                    && self.search.is_results()
+                    && !self.search.input
+                {
+                    // Esc keeps walking outward from the result list;
+                    // navigate_back would bounce focus back into the input
+                    // and Esc could never leave the view. h/Backspace keep
+                    // the step-back-into-input behavior.
+                    let selected = self
+                        .visible_row(self.selected)
+                        .map_or(self.selected, |(underlying, _)| underlying);
+                    self.search.remember_selection(selected);
+                    self.clear_filter();
+                    self.sidebar_focus = false;
+                    self.view = View::NowPlaying;
                 } else {
                     self.navigate_back(fx);
                 }
@@ -206,6 +224,7 @@ impl AppState {
                 self.zen = !self.zen;
                 if self.zen {
                     self.view = View::NowPlaying;
+                    self.dashboard_hold = false;
                 }
             }
             Action::ToggleSpectrum => {
@@ -319,9 +338,13 @@ impl AppState {
                 }
             }
             Action::NextTrack => {
+                // Reveal the player even when the queue cannot advance,
+                // or the resulting status stays hidden behind the dashboard.
+                self.dashboard_hold = false;
                 self.step_queue(fx, 1, false, true);
             }
             Action::PrevTrack => {
+                self.dashboard_hold = false;
                 self.step_queue(fx, -1, false, true);
             }
             Action::ToggleHelp => self.show_help = true,
@@ -371,6 +394,12 @@ impl AppState {
             Action::SaveSettings => self.save_settings(fx),
             Action::CancelSettings => self.cancel_settings(fx),
             Action::NerdFontProbeFinished(status) => self.apply_nerd_font_probe(status),
+            Action::UpdateAvailable(tag) => {
+                // Also surface as a status toast: a late-arriving result
+                // must stay visible after the dashboard has been left.
+                self.status = Some(crate::i18n::t_update_available(&tag, self.brew_install));
+                self.update_available = Some(tag);
+            }
             Action::LikedIds { session, ids } => self.apply_liked_ids(session, ids),
             Action::FmMore { session, rows } => self.apply_fm_more(fx, session, rows),
             Action::FmLoadFailed { session, message } => {
@@ -822,6 +851,17 @@ impl AppState {
             CommandInvocation::Volume(percent) => {
                 self.update(Action::SetVolumeTo(f32::from(percent) / 100.0), fx);
                 Ok(())
+            }
+            CommandInvocation::Mouse => {
+                // Releasing capture hands the mouse back to the terminal:
+                // native drag-selection and copy-on-select work again.
+                self.mouse_captured = !self.mouse_captured;
+                let toggled = if self.mouse_captured {
+                    crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)
+                } else {
+                    crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)
+                };
+                toggled.map_err(|error| error.to_string())
             }
             CommandInvocation::Theme(theme) => self.set_command_theme(fx, &theme),
             CommandInvocation::Quality(quality) => self.set_command_quality(fx, quality),

@@ -20,6 +20,7 @@ use crate::ui::{format_duration, Hits};
 // border reads as a stretched rectangle.
 const COVER_GRID: (u16, u16) = (26, 13);
 pub(crate) const PROGRESS_HEIGHT: u16 = 2;
+pub(crate) const MAIN_BREATHER_MIN_HEIGHT: u16 = 12;
 const STACKED_SPECTRUM_MIN_HEIGHT: u16 = 4;
 const STACKED_SPECTRUM_MAX_HEIGHT: u16 = 8;
 const STACKED_MIN_MAIN_HEIGHT: u16 = 18;
@@ -31,9 +32,11 @@ const MAX_LYRIC_CONTEXT_ROWS: usize = 9;
 pub(crate) const SIDE_PANEL_RESERVED_COLS: u16 = 46;
 const SIDE_PANEL_GAP_ROWS: u16 = 1;
 const SIDE_PANEL_MIN_SPECTRUM_ROWS: u16 = 4;
-/// Lyric rows shown next to the spectrum: three pairs keeps the current
-/// line readable without turning the panel into a lyrics wall.
-const SIDE_PANEL_LYRIC_PAIRS: u16 = 3;
+/// Lyrics take ~40% of the panel rows left after the meta block (bounded
+/// below and above), the spectrum absorbs the rest down to the cover's
+/// bottom edge. Tall terminals get more context lines AND a taller band.
+const SIDE_PANEL_MIN_LYRIC_ROWS: u16 = 3;
+const SIDE_PANEL_MAX_LYRIC_ROWS: u16 = 12;
 
 /// The bottom spectrum band only exists in the stacked layout; the side
 /// layout hosts the spectrum inside the right panel, bottom-aligned with
@@ -42,13 +45,14 @@ pub(crate) fn spectrum_band_height(
     total_height: u16,
     enabled: bool,
     layout: crate::app::PlayLayout,
+    progress_rows: u16,
 ) -> u16 {
     if !enabled || matches!(layout, crate::app::PlayLayout::Side) {
         return 0;
     }
     let candidate =
         (total_height / 5).clamp(STACKED_SPECTRUM_MIN_HEIGHT, STACKED_SPECTRUM_MAX_HEIGHT);
-    if total_height.saturating_sub(PROGRESS_HEIGHT + candidate) < STACKED_MIN_MAIN_HEIGHT {
+    if total_height.saturating_sub(progress_rows + candidate) < STACKED_MIN_MAIN_HEIGHT {
         0
     } else {
         candidate
@@ -56,7 +60,7 @@ pub(crate) fn spectrum_band_height(
 }
 
 /// Rows the side panel can spare for the spectrum once the meta block and
-/// the capped lyric window are budgeted. Zero hides the panel spectrum.
+/// the adaptive lyric window are budgeted. Zero hides the panel spectrum.
 fn side_panel_spectrum_rows(state: &AppState, panel_height: u16) -> u16 {
     if !state.config.spectrum_enabled {
         return 0;
@@ -69,12 +73,11 @@ fn side_panel_spectrum_rows(state: &AppState, panel_height: u16) -> u16 {
         text_rows += 1;
     }
     if !state.lyrics.is_empty() {
-        let translated = state
-            .lyrics
-            .iter()
-            .any(|line| line.translation.as_ref().is_some_and(|t| !t.is_empty()));
-        let pair_rows = if translated { 2 } else { 1 };
-        text_rows += 1 + SIDE_PANEL_LYRIC_PAIRS * pair_rows;
+        let available = panel_height.saturating_sub(text_rows + 1 + SIDE_PANEL_GAP_ROWS);
+        let lyric_rows = (available * 2 / 5)
+            .clamp(SIDE_PANEL_MIN_LYRIC_ROWS, SIDE_PANEL_MAX_LYRIC_ROWS)
+            .min(available);
+        text_rows += 1 + lyric_rows;
     } else if state.status.is_some() {
         text_rows += 2;
     }
@@ -87,17 +90,27 @@ fn side_panel_spectrum_rows(state: &AppState, panel_height: u16) -> u16 {
 }
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
-    if state.now.is_none() {
+    if state.now.is_none() || state.dashboard_hold {
         draw_dashboard(frame, state, area, hits);
         return;
     }
 
-    let spectrum_height =
-        spectrum_band_height(area.height, state.config.spectrum_enabled, state.layout);
-    let [main, spectrum_area, progress_area] = Layout::vertical([
+    // Zen strips the last chrome: no progress bar, keys keep working.
+    let progress_height = if state.zen { 0 } else { PROGRESS_HEIGHT };
+    let spectrum_height = spectrum_band_height(
+        area.height,
+        state.config.spectrum_enabled,
+        state.layout,
+        progress_height,
+    );
+    // One breather row keeps the cover/spectrum off the progress bar
+    // whenever the terminal can spare it.
+    let breather = u16::from(area.height >= MAIN_BREATHER_MIN_HEIGHT && progress_height > 0);
+    let [main, _, spectrum_area, progress_area] = Layout::vertical([
         Constraint::Min(0),
+        Constraint::Length(breather),
         Constraint::Length(spectrum_height),
-        Constraint::Length(PROGRESS_HEIGHT),
+        Constraint::Length(progress_height),
     ])
     .areas(area);
     let progress_hits = progress_area;
@@ -172,7 +185,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
             &state.theme,
         );
     }
-    draw_progress(frame, state, progress_hits, hits);
+    if progress_height > 0 {
+        draw_progress(frame, state, progress_hits, hits);
+    }
 }
 
 // ── idle dashboard ──────────────────────────────────────────────────
@@ -180,16 +195,20 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
 fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let menu = menu_entries(state);
-    let menu_height = menu.len() as u16;
+    // One blank row between menu entries so the block can breathe; tight
+    // terminals fall back to the compact single-spaced list.
+    let airy = area.height >= state.idle_art.height + menu.len() as u16 * 2 + 6;
+    let row_stride: u16 = if airy { 2 } else { 1 };
+    let menu_height = (menu.len() as u16 - 1) * row_stride + 1;
     let art_height = state
         .idle_art
         .height
-        .min(area.height.saturating_sub(menu_height + 4));
+        .min(area.height.saturating_sub(menu_height + 5));
 
-    let [_, art_area, _, menu_area, _, _, _] = Layout::vertical([
+    let [_, art_area, _, menu_area, _, hint_area, _] = Layout::vertical([
         Constraint::Fill(2),
         Constraint::Length(art_height),
-        Constraint::Length(1),
+        Constraint::Length(2),
         Constraint::Length(menu_height),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -200,11 +219,19 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
     let art_rect = centered(art_area, state.idle_art.width, art_height);
     frame.render_widget(&state.idle_art, art_rect);
 
+    if let Some(version) = &state.update_available {
+        let hint = i18n::t_update_available(version, state.brew_install);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, Style::new().fg(theme.dim)))).centered(),
+            hint_area,
+        );
+    }
+
     const MENU_WIDTH: u16 = 30;
     for (index, (label, key, entry)) in menu.iter().enumerate() {
         let row = Rect {
             x: area.x + (area.width.saturating_sub(MENU_WIDTH)) / 2,
-            y: menu_area.y + index as u16,
+            y: menu_area.y + index as u16 * row_stride,
             width: MENU_WIDTH.min(area.width),
             height: 1,
         };
@@ -769,12 +796,36 @@ mod tests {
 
     #[test]
     fn bottom_spectrum_band_is_stacked_only() {
-        assert_eq!(spectrum_band_height(20, true, PlayLayout::Side), 0);
-        assert_eq!(spectrum_band_height(56, true, PlayLayout::Side), 0);
-        assert_eq!(spectrum_band_height(20, true, PlayLayout::Stacked), 0);
-        assert_eq!(spectrum_band_height(36, true, PlayLayout::Stacked), 7);
-        assert_eq!(spectrum_band_height(56, true, PlayLayout::Stacked), 8);
-        assert_eq!(spectrum_band_height(56, false, PlayLayout::Stacked), 0);
+        assert_eq!(
+            spectrum_band_height(20, true, PlayLayout::Side, PROGRESS_HEIGHT),
+            0
+        );
+        assert_eq!(
+            spectrum_band_height(56, true, PlayLayout::Side, PROGRESS_HEIGHT),
+            0
+        );
+        assert_eq!(
+            spectrum_band_height(20, true, PlayLayout::Stacked, PROGRESS_HEIGHT),
+            0
+        );
+        assert_eq!(
+            spectrum_band_height(36, true, PlayLayout::Stacked, PROGRESS_HEIGHT),
+            7
+        );
+        // Zen frees the progress rows, letting tight terminals keep the band.
+        assert_eq!(spectrum_band_height(22, true, PlayLayout::Stacked, 0), 4);
+        assert_eq!(
+            spectrum_band_height(22, true, PlayLayout::Stacked, PROGRESS_HEIGHT),
+            0
+        );
+        assert_eq!(
+            spectrum_band_height(56, true, PlayLayout::Stacked, PROGRESS_HEIGHT),
+            8
+        );
+        assert_eq!(
+            spectrum_band_height(56, false, PlayLayout::Stacked, PROGRESS_HEIGHT),
+            0
+        );
 
         let config = Config {
             spectrum_enabled: true,
@@ -799,7 +850,9 @@ mod tests {
 
         let rows = mirror_rows(terminal.backend().buffer(), 0..80, 40);
         assert_eq!(rows.len(), 1, "one full-width reflect mirror line");
-        let band_top = 40 - PROGRESS_HEIGHT - spectrum_band_height(40, true, PlayLayout::Stacked);
+        let band_top = 40
+            - PROGRESS_HEIGHT
+            - spectrum_band_height(40, true, PlayLayout::Stacked, PROGRESS_HEIGHT);
         assert!(rows[0] >= band_top && rows[0] < 40 - PROGRESS_HEIGHT);
     }
 

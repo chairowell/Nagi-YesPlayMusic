@@ -27,10 +27,11 @@ pub(crate) enum SettingField {
     SpectrumEnabled,
     SpectrumStyle,
     SpectrumGlow,
+    UpdateCheck,
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 15] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::Theme,
         Self::ThemeMode,
         Self::Language,
@@ -46,6 +47,7 @@ impl SettingField {
         Self::SpectrumEnabled,
         Self::SpectrumStyle,
         Self::SpectrumGlow,
+        Self::UpdateCheck,
     ];
 
     pub(crate) const fn label(self) -> Key {
@@ -65,6 +67,7 @@ impl SettingField {
             Self::SpectrumEnabled => Key::SettingSpectrumEnabled,
             Self::SpectrumStyle => Key::SettingSpectrumStyle,
             Self::SpectrumGlow => Key::SettingSpectrumGlow,
+            Self::UpdateCheck => Key::SettingUpdateCheck,
         }
     }
 }
@@ -164,9 +167,10 @@ impl AppState {
         if self.view != View::Settings {
             return;
         }
-        let last = SettingField::ALL.len() as i32 - 1;
+        // Wrap around: up from the first row lands on the last and back.
+        let count = SettingField::ALL.len() as i32;
         self.settings.selected =
-            (self.settings.selected as i32 + delta.signum()).clamp(0, last) as usize;
+            (self.settings.selected as i32 + delta.signum()).rem_euclid(count) as usize;
     }
 
     pub(crate) fn adjust_setting(&mut self, fx: &Effects, delta: i32) {
@@ -239,6 +243,9 @@ impl AppState {
             }
             SettingField::SpectrumGlow => {
                 self.config.spectrum_glow = !self.config.spectrum_glow;
+            }
+            SettingField::UpdateCheck => {
+                self.config.update_check = !self.config.update_check;
             }
             SettingField::QueueBehavior => {
                 self.config.enter_replaces_queue = !self.config.enter_replaces_queue;
@@ -347,6 +354,7 @@ impl AppState {
                 i18n::t_spectrum_style(self.config.spectrum_style).to_owned()
             }
             SettingField::SpectrumGlow => self.on_off(self.config.spectrum_glow),
+            SettingField::UpdateCheck => self.on_off(self.config.update_check),
             SettingField::QueueBehavior => if self.config.enter_replaces_queue {
                 i18n::t(Key::SettingQueueList)
             } else {
@@ -432,8 +440,12 @@ impl AppState {
         let pixel_changed = (before.pixel_scale - self.config.pixel_scale).abs() > f32::EPSILON
             || before.cover_detail != self.config.cover_detail
             || before.cover_palette != self.config.cover_palette;
+        // The spectrum only claims cover rows in the stacked layout's
+        // bottom band; in the side layout it lives in the right panel, so
+        // toggling it must not reload the cover (visible vinyl flash).
         let layout_changed = before.layout != self.config.layout
-            || before.spectrum_enabled != self.config.spectrum_enabled;
+            || (before.spectrum_enabled != self.config.spectrum_enabled
+                && self.layout == PlayLayout::Stacked);
 
         if theme_changed {
             self.theme = restored_theme.unwrap_or_else(|| {
