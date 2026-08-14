@@ -84,6 +84,7 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         let liked = state.liked.contains(&row.id);
         lines.push(columns.row(
             theme,
+            state.selection_style(),
             marker,
             icons.heart,
             index + 1,
@@ -161,6 +162,7 @@ impl QueueColumns {
     fn row(
         self,
         theme: &crate::theme::Theme,
+        selection_style: Style,
         marker: &'static str,
         heart: &'static str,
         index: usize,
@@ -171,7 +173,7 @@ impl QueueColumns {
         marquee_frame: u64,
     ) -> Line<'static> {
         let base = if selected {
-            Style::new().bg(theme.selection_bg())
+            selection_style
         } else {
             Style::new()
         };
@@ -316,7 +318,7 @@ mod tests {
         assert_eq!(hits.rows, vec![(Rect::new(2, 2, 76, 1), 0)]);
         assert_eq!(buffer[(2, 2)].fg, state.theme.accent);
         assert_eq!(buffer[(11, 2)].fg, state.theme.fg);
-        assert_eq!(buffer[(11, 2)].bg, state.theme.selection_bg());
+        assert_eq!(buffer[(11, 2)].bg, state.selection_style().bg.unwrap());
         assert!(buffer[(11, 2)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(60, 2)].fg, state.theme.dim);
         assert_eq!(buffer[(73, 2)].fg, state.theme.faint);

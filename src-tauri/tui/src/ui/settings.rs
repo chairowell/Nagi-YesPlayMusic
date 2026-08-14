@@ -13,8 +13,8 @@ use super::{panel_block, text::display_width, Hits, PANEL_GAP_Y};
 
 /// Border and shared one-cell padding leave the original 60-column settings measure.
 const SETTINGS_PANEL_WIDTH: u16 = 64;
-/// The optional spectrum preview occupies a compact seven-row instrument panel.
-const SPECTRUM_PREVIEW_HEIGHT: u16 = 7;
+/// Border plus eight inner rows make spectrum styles legible before saving.
+const SPECTRUM_PREVIEW_HEIGHT: u16 = 10;
 /// Borders, hint, status, actions, and one breathing row surround the setting rows.
 const SETTINGS_PANEL_CHROME_HEIGHT: u16 = 8;
 /// Hint copy may wrap onto a second terminal row.
@@ -69,12 +69,19 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
     ])
     .areas(inner);
     let hint = match SettingField::ALL.get(state.settings.selected) {
-        Some(SettingField::Icons) if state.config.icons == IconStyle::Nerd => Key::NerdFontHint,
+        Some(SettingField::Icons) if state.config.icons == IconStyle::Nerd => {
+            match state.nerd_font_status() {
+                Some(crate::nerd_font::Status::Detected) => Key::NerdFontDetectedHint,
+                Some(crate::nerd_font::Status::Missing) => Key::NerdFontHint,
+                Some(crate::nerd_font::Status::Unknown) | None => Key::SettingsHint,
+            }
+        }
         Some(SettingField::CoverDetail)
             if state.config.cover_detail == crate::pixel::CoverDetail::Octant =>
         {
             Key::OctantFontHint
         }
+        Some(SettingField::PixelDetail) => Key::PixelDetailHint,
         _ => Key::SettingsHint,
     };
     frame.render_widget(
@@ -105,7 +112,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
         };
         let selected = index == state.settings.selected;
         let row_base = if selected {
-            Style::new().bg(theme.selection_bg())
+            state.selection_style()
         } else {
             Style::new()
         };
@@ -337,10 +344,11 @@ mod tests {
             .find_map(|(area, delta)| (*delta > 0).then_some(*area))
             .unwrap();
         let theme = crate::theme::Theme::db16();
+        let selection_bg = theme.selection_style(None).bg.unwrap();
         let label = &buffer[(row.x + 3, row.y)];
         let value = &buffer[(previous.right(), row.y)];
 
-        assert_eq!(label.bg, theme.selection_bg());
+        assert_eq!(label.bg, selection_bg);
         assert_eq!(label.fg, theme.fg);
         assert!(label.modifier.contains(Modifier::BOLD));
         assert_eq!(value.fg, theme.dim);
@@ -348,7 +356,7 @@ mod tests {
         for arrow in [previous, next] {
             let cell = &buffer[(arrow.x, arrow.y)];
             assert_eq!(cell.fg, theme.faint);
-            assert_eq!(cell.bg, theme.selection_bg());
+            assert_eq!(cell.bg, selection_bg);
             assert!(!cell.modifier.contains(Modifier::BOLD));
         }
         let mut column = row.x + 3;
@@ -358,9 +366,8 @@ mod tests {
             wide_continuations.extend(column + 1..column + character_width);
             column += character_width;
         }
-        assert!((row.x..row.right()).all(|x| {
-            wide_continuations.contains(&x) || buffer[(x, row.y)].bg == theme.selection_bg()
-        }));
+        assert!((row.x..row.right())
+            .all(|x| { wide_continuations.contains(&x) || buffer[(x, row.y)].bg == selection_bg }));
 
         let save = hits.settings_save[0];
         assert_eq!(buffer[(save.x, save.y)].bg, theme.faint);
@@ -416,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_nerd_icons_show_the_terminal_font_hint() {
+    fn selected_nerd_icons_show_the_install_hint_when_the_font_is_missing() {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let config = Config {
@@ -424,6 +431,7 @@ mod tests {
             ..Config::default()
         };
         let mut state = AppState::new(&config);
+        state.apply_nerd_font_probe(crate::nerd_font::Status::Missing);
         state.settings.selected = SettingField::ALL
             .iter()
             .position(|field| *field == SettingField::Icons)
@@ -443,6 +451,70 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("Nerd Font"));
         assert!(rendered.contains("brew install font-symbols-only-nerd-font"));
+    }
+
+    #[test]
+    fn selected_nerd_icons_show_the_detected_hint() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let config = Config {
+            icons: IconStyle::Nerd,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.apply_nerd_font_probe(crate::nerd_font::Status::Detected);
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::Icons)
+            .unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("✓"));
+        assert!(rendered.contains("Nerd Font"));
+        assert!(!rendered.contains("brew install"));
+    }
+
+    #[test]
+    fn an_unknown_nerd_font_status_keeps_the_general_settings_hint() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let config = Config {
+            icons: IconStyle::Nerd,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.apply_nerd_font_probe(crate::nerd_font::Status::Unknown);
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::Icons)
+            .unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("j/k"));
+        assert!(!rendered.contains("✓"));
+        assert!(!rendered.contains("brew install"));
     }
 
     #[test]
@@ -509,7 +581,7 @@ mod tests {
 
     #[test]
     fn spectrum_style_row_embeds_an_animated_preview() {
-        let backend = TestBackend::new(80, 30);
+        let backend = TestBackend::new(80, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut state = AppState::new(&Config::default());
         state.settings.selected = SettingField::ALL
@@ -538,7 +610,18 @@ mod tests {
             .filter(|y| *y > last_row_y)
             .find(|y| (0..buffer.area.width).any(|x| buffer[(x, *y)].symbol() == "╭"))
             .unwrap();
+        let nested_left_x = (0..buffer.area.width)
+            .find(|x| buffer[(*x, nested_top_y)].symbol() == "╭")
+            .unwrap();
+        let nested_right_x = (nested_left_x..buffer.area.width)
+            .find(|x| buffer[(*x, nested_top_y)].symbol() == "╮")
+            .unwrap();
+        let nested_bottom_y = (nested_top_y + 1..buffer.area.height)
+            .find(|y| buffer[(nested_left_x, *y)].symbol() == "╰")
+            .unwrap();
         assert!(nested_top_y > last_row_y + PANEL_GAP_Y);
+        assert_eq!(nested_bottom_y - nested_top_y + 1, SPECTRUM_PREVIEW_HEIGHT);
+        assert_eq!(nested_right_x - nested_left_x + 1, SETTINGS_PANEL_WIDTH - 4);
         assert!((0..buffer.area.width).any(|x| {
             let cell = &buffer[(x, nested_top_y)];
             cell.fg == state.theme.accent && !matches!(cell.symbol(), " " | "─" | "╭" | "╮")

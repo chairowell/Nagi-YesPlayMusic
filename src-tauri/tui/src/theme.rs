@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
 
 type Rgb = (u8, u8, u8);
@@ -260,18 +260,39 @@ impl Theme {
         }
     }
 
-    /// Low-contrast row selection: 88% background plus 12% foreground.
-    pub const fn selection_bg(&self) -> Color {
-        match (self.bg, self.fg) {
-            (Color::Rgb(bg_r, bg_g, bg_b), Color::Rgb(fg_r, fg_g, fg_b)) => Color::Rgb(
-                selection_channel(bg_r, fg_r),
-                selection_channel(bg_g, fg_g),
-                selection_channel(bg_b, fg_b),
-            ),
-            // Reset hides the terminal's real RGB values, so a deterministic faint role
-            // is the closest portable lift for the transparent theme.
-            _ => self.faint,
+    /// Resolve the background only for color arithmetic. Drawing still uses
+    /// `self.bg` so the transparent theme keeps the terminal's native alpha.
+    pub(crate) const fn resolved_background(
+        &self,
+        terminal_background: Option<Color>,
+    ) -> Option<Color> {
+        match self.bg {
+            Color::Rgb(..) => Some(self.bg),
+            Color::Reset => match terminal_background {
+                Some(color @ Color::Rgb(..)) => Some(color),
+                _ => None,
+            },
+            _ => None,
         }
+    }
+
+    /// Selected rows use a subtle RGB lift when possible and terminal-native
+    /// reversal when OSC 11 could not reveal a transparent background.
+    pub(crate) fn selection_style(&self, terminal_background: Option<Color>) -> Style {
+        let Some(Color::Rgb(bg_r, bg_g, bg_b)) = self.resolved_background(terminal_background)
+        else {
+            return Style::new().add_modifier(Modifier::REVERSED);
+        };
+        let (fg_r, fg_g, fg_b) = match self.fg {
+            Color::Rgb(red, green, blue) => (red, green, blue),
+            _ if contrasting_foreground_is_light(bg_r, bg_g, bg_b) => (255, 255, 255),
+            _ => (0, 0, 0),
+        };
+        Style::new().bg(Color::Rgb(
+            selection_channel(bg_r, fg_r),
+            selection_channel(bg_g, fg_g),
+            selection_channel(bg_b, fg_b),
+        ))
     }
 
     pub fn by_name(name: &str) -> Self {
@@ -501,7 +522,6 @@ fn load_theme(path: &Path) -> Option<Theme> {
     if !(2..=64).contains(&file.palette.len()) {
         return None;
     }
-
     let palette = file
         .palette
         .iter()
@@ -593,12 +613,17 @@ const fn selection_channel(background: u8, foreground: u8) -> u8 {
     ((background_weight + foreground_weight + COLOR_PERCENT_SCALE / 2) / COLOR_PERCENT_SCALE) as u8
 }
 
+const fn contrasting_foreground_is_light(red: u8, green: u8, blue: u8) -> bool {
+    let luminance = red as u32 * 299 + green as u32 * 587 + blue as u32 * 114;
+    luminance < 128_000
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::Path;
 
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
     use tempfile::tempdir;
 
     use super::{parse_hex_color, Theme, BUILTIN_NAMES, DB16};
@@ -752,7 +777,10 @@ mod tests {
         assert_eq!(transparent.bg, Color::Reset);
         assert_eq!(transparent.fg, Color::Reset);
         assert_eq!(transparent.selection_fg(), Color::Black);
-        assert_eq!(transparent.selection_bg(), transparent.faint);
+        assert!(transparent
+            .selection_style(None)
+            .add_modifier
+            .contains(Modifier::REVERSED));
         assert_ne!(transparent.accent, Color::Reset);
         assert_eq!(transparent.palette, DB16);
     }
@@ -761,8 +789,22 @@ mod tests {
     fn selection_background_is_a_twelve_percent_foreground_lift() {
         let theme = Theme::db16();
 
-        assert_eq!(theme.selection_bg(), Color::Rgb(44, 39, 50));
-        assert_ne!(theme.selection_bg(), theme.sel);
+        assert_eq!(theme.selection_style(None).bg, Some(Color::Rgb(44, 39, 50)));
+        assert_ne!(theme.selection_style(None).bg, Some(theme.sel));
+    }
+
+    #[test]
+    fn transparent_selection_uses_the_detected_terminal_background() {
+        let theme = Theme::by_name("transparent");
+
+        assert_eq!(
+            theme.selection_style(Some(Color::Rgb(16, 32, 48))).bg,
+            Some(Color::Rgb(45, 59, 73))
+        );
+        assert!(!theme
+            .selection_style(Some(Color::Rgb(16, 32, 48)))
+            .add_modifier
+            .contains(Modifier::REVERSED));
     }
 
     #[test]

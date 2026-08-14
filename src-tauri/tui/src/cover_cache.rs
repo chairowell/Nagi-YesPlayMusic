@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ratatui::style::Color;
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 
-use crate::pixel::{CoverDetail, PixelCell, PixelCover};
+use crate::pixel::{CoverDetail, CoverPalette, PixelCell, PixelCover};
 
 const ORIGINAL_LIMIT_BYTES: u64 = 128 * 1024 * 1024;
 const ORIGINAL_MAGIC: &[u8; 8] = b"YPMCOVO1";
@@ -24,7 +24,7 @@ const MAX_PIXEL_FILE_BYTES: u64 =
 const TEMP_PREFIX: &str = ".ypm-cover-";
 const TEMP_SUFFIX: &str = ".tmp";
 
-const PIXEL_ALGORITHM_REVISION: u32 = 2;
+const PIXEL_ALGORITHM_REVISION: u32 = 3;
 
 #[derive(Debug)]
 pub struct CoverCache {
@@ -33,14 +33,15 @@ pub struct CoverCache {
 }
 
 #[derive(Clone, Copy)]
-struct PixelKeyInputs<'a> {
-    song_id: i64,
-    original_key: &'a str,
-    cells: (u16, u16),
-    detail_scale: f32,
-    detail: CoverDetail,
-    background: Color,
-    palette: &'a [(u8, u8, u8)],
+pub(crate) struct PixelKeyInputs<'a> {
+    pub(crate) song_id: i64,
+    pub(crate) original_key: &'a str,
+    pub(crate) cells: (u16, u16),
+    pub(crate) detail_scale: f32,
+    pub(crate) detail: CoverDetail,
+    pub(crate) palette_mode: CoverPalette,
+    pub(crate) background: Color,
+    pub(crate) palette: &'a [(u8, u8, u8)],
 }
 
 impl CoverCache {
@@ -72,27 +73,8 @@ impl CoverCache {
         format!("original-v1|edge={edge}|url={}:{}", pic_url.len(), pic_url)
     }
 
-    pub fn pixel_key(
-        song_id: i64,
-        original_key: &str,
-        cells: (u16, u16),
-        detail_scale: f32,
-        detail: CoverDetail,
-        background: Color,
-        palette: &[(u8, u8, u8)],
-    ) -> String {
-        pixel_key_with_revision(
-            PIXEL_ALGORITHM_REVISION,
-            PixelKeyInputs {
-                song_id,
-                original_key,
-                cells,
-                detail_scale,
-                detail,
-                background,
-                palette,
-            },
-        )
+    pub fn pixel_key(inputs: PixelKeyInputs<'_>) -> String {
+        pixel_key_with_revision(PIXEL_ALGORITHM_REVISION, inputs)
     }
 
     pub fn get_original(&self, key: &str) -> io::Result<Option<Vec<u8>>> {
@@ -346,6 +328,7 @@ fn pixel_key_with_revision(revision: u32, inputs: PixelKeyInputs<'_>) -> String 
         cells,
         detail_scale,
         detail,
+        palette_mode,
         background,
         palette,
     } = inputs;
@@ -359,9 +342,15 @@ fn pixel_key_with_revision(revision: u32, inputs: PixelKeyInputs<'_>) -> String 
         detail.as_str()
     );
     append_color_key(&mut key, background);
-    write!(&mut key, "|palette={}", palette.len()).expect("writing to String cannot fail");
-    for &(red, green, blue) in palette {
-        write!(&mut key, ":{red:02x}{green:02x}{blue:02x}").expect("writing to String cannot fail");
+    match palette_mode {
+        CoverPalette::Original => key.push_str("|palette=original"),
+        CoverPalette::Theme => {
+            write!(&mut key, "|palette={}", palette.len()).expect("writing to String cannot fail");
+            for &(red, green, blue) in palette {
+                write!(&mut key, ":{red:02x}{green:02x}{blue:02x}")
+                    .expect("writing to String cannot fail");
+            }
+        }
     }
     key
 }
@@ -626,6 +615,7 @@ mod tests {
             cells: (26, 13),
             detail_scale: 1.0,
             detail: CoverDetail::Half,
+            palette_mode: CoverPalette::Theme,
             background: Color::Reset,
             palette: &palette,
         };
@@ -691,6 +681,13 @@ mod tests {
             pixel_key_with_revision(
                 7,
                 PixelKeyInputs {
+                    palette_mode: CoverPalette::Original,
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
                     background: Color::Rgb(0, 0, 0),
                     ..inputs
                 },
@@ -711,6 +708,56 @@ mod tests {
             ),
         ];
         assert!(changed.iter().all(|changed| changed != &key));
+    }
+
+    #[test]
+    fn original_palette_key_is_theme_palette_independent() {
+        let first_palette = [(1, 2, 3), (4, 5, 6)];
+        let second_palette = [(9, 8, 7)];
+        let inputs = PixelKeyInputs {
+            song_id: 42,
+            original_key: "source",
+            cells: (26, 13),
+            detail_scale: 1.0,
+            detail: CoverDetail::Half,
+            palette_mode: CoverPalette::Original,
+            background: Color::Reset,
+            palette: &first_palette,
+        };
+
+        let key = pixel_key_with_revision(PIXEL_ALGORITHM_REVISION, inputs);
+        let changed_theme = pixel_key_with_revision(
+            PIXEL_ALGORITHM_REVISION,
+            PixelKeyInputs {
+                palette: &second_palette,
+                ..inputs
+            },
+        );
+
+        assert_eq!(key, changed_theme);
+        assert!(key.ends_with("|palette=original"));
+    }
+
+    #[test]
+    fn theme_palette_key_tracks_the_current_algorithm_and_palette() {
+        let palette = [(1, 2, 3), (4, 5, 6)];
+        let key = pixel_key_with_revision(
+            PIXEL_ALGORITHM_REVISION,
+            PixelKeyInputs {
+                song_id: 42,
+                original_key: "source",
+                cells: (26, 13),
+                detail_scale: 1.0,
+                detail: CoverDetail::Half,
+                palette_mode: CoverPalette::Theme,
+                background: Color::Reset,
+                palette: &palette,
+            },
+        );
+
+        assert!(key.contains("|algorithm=3|"));
+        assert!(key.ends_with("|palette=2:010203:040506"));
+        assert!(!key.contains("palette=theme"));
     }
 
     #[test]

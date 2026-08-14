@@ -22,7 +22,7 @@ pub(crate) struct Rgb {
 }
 
 impl Rgb {
-    fn appearance(self) -> Appearance {
+    pub(crate) fn appearance(self) -> Appearance {
         fn linear(channel: u8) -> f64 {
             let value = f64::from(channel) / 255.0;
             if value <= 0.04045 {
@@ -40,10 +40,14 @@ impl Rgb {
             Appearance::Dark
         }
     }
+
+    pub(crate) const fn color(self) -> ratatui::style::Color {
+        ratatui::style::Color::Rgb(self.red, self.green, self.blue)
+    }
 }
 
-pub(crate) fn probe() -> Option<Appearance> {
-    platform::read_response().map(Rgb::appearance)
+pub(crate) fn probe() -> Option<Rgb> {
+    platform::read_response()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -268,5 +272,11 @@ mod tests {
             .appearance(),
             Appearance::Light
         );
+    }
+
+    #[test]
+    fn preserves_the_detected_rgb_for_rendering() {
+        let rgb = parse_response(b"\x1b]11;rgb:1a1a/2b2b/3c3c\x07").unwrap();
+        assert_eq!(rgb.color(), ratatui::style::Color::Rgb(0x1a, 0x2b, 0x3c));
     }
 }

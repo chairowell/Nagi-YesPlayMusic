@@ -43,6 +43,7 @@ pub enum Key {
     SettingLanguage,
     SettingQuality,
     SettingCoverMode,
+    SettingCoverPalette,
     SettingCoverDetail,
     SettingLayout,
     SettingProgressStyle,
@@ -58,7 +59,9 @@ pub enum Key {
     On,
     Off,
     SettingsHint,
+    PixelDetailHint,
     NerdFontHint,
+    NerdFontDetectedHint,
     OctantFontRequired,
     OctantFontHint,
     SettingsSaved,
@@ -350,6 +353,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingLanguage => "语言（重启后）",
             Key::SettingQuality => "音质",
             Key::SettingCoverMode => "封面模式（重启后）",
+            Key::SettingCoverPalette => "封面配色",
             Key::SettingCoverDetail => "封面分块",
             Key::SettingLayout => "播放布局",
             Key::SettingProgressStyle => "进度条",
@@ -365,9 +369,13 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::On => "开",
             Key::Off => "关",
             Key::SettingsHint => "j/k 选择 · h/l 即时预览 · Enter 保存 · Esc 取消",
+            Key::PixelDetailHint => {
+                "3.0× / 4.0× 更高清晰度请配合封面分块 quad / sextant / octant"
+            }
             Key::NerdFontHint => {
                 "终端字体需支持 Nerd Font\nmacOS：brew install font-symbols-only-nerd-font"
             }
+            Key::NerdFontDetectedHint => "✓ 已检测到 Nerd Font（终端字体需选用它）",
             Key::OctantFontRequired => "需字体支持",
             Key::OctantFontHint => {
                 "octant 需 Unicode 16 字体支持；不支持时会显示方框\n显示方框时请切回 sextant"
@@ -480,6 +488,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingLanguage => "Language (restart)",
             Key::SettingQuality => "Audio quality",
             Key::SettingCoverMode => "Cover mode (restart)",
+            Key::SettingCoverPalette => "Cover palette",
             Key::SettingCoverDetail => "Cover blocks",
             Key::SettingLayout => "Player layout",
             Key::SettingProgressStyle => "Progress style",
@@ -495,8 +504,14 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::On => "On",
             Key::Off => "Off",
             Key::SettingsHint => "j/k select · h/l preview · Enter save · Esc cancel",
+            Key::PixelDetailHint => {
+                "Pair 3.0× / 4.0× detail with quad / sextant / octant cover blocks"
+            }
             Key::NerdFontHint => {
                 "Your terminal font must support Nerd Font\nmacOS: brew install font-symbols-only-nerd-font"
+            }
+            Key::NerdFontDetectedHint => {
+                "✓ Nerd Font detected (select it as your terminal font)"
             }
             Key::OctantFontRequired => "font support required",
             Key::OctantFontHint => {
@@ -610,6 +625,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingLanguage => "言語（再起動後）",
             Key::SettingQuality => "音質",
             Key::SettingCoverMode => "カバーモード（再起動後）",
+            Key::SettingCoverPalette => "カバー配色",
             Key::SettingCoverDetail => "カバー分割",
             Key::SettingLayout => "再生レイアウト",
             Key::SettingProgressStyle => "進行表示",
@@ -625,8 +641,14 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::On => "オン",
             Key::Off => "オフ",
             Key::SettingsHint => "j/k 選択 · h/l プレビュー · Enter 保存 · Esc キャンセル",
+            Key::PixelDetailHint => {
+                "3.0× / 4.0× は quad / sextant / octant のカバー分割と併用してください"
+            }
             Key::NerdFontHint => {
                 "端末のフォントはNerd Font対応が必要です\nmacOS: brew install font-symbols-only-nerd-font"
+            }
+            Key::NerdFontDetectedHint => {
+                "✓ Nerd Fontを検出しました（端末フォントに選択してください）"
             }
             Key::OctantFontRequired => "フォント対応必須",
             Key::OctantFontHint => {

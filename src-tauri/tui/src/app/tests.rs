@@ -302,15 +302,16 @@ async fn a_hot_selected_cover_replaces_the_placeholder_synchronously() {
         pic_url,
         PREVIEW_CELLS,
     );
-    let pixel_key = CoverCache::pixel_key(
-        request.song_id,
-        &request.source_key,
-        request.cells,
-        state.pixel_detail_scale,
-        state.config.cover_detail,
-        state.theme.bg,
-        state.theme.palette,
-    );
+    let pixel_key = CoverCache::pixel_key(PixelKeyInputs {
+        song_id: request.song_id,
+        original_key: &request.source_key,
+        cells: request.cells,
+        detail_scale: state.pixel_detail_scale,
+        detail: state.config.cover_detail,
+        palette_mode: state.config.cover_palette,
+        background: state.theme.bg,
+        palette: state.theme.palette,
+    });
     let hot = solid_preview(ratatui::style::Color::Red);
     assert_ne!(&hot, state.preview_placeholder());
     state.hot_pixel_covers.insert(pixel_key, hot.clone());
@@ -1249,6 +1250,58 @@ async fn cover_detail_setting_rebuilds_pixel_art_immediately() {
 
     state.update(Action::AdjustSetting(1), &fx);
     assert_eq!(state.config.cover_detail, pixel::CoverDetail::Half);
+}
+
+#[tokio::test]
+async fn cover_palette_and_high_pixel_scale_preview_immediately() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.update(Action::SwitchView(View::Settings), &fx);
+
+    state.settings.selected = super::settings::SettingField::ALL
+        .iter()
+        .position(|field| *field == super::settings::SettingField::CoverPalette)
+        .unwrap();
+    let palette_revision = state.style_revision;
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.cover_palette, pixel::CoverPalette::Theme);
+    assert_eq!(state.style_revision, palette_revision + 1);
+
+    state.settings.selected = super::settings::SettingField::ALL
+        .iter()
+        .position(|field| *field == super::settings::SettingField::PixelDetail)
+        .unwrap();
+    for _ in 0..4 {
+        state.update(Action::AdjustSetting(1), &fx);
+    }
+    assert_eq!(state.config.pixel_scale, 4.0);
+    assert_eq!(state.pixel_detail_scale, 4.0);
+
+    state.update(Action::CancelSettings, &fx);
+    assert_eq!(state.config.cover_palette, pixel::CoverPalette::Original);
+    assert_eq!(state.config.pixel_scale, 1.0);
+}
+
+#[tokio::test]
+async fn spectrum_setting_reflows_cover_geometry_immediately() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.terminal_size = (80, 24);
+    let before = state.desired_cover_cells();
+
+    state.update(Action::SwitchView(View::Settings), &fx);
+    state.settings.selected = super::settings::SettingField::ALL
+        .iter()
+        .position(|field| *field == super::settings::SettingField::SpectrumEnabled)
+        .unwrap();
+    let revision = state.style_revision;
+    state.update(Action::AdjustSetting(1), &fx);
+
+    assert!(state.config.spectrum_enabled);
+    assert_eq!(state.style_revision, revision + 1);
+    assert!(state.desired_cover_cells().1 < before.1);
 }
 
 #[tokio::test]
@@ -2281,7 +2334,7 @@ async fn command_theme_and_quality_survive_canceling_an_open_settings_preview() 
     let fx = effects(&directory);
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.open_settings();
+    state.open_settings(&fx);
 
     state.update(Action::OpenCommandPalette, &fx);
     state.update(Action::Paste("主题 pico8".into()), &fx);

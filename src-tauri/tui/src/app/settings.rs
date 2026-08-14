@@ -1,9 +1,10 @@
 use yesplaymusic_core::cache::AudioQuality;
 
-use crate::action::View;
+use crate::action::{Action, View};
 use crate::config::{Config, CoverMode, IconStyle};
 use crate::i18n::{self, Key};
-use crate::pixel::CoverDetail;
+use crate::nerd_font::{self, Status as NerdFontStatus};
+use crate::pixel::{CoverDetail, CoverPalette};
 use crate::spectrum::SpectrumKind;
 use crate::theme::{Theme, BUILTIN_NAMES};
 
@@ -15,6 +16,7 @@ pub(crate) enum SettingField {
     Language,
     Quality,
     CoverMode,
+    CoverPalette,
     CoverDetail,
     Layout,
     ProgressStyle,
@@ -27,11 +29,12 @@ pub(crate) enum SettingField {
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 13] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::Theme,
         Self::Language,
         Self::Quality,
         Self::CoverMode,
+        Self::CoverPalette,
         Self::CoverDetail,
         Self::Layout,
         Self::ProgressStyle,
@@ -49,6 +52,7 @@ impl SettingField {
             Self::Language => Key::SettingLanguage,
             Self::Quality => Key::SettingQuality,
             Self::CoverMode => Key::SettingCoverMode,
+            Self::CoverPalette => Key::SettingCoverPalette,
             Self::CoverDetail => Key::SettingCoverDetail,
             Self::Layout => Key::SettingLayout,
             Self::ProgressStyle => Key::SettingProgressStyle,
@@ -67,6 +71,15 @@ pub(crate) struct SettingsState {
     original: Option<Config>,
     original_theme: Option<Theme>,
     return_view: View,
+    nerd_font_probe: NerdFontProbe,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum NerdFontProbe {
+    #[default]
+    Unchecked,
+    Pending,
+    Ready(NerdFontStatus),
 }
 
 impl Default for SettingsState {
@@ -76,12 +89,34 @@ impl Default for SettingsState {
             original: None,
             original_theme: None,
             return_view: View::NowPlaying,
+            nerd_font_probe: NerdFontProbe::Unchecked,
+        }
+    }
+}
+
+impl SettingsState {
+    fn begin_nerd_font_probe(&mut self) -> bool {
+        if self.nerd_font_probe != NerdFontProbe::Unchecked {
+            return false;
+        }
+        self.nerd_font_probe = NerdFontProbe::Pending;
+        true
+    }
+
+    fn finish_nerd_font_probe(&mut self, status: NerdFontStatus) {
+        self.nerd_font_probe = NerdFontProbe::Ready(status);
+    }
+
+    fn nerd_font_status(&self) -> Option<NerdFontStatus> {
+        match self.nerd_font_probe {
+            NerdFontProbe::Ready(status) => Some(status),
+            NerdFontProbe::Unchecked | NerdFontProbe::Pending => None,
         }
     }
 }
 
 impl AppState {
-    pub(crate) fn open_settings(&mut self) {
+    pub(crate) fn open_settings(&mut self, fx: &Effects) {
         if self.view == View::Settings {
             return;
         }
@@ -92,6 +127,28 @@ impl AppState {
         self.view = View::Settings;
         self.zen = false;
         self.status = None;
+        self.start_nerd_font_probe(fx);
+    }
+
+    fn start_nerd_font_probe(&mut self, fx: &Effects) {
+        if !self.settings.begin_nerd_font_probe() {
+            return;
+        }
+        let actions = fx.actions.clone();
+        tokio::spawn(async move {
+            let status = tokio::task::spawn_blocking(nerd_font::detect)
+                .await
+                .unwrap_or(NerdFontStatus::Unknown);
+            let _ = actions.send(Action::NerdFontProbeFinished(status));
+        });
+    }
+
+    pub(crate) fn apply_nerd_font_probe(&mut self, status: NerdFontStatus) {
+        self.settings.finish_nerd_font_probe(status);
+    }
+
+    pub(crate) fn nerd_font_status(&self) -> Option<NerdFontStatus> {
+        self.settings.nerd_font_status()
     }
 
     pub(crate) fn select_setting(&mut self, index: usize) {
@@ -139,6 +196,10 @@ impl AppState {
                 const VALUES: &[CoverMode] = &[CoverMode::Pixel, CoverMode::Original];
                 self.config.cover_mode = cycle(VALUES, &self.config.cover_mode, delta);
             }
+            SettingField::CoverPalette => {
+                const VALUES: &[CoverPalette] = &[CoverPalette::Original, CoverPalette::Theme];
+                self.config.cover_palette = cycle(VALUES, &self.config.cover_palette, delta);
+            }
             SettingField::CoverDetail => {
                 const VALUES: &[CoverDetail] = &[
                     CoverDetail::Half,
@@ -158,7 +219,7 @@ impl AppState {
                     cycle(VALUES, &self.config.progress_style.as_str(), delta).to_owned();
             }
             SettingField::PixelDetail => {
-                const VALUES: &[f32] = &[0.5, 1.0, 1.5, 2.0];
+                const VALUES: &[f32] = &[0.5, 1.0, 1.5, 2.0, 3.0, 4.0];
                 self.config.pixel_scale = cycle_f32(VALUES, self.config.pixel_scale, delta);
             }
             SettingField::SpectrumEnabled => {
@@ -235,6 +296,11 @@ impl AppState {
                 CoverMode::Original if self.original_cover.is_some() => "Original".to_owned(),
                 CoverMode::Original => "Original (restart)".to_owned(),
             },
+            SettingField::CoverPalette => match self.config.cover_palette {
+                CoverPalette::Original => "Original",
+                CoverPalette::Theme => "Theme",
+            }
+            .to_owned(),
             SettingField::CoverDetail if self.config.cover_detail == CoverDetail::Octant => {
                 format!("octant · {}", i18n::t(Key::OctantFontRequired))
             }
@@ -274,7 +340,9 @@ impl AppState {
     }
 
     pub(crate) fn toggle_spectrum(&mut self, fx: &Effects) -> Result<(), String> {
+        let before = self.config.clone();
         self.config.spectrum_enabled = !self.config.spectrum_enabled;
+        self.apply_config_preview(fx, &before, None);
         let persistent = if let Some(original) = &mut self.settings.original {
             original.spectrum_enabled = self.config.spectrum_enabled;
             original.clone()
@@ -335,15 +403,17 @@ impl AppState {
     ) {
         let theme_changed = before.theme != self.config.theme;
         let pixel_changed = (before.pixel_scale - self.config.pixel_scale).abs() > f32::EPSILON
-            || before.cover_detail != self.config.cover_detail;
-        let layout_changed = before.layout != self.config.layout;
+            || before.cover_detail != self.config.cover_detail
+            || before.cover_palette != self.config.cover_palette;
+        let layout_changed = before.layout != self.config.layout
+            || before.spectrum_enabled != self.config.spectrum_enabled;
 
         if theme_changed {
             self.theme = restored_theme.unwrap_or_else(|| Theme::by_name(&self.config.theme));
         }
         self.layout = PlayLayout::from_config(&self.config.layout);
         self.thick_progress = self.config.progress_style == "bar";
-        self.pixel_detail_scale = self.config.pixel_scale.clamp(0.5, 2.0);
+        self.pixel_detail_scale = self.config.pixel_scale.clamp(0.5, 4.0);
         self.enter_replaces_queue = self.config.enter_replaces_queue;
         if before.quality != self.config.quality {
             fx.ncm.set_quality(self.config.quality);
@@ -422,5 +492,22 @@ fn cycle_f32(values: &[f32], current: f32, delta: i32) -> f32 {
         (Some(0), true) | (None, true) => values[values.len() - 1],
         (Some(index), true) => values[index - 1],
         (None, false) => values[0],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nerd_font_probe_starts_once_and_keeps_the_completed_result() {
+        let mut settings = SettingsState::default();
+
+        assert!(settings.begin_nerd_font_probe());
+        assert!(!settings.begin_nerd_font_probe());
+
+        settings.finish_nerd_font_probe(NerdFontStatus::Detected);
+        assert_eq!(settings.nerd_font_status(), Some(NerdFontStatus::Detected));
+        assert!(!settings.begin_nerd_font_probe());
     }
 }
