@@ -141,6 +141,7 @@ pub(crate) const fn centered_content(area: Rect) -> Rect {
 #[derive(Default)]
 pub struct Hits {
     pub tabs: Vec<(Rect, View)>,
+    pub search_channels: Vec<(Rect, crate::api::SearchChannel)>,
     pub rows: Vec<(Rect, usize)>,
     pub menu: Vec<(Rect, crate::action::MenuEntry)>,
     pub sidebar: Vec<(Rect, usize)>,
@@ -158,6 +159,7 @@ pub struct Hits {
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
     hits.tabs.clear();
+    hits.search_channels.clear();
     hits.rows.clear();
     hits.menu.clear();
     hits.sidebar.clear();
@@ -223,7 +225,7 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
         ("l/Enter", Key::Play),
         ("a", Key::AddToQueue),
         ("h/Esc", Key::Back),
-        ("Tab", Key::LibraryFocus),
+        ("Tab · ⇧Tab/←/→ (Search)", Key::LibraryFocus),
         ("Space", Key::Pause),
         ("n / p", Key::ChangeTrack),
         ("←/→ 5s · Shift+←/→ 30s", Key::Seek),
@@ -509,10 +511,34 @@ fn footer_hints(state: &AppState) -> &'static [(&'static str, Key)] {
             ("q", Key::Quit),
             ("?", Key::LabelHelp),
         ],
-        View::Search if state.search.input => &[
+        View::Search if state.search.is_results() && state.search.input => &[
             ("Enter", Key::Search),
-            ("Tab/↓", Key::Select),
+            ("Tab/⇧Tab", Key::SearchChannelSwitch),
+            ("↓", Key::Select),
             ("Esc", Key::Back),
+        ],
+        View::Search if !state.search.is_results() => &[
+            ("Enter", Key::Play),
+            ("a", Key::AddToQueue),
+            ("/", Key::Filter),
+            ("h/Esc", Key::Back),
+            ("q", Key::Quit),
+            ("?", Key::LabelHelp),
+        ],
+        View::Search if state.search.channel == crate::api::SearchChannel::Songs => &[
+            ("←/→", Key::SearchChannelSwitch),
+            ("Enter", Key::Play),
+            ("a", Key::AddToQueue),
+            ("/", Key::Filter),
+            ("q", Key::Quit),
+            ("?", Key::LabelHelp),
+        ],
+        View::Search => &[
+            ("←/→", Key::SearchChannelSwitch),
+            ("Enter", Key::Open),
+            ("h/Esc", Key::Back),
+            ("q", Key::Quit),
+            ("?", Key::LabelHelp),
         ],
         View::Settings => &[
             ("j/k", Key::Select),
@@ -559,7 +585,7 @@ mod tests {
         HELP_MODAL_WIDTH, MAX_CONTENT_WIDTH, PANEL_GAP_Y, QUIT_MODAL_HEIGHT, QUIT_MODAL_WIDTH,
     };
     use crate::action::View;
-    use crate::api::SongRow;
+    use crate::api::{ArtistHit, SearchChannel, SongRow};
     use crate::app::{AppState, NowPlaying};
     use crate::config::Config;
     use crate::i18n::{self, Key};
@@ -593,7 +619,8 @@ mod tests {
         state.library_synced = true;
         state.search.input = false;
         state.search.query = "matrix".into();
-        state.search.results = vec![row.clone()];
+        state.search.songs.items = vec![row.clone()];
+        state.search.songs.total = 1;
         state.queue = vec![row];
         state.queue_pos = Some(0);
         state.current_track_id = Some(1);
@@ -610,6 +637,7 @@ mod tests {
     fn all_hit_rects(hits: &Hits) -> Vec<Rect> {
         let mut areas = Vec::new();
         areas.extend(hits.tabs.iter().map(|(area, _)| *area));
+        areas.extend(hits.search_channels.iter().map(|(area, _)| *area));
         areas.extend(hits.rows.iter().map(|(area, _)| *area));
         areas.extend(hits.menu.iter().map(|(area, _)| *area));
         areas.extend(hits.sidebar.iter().map(|(area, _)| *area));
@@ -1035,7 +1063,7 @@ mod tests {
             "PgUp/PgDn",
             "Home/End · gg/G",
             "a",
-            "Tab",
+            "Tab · ⇧Tab/←/→ (Search)",
             "←/→ 5s · Shift+←/→ 30s",
             "m",
             "s",
@@ -1138,6 +1166,37 @@ mod tests {
         assert!(footer_hints(&state).len() <= 6);
         state.view = View::Settings;
         assert!(footer_hints(&state).len() <= 6);
+    }
+
+    #[test]
+    fn search_footer_distinguishes_input_results_and_detail_navigation() {
+        let mut state = AppState::new(&Config::default());
+        state.view = View::Search;
+
+        let input = footer_hints(&state);
+        assert_eq!(input[1], ("Tab/⇧Tab", Key::SearchChannelSwitch));
+        assert_eq!(input[2], ("↓", Key::Select));
+        assert!(!input.iter().any(|(key, _)| matches!(*key, "q" | "?")));
+
+        state.search.input = false;
+        state.search.channel = SearchChannel::Artists;
+        let results = footer_hints(&state);
+        assert_eq!(results[0], ("←/→", Key::SearchChannelSwitch));
+        assert_eq!(results[1], ("Enter", Key::Open));
+        assert!(!results.iter().any(|(key, _)| *key == "/"));
+
+        state.search.artists.items.push(ArtistHit {
+            id: 1,
+            name: "Artist".into(),
+            pic_url: None,
+            album_count: 1,
+            song_count: 1,
+        });
+        let _ = state.search.open_detail(0);
+        let detail = footer_hints(&state);
+        assert_eq!(detail[0], ("Enter", Key::Play));
+        assert!(detail.iter().any(|(key, _)| *key == "/"));
+        assert!(detail.iter().any(|(key, _)| *key == "h/Esc"));
     }
 
     #[test]

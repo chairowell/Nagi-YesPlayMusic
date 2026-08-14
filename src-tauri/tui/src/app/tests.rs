@@ -1417,7 +1417,11 @@ async fn editing_search_rejects_results_and_failures_for_the_previous_query() {
             Action::SearchResults {
                 seq: request.seq,
                 query: request.query,
-                rows: vec![row(1)],
+                channel: request.channel,
+                payload: crate::api::SearchPayload::Songs(crate::api::SearchPage {
+                    items: vec![row(1)],
+                    total: 1,
+                }),
             },
             &fx,
         );
@@ -1425,14 +1429,15 @@ async fn editing_search_rejects_results_and_failures_for_the_previous_query() {
             Action::SearchFailed {
                 seq: stale_seq,
                 query: stale_query,
+                channel: request.channel,
                 message: "old failure".into(),
             },
             &fx,
         );
 
-        assert!(state.search.results.is_empty());
-        assert!(state.search.error.is_none());
-        assert!(!state.search.searching);
+        assert!(state.search.songs.items.is_empty());
+        assert!(state.search.current_error().is_none());
+        assert!(!state.search.current_searching());
         assert!(state.search.input);
     }
 }
@@ -1445,9 +1450,15 @@ async fn search_row_click_selects_first_then_activates() {
     state.view = View::Search;
     state.search.query = "query".into();
     let request = state.search.submit().unwrap();
-    assert!(state
-        .search
-        .accept(request.seq, &request.query, vec![row(1), row(2)]));
+    assert!(state.search.accept(
+        request.seq,
+        &request.query,
+        request.channel,
+        crate::api::SearchPayload::Songs(crate::api::SearchPage {
+            items: vec![row(1), row(2)],
+            total: 2,
+        }),
+    ));
     assert!(state.search.input);
     state.selected = 0;
 
@@ -1486,7 +1497,7 @@ async fn selecting_a_different_search_row_focuses_the_result_list() {
     let mut state = AppState::new(&Config::default());
     state.view = View::Search;
     state.search.input = true;
-    state.search.results = vec![row(1), row(2)];
+    state.search.songs.items = vec![row(1), row(2)];
 
     state.update(Action::SelectIndex(1), &fx);
 
@@ -1501,10 +1512,339 @@ async fn jump_bottom_reaches_the_last_search_result() {
     let mut state = AppState::new(&Config::default());
     state.view = View::Search;
     state.search.input = false;
-    state.search.results = vec![row(1), row(2), row(3)];
+    state.search.songs.items = vec![row(1), row(2), row(3)];
 
     state.update(Action::JumpBottom, &fx);
 
+    assert_eq!(state.selected, 2);
+}
+
+#[tokio::test]
+async fn search_entity_activation_pushes_and_back_pops_the_detail_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Artists;
+    state.search.artists.items = vec![
+        crate::api::ArtistHit {
+            id: 1,
+            name: "First".into(),
+            pic_url: None,
+            album_count: 1,
+            song_count: 2,
+        },
+        crate::api::ArtistHit {
+            id: 2,
+            name: "Second".into(),
+            pic_url: None,
+            album_count: 3,
+            song_count: 4,
+        },
+    ];
+    state.selected = 1;
+
+    state.update(Action::Activate, &fx);
+
+    assert_eq!(state.search.detail_title(), Some("Second"));
+    assert_eq!(state.selected, 0);
+    assert!(!state.search.input);
+
+    state.update(Action::Back, &fx);
+
+    assert!(state.search.is_results());
+    assert_eq!(state.search.channel, crate::api::SearchChannel::Artists);
+    assert_eq!(state.selected, 1);
+    assert!(!state.search.input);
+}
+
+#[tokio::test]
+async fn detail_tracks_support_enqueue_and_context_playback() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Albums;
+    state.search.albums.items.push(crate::api::AlbumHit {
+        id: 7,
+        name: "Album".into(),
+        artist: "Artist".into(),
+        pic_url: None,
+        song_count: 2,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![row(10), row(11)],
+        },
+        &fx,
+    );
+    state.selected = 1;
+
+    state.update(Action::AddSelectedToQueue, &fx);
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [11]
+    );
+
+    state.update(Action::Activate, &fx);
+    assert_eq!(state.view, View::NowPlaying);
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [10, 11]
+    );
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 11")
+    );
+}
+
+#[tokio::test]
+async fn detail_tracks_support_local_filtering() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Albums;
+    state.search.albums.items.push(crate::api::AlbumHit {
+        id: 7,
+        name: "Album".into(),
+        artist: "Artist".into(),
+        pic_url: None,
+        song_count: 2,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![named_row(10, "Alpha", "One"), named_row(11, "Beta", "Two")],
+        },
+        &fx,
+    );
+
+    state.update(raw_key(KeyCode::Char('/')), &fx);
+    state.update(raw_key(KeyCode::Char('b')), &fx);
+    state.update(raw_key(KeyCode::Char('t')), &fx);
+
+    assert!(state.filter.input);
+    assert_eq!(state.visible_len(), 1);
+    assert_eq!(state.visible_row(0).map(|(_, row)| row.id), Some(11));
+
+    state.update(raw_key(KeyCode::Enter), &fx);
+    state.update(Action::AddSelectedToQueue, &fx);
+
+    assert!(!state.filter.input);
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [11]
+    );
+}
+
+#[tokio::test]
+async fn detail_track_is_used_for_the_selection_cover_preview() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.terminal_size = (
+        ui::search::PREVIEW_MIN_TERMINAL_WIDTH,
+        ui::cover_preview::HEIGHT + ui::HEADER_HEIGHT + ui::FOOTER_HEIGHT + ui::PANEL_GAP_Y * 2,
+    );
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Playlists;
+    state.search.playlists.items.push(crate::api::PlaylistHit {
+        id: 8,
+        name: "Playlist".into(),
+        creator: "Listener".into(),
+        cover_url: None,
+        track_count: 1,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![covered_row(9)],
+        },
+        &fx,
+    );
+
+    let (key, row, neighbors) = state.selected_cover_candidate().unwrap();
+
+    assert_eq!(key.id, 9);
+    assert_eq!(row.pic_url.as_deref(), Some("https://example.test/9.jpg"));
+    assert!(neighbors.is_empty());
+}
+
+#[tokio::test]
+async fn late_detail_result_does_not_move_another_views_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.search.channel = crate::api::SearchChannel::Playlists;
+    state.search.playlists.items.push(crate::api::PlaylistHit {
+        id: 8,
+        name: "Playlist".into(),
+        creator: "Listener".into(),
+        cover_url: None,
+        track_count: 1,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.view = View::Library;
+    state.library = vec![row(1), row(2), row(3)];
+    state.selected = 2;
+
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![row(9)],
+        },
+        &fx,
+    );
+
+    assert_eq!(state.selected, 2);
+    assert_eq!(state.search.song_rows().unwrap()[0].id, 9);
+
+    state.update(Action::SwitchView(View::Search), &fx);
+
+    assert_eq!(state.selected, 0);
+    assert_eq!(state.visible_len(), 1);
+}
+
+#[tokio::test]
+async fn search_detail_selection_survives_a_round_trip_through_another_view() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.channel = crate::api::SearchChannel::Albums;
+    state.search.albums.items.push(crate::api::AlbumHit {
+        id: 7,
+        name: "Album".into(),
+        artist: "Artist".into(),
+        pic_url: None,
+        song_count: 3,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![row(1), row(2), row(3)],
+        },
+        &fx,
+    );
+    state.selected = 2;
+
+    state.update(Action::SwitchView(View::Library), &fx);
+    state.library = vec![row(10), row(11)];
+    state.selected = 1;
+    state.update(Action::SwitchView(View::Search), &fx);
+
+    assert_eq!(state.selected, 2);
+    assert_eq!(state.visible_row(2).map(|(_, row)| row.id), Some(3));
+}
+
+#[tokio::test]
+async fn a_refresh_cannot_activate_hidden_stale_search_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.query = "query".into();
+    let first = state.search.submit().unwrap();
+    assert!(state.search.accept(
+        first.seq,
+        &first.query,
+        first.channel,
+        crate::api::SearchPayload::Songs(crate::api::SearchPage {
+            items: vec![row(1)],
+            total: 1,
+        }),
+    ));
+    assert!(state.search.submit().is_some());
+
+    state.update(raw_key(KeyCode::Down), &fx);
+    state.update(Action::Activate, &fx);
+
+    assert!(state.search.input);
+    assert!(state.now.is_none());
+    assert_eq!(state.visible_len(), 0);
+}
+
+#[tokio::test]
+async fn search_channel_keys_wrap_without_triggering_seek() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = true;
+
+    state.update(raw_key(KeyCode::BackTab), &fx);
+    assert_eq!(state.search.channel, crate::api::SearchChannel::Playlists);
+
+    state.search.input = false;
+    state.update(raw_key(KeyCode::Right), &fx);
+    assert_eq!(state.search.channel, crate::api::SearchChannel::Songs);
+}
+
+#[tokio::test]
+async fn switching_search_channels_preserves_the_underlying_filtered_song() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.songs.items = vec![
+        named_row(1, "Alpha", "One"),
+        named_row(2, "Target one", "Two"),
+        named_row(3, "Target two", "Three"),
+    ];
+    state.filter.query = "target".into();
+    state.selected = 1;
+
+    state.update(
+        Action::SelectSearchChannel(crate::api::SearchChannel::Artists),
+        &fx,
+    );
+    state.update(
+        Action::SelectSearchChannel(crate::api::SearchChannel::Songs),
+        &fx,
+    );
+
+    assert_eq!(state.selected, 2);
+    assert!(state.filter.query.is_empty());
+    assert_eq!(state.visible_row(2).map(|(_, row)| row.id), Some(3));
+}
+
+#[tokio::test]
+async fn returning_to_search_input_preserves_the_result_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.songs.items = vec![row(1), row(2), row(3)];
+    state.selected = 2;
+
+    state.update(Action::Back, &fx);
+    assert!(state.search.input);
+    state.update(raw_key(KeyCode::Down), &fx);
+
+    assert!(!state.search.input);
     assert_eq!(state.selected, 2);
 }
 

@@ -97,6 +97,12 @@ pub enum Key {
     EmptyLibrary,
     ColumnTitle,
     SearchPrompt,
+    SearchSongs,
+    SearchArtists,
+    SearchAlbums,
+    SearchPlaylists,
+    SearchChannelSwitch,
+    Open,
     HelpTitle,
     HelpAnyKey,
     LabelLike,
@@ -146,6 +152,18 @@ pub fn t(key: Key) -> &'static str {
 
 pub fn t_track_count(n: usize) -> String {
     track_count_for(language(), n)
+}
+
+pub fn t_result_count(n: usize) -> String {
+    result_count_for(language(), n)
+}
+
+fn result_count_for(lang: Lang, n: usize) -> String {
+    match lang {
+        Lang::Zh => format!("{n} 项"),
+        Lang::En => format!("{n} results"),
+        Lang::Ja => format!("{n}件"),
+    }
 }
 
 pub fn t_welcome(name: &str) -> String {
@@ -325,7 +343,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Mute => "静音",
             Key::Shuffle => "随机开 / 关",
             Key::Repeat => "列表 / 单曲 / 关",
-            Key::LibraryFocus => "侧栏 / 列表",
+            Key::LibraryFocus => "曲库焦点 / 搜索类型",
             Key::Pause => "暂停",
             Key::Seek => "快进",
             Key::Volume => "音量",
@@ -333,13 +351,19 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Spectrum => "频谱开 / 关",
             Key::SpectrumPreview => "实时预览",
             Key::SearchPrompt => "搜索网易云曲库",
+            Key::SearchSongs => "单曲",
+            Key::SearchArtists => "歌手",
+            Key::SearchAlbums => "专辑",
+            Key::SearchPlaylists => "歌单",
+            Key::SearchChannelSwitch => "切换类型",
+            Key::Open => "打开",
             Key::HelpTitle => "快捷键",
             Key::HelpAnyKey => "按任意键关闭",
             Key::LabelLike => "收藏",
             Key::LabelHelp => "全部键位",
             Key::Searching => "搜索中…",
             Key::SearchFailed => "搜索失败，请稍后重试",
-            Key::NoResults => "没有找到相关歌曲",
+            Key::NoResults => "没有找到相关结果",
             Key::TypeToSearch => "输入关键词，Enter 搜索",
             Key::Liked => "已收藏",
             Key::Unliked => "已取消收藏",
@@ -442,7 +466,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Mute => "Mute",
             Key::Shuffle => "Shuffle on / off",
             Key::Repeat => "List / one / off",
-            Key::LibraryFocus => "Sidebar / list",
+            Key::LibraryFocus => "Library focus / search type",
             Key::Pause => "Pause",
             Key::Seek => "Seek",
             Key::Volume => "Volume",
@@ -450,13 +474,19 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Spectrum => "Spectrum on / off",
             Key::SpectrumPreview => "Live preview",
             Key::SearchPrompt => "Search NCM",
+            Key::SearchSongs => "Songs",
+            Key::SearchArtists => "Artists",
+            Key::SearchAlbums => "Albums",
+            Key::SearchPlaylists => "Playlists",
+            Key::SearchChannelSwitch => "Switch type",
+            Key::Open => "Open",
             Key::HelpTitle => "Keyboard",
             Key::HelpAnyKey => "Press any key to close",
             Key::LabelLike => "Like",
             Key::LabelHelp => "All keys",
             Key::Searching => "Searching…",
             Key::SearchFailed => "Search failed. Try again later",
-            Key::NoResults => "No songs found",
+            Key::NoResults => "No results",
             Key::TypeToSearch => "Type keywords, Enter to search",
             Key::Liked => "Liked",
             Key::Unliked => "Removed from likes",
@@ -559,7 +589,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Mute => "ミュート",
             Key::Shuffle => "シャッフル オン / オフ",
             Key::Repeat => "リスト / 1曲 / オフ",
-            Key::LibraryFocus => "サイドバー / 一覧",
+            Key::LibraryFocus => "ライブラリ操作 / 検索種類",
             Key::Pause => "一時停止",
             Key::Seek => "シーク",
             Key::Volume => "音量",
@@ -567,6 +597,12 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Spectrum => "スペクトラム切替",
             Key::SpectrumPreview => "ライブプレビュー",
             Key::SearchPrompt => "検索",
+            Key::SearchSongs => "曲",
+            Key::SearchArtists => "アーティスト",
+            Key::SearchAlbums => "アルバム",
+            Key::SearchPlaylists => "プレイリスト",
+            Key::SearchChannelSwitch => "種類を切替",
+            Key::Open => "開く",
             Key::HelpTitle => "キー操作",
             Key::HelpAnyKey => "任意のキーで閉じる",
             Key::LabelLike => "お気に入り",
@@ -622,7 +658,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{init, t, t_for, t_login_interrupted, track_count_for, Key, Lang};
+    use super::{
+        init, result_count_for, t, t_for, t_login_interrupted, track_count_for, Key, Lang,
+    };
 
     #[test]
     fn comparable_keys_are_complete_and_distinct_in_all_languages() {
@@ -636,6 +674,12 @@ mod tests {
             Key::SignedOut,
             Key::ColumnAlbum,
             Key::Cover,
+            Key::SearchSongs,
+            Key::SearchArtists,
+            Key::SearchAlbums,
+            Key::SearchPlaylists,
+            Key::SearchChannelSwitch,
+            Key::Open,
         ] {
             let translations = [
                 t_for(Lang::Zh, key),
@@ -686,6 +730,13 @@ mod tests {
         assert_eq!(track_count_for(Lang::Zh, 12), "12 首");
         assert_eq!(track_count_for(Lang::En, 12), "12 tracks");
         assert_eq!(track_count_for(Lang::Ja, 12), "12曲");
+    }
+
+    #[test]
+    fn parameterized_search_result_counts_follow_each_language() {
+        assert_eq!(result_count_for(Lang::Zh, 12), "12 项");
+        assert_eq!(result_count_for(Lang::En, 12), "12 results");
+        assert_eq!(result_count_for(Lang::Ja, 12), "12件");
     }
 
     #[test]

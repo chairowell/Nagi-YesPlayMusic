@@ -87,6 +87,11 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
                     return Some(Action::SwitchView(*view));
                 }
             }
+            for (rect, channel) in &hits.search_channels {
+                if rect.contains(position) {
+                    return Some(Action::SelectSearchChannel(*channel));
+                }
+            }
             for (rect, _) in &hits.heart {
                 if rect.contains(position) {
                     return Some(Action::ToggleLike);
@@ -339,6 +344,28 @@ mod tests {
         assert!(matches!(
             mouse_action(click(13, 5), &hits, 0),
             Some(Action::CancelSettings)
+        ));
+    }
+
+    #[test]
+    fn search_channel_chips_use_their_drawn_mouse_targets() {
+        let mut hits = Hits::default();
+        hits.search_channels.push((
+            ratatui::layout::Rect::new(4, 3, 8, 1),
+            crate::api::SearchChannel::Albums,
+        ));
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 6,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        assert!(matches!(
+            mouse_action(click, &hits, 0),
+            Some(Action::SelectSearchChannel(
+                crate::api::SearchChannel::Albums
+            ))
         ));
     }
 }

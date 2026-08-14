@@ -6,6 +6,7 @@ use crate::event;
 use crate::i18n::Key;
 use crate::player::PlayerCommand;
 
+use super::search::spawn_search_detail;
 use super::{
     apply_pixel_cover, song_row_from_resolved, spawn_cover_prefetch, spawn_render_idle,
     spawn_resolve, AppState, CoverLoad, CoverStyle, Effects, PlaybackModeSlot, PREVIEW_CELLS,
@@ -83,6 +84,9 @@ impl AppState {
                 self.handle_filter_key(*key);
                 return;
             }
+            if self.view == View::Search && self.handle_search_channel_key(fx, *key) {
+                return;
+            }
             let Some(mapped) = event::key_action(*key) else {
                 return;
             };
@@ -137,6 +141,12 @@ impl AppState {
             Action::ConfirmYes => {}
             Action::Quit => self.confirm_quit = true,
             Action::SwitchView(view) => {
+                if self.view == View::Search {
+                    let selected = self
+                        .visible_row(self.selected)
+                        .map_or(self.selected, |(underlying, _)| underlying);
+                    self.search.remember_selection(selected);
+                }
                 self.clear_filter();
                 if view == View::Settings {
                     self.open_settings();
@@ -147,7 +157,8 @@ impl AppState {
                     self.view = view;
                 }
                 if view == View::Search {
-                    self.search.input = true;
+                    self.search.input = self.search.is_results();
+                    self.selected = self.search.page_selection();
                 }
             }
             Action::Back => self.navigate_back(fx),
@@ -240,16 +251,25 @@ impl AppState {
                     }
                 }
                 View::Search if !self.search.input => {
-                    if let Some((_, row)) = self.visible_row(self.selected) {
+                    if self.search.song_rows().is_some() {
+                        let Some((underlying, row)) = self.visible_row(self.selected) else {
+                            return;
+                        };
                         self.queue = self.visible_rows_owned();
                         self.queue_pos = Some(self.selected);
                         self.queue_source = Source::Search;
                         self.pending_fm_next = false;
                         self.fm_request_pending = false;
                         self.reset_shuffle_order();
+                        self.search.remember_selection(underlying);
                         self.play_row(fx, row);
                         self.clear_filter();
                         self.view = View::NowPlaying;
+                    } else if let Some(request) = self.search.open_detail(self.selected) {
+                        self.clear_filter();
+                        let seq = request.seq;
+                        let task = spawn_search_detail(fx, request);
+                        self.search.attach_detail_task(seq, task);
                     }
                 }
                 _ => {}
@@ -282,13 +302,20 @@ impl AppState {
             }
             Action::StartFilter => {
                 if matches!(self.view, View::Library | View::Queue)
-                    || self.view == View::Search && !self.search.input
+                    || self.view == View::Search
+                        && !self.search.input
+                        && self.search.song_rows().is_some()
                 {
                     self.filter.start();
                     self.selected = 0;
                     if self.view == View::Library {
                         self.sidebar_focus = false;
                     }
+                }
+            }
+            Action::SelectSearchChannel(channel) => {
+                if self.view == View::Search && self.search.is_results() {
+                    self.select_search_channel(fx, channel);
                 }
             }
             Action::ToggleLibraryFocus => {
@@ -358,17 +385,48 @@ impl AppState {
                 request,
                 message,
             } => self.apply_library_failed(session, request, message),
-            Action::SearchResults { seq, query, rows } => {
-                if self.search.accept(seq, &query, rows) && !self.search.results.is_empty() {
+            Action::SearchResults {
+                seq,
+                query,
+                channel,
+                payload,
+            } => {
+                let is_current = self.view == View::Search
+                    && self.search.is_results()
+                    && self.search.channel == channel;
+                if self.search.accept(seq, &query, channel, payload)
+                    && is_current
+                    && self.search.current_len() > 0
+                {
                     self.selected = 0;
                 }
             }
             Action::SearchFailed {
                 seq,
                 query,
+                channel,
                 message,
             } => {
-                self.search.fail(seq, &query, message);
+                self.search.fail(seq, &query, channel, message);
+            }
+            Action::SearchDetailLoaded {
+                seq,
+                channel,
+                id,
+                rows,
+            } => {
+                let is_current = self.view == View::Search && !self.search.is_results();
+                if self.search.accept_detail(seq, channel, id, rows) && is_current {
+                    self.selected = 0;
+                }
+            }
+            Action::SearchDetailFailed {
+                seq,
+                channel,
+                id,
+                message,
+            } => {
+                self.search.fail_detail(seq, channel, id, message);
             }
             Action::LikeFinished {
                 session,
@@ -603,10 +661,21 @@ impl AppState {
     }
 
     fn navigate_back(&mut self, fx: &Effects) {
+        let search_selected = if self.view == View::Search {
+            self.visible_row(self.selected)
+                .map_or(self.selected, |(underlying, _)| underlying)
+        } else {
+            0
+        };
         self.clear_filter();
         if self.view == View::Settings {
             self.cancel_settings(fx);
+        } else if self.view == View::Search && !self.search.is_results() {
+            self.selected = self.search.close_detail().unwrap_or_default();
+            self.search.input = false;
         } else if self.view == View::Search && !self.search.input {
+            self.search.remember_selection(search_selected);
+            self.selected = search_selected;
             self.search.input = true;
         } else if self.view == View::Library && !self.sidebar_focus && self.sidebar_visible() {
             self.sidebar_focus = true;

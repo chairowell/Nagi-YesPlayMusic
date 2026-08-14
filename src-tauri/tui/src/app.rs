@@ -578,16 +578,19 @@ impl AppState {
         match self.view {
             View::Library => self.visible_rows(&self.library).len(),
             View::Queue => self.visible_rows(&self.queue).len(),
-            View::Search => self.visible_rows(&self.search.results).len(),
+            View::Search => self.search.song_rows().map_or_else(
+                || self.search.current_len(),
+                |rows| self.visible_rows(rows).len(),
+            ),
             _ => 0,
         }
     }
 
     pub(crate) fn visible_row(&self, index: usize) -> Option<(usize, SongRow)> {
         let rows = match self.view {
-            View::Library => &self.library,
-            View::Queue => &self.queue,
-            View::Search => &self.search.results,
+            View::Library => self.library.as_slice(),
+            View::Queue => self.queue.as_slice(),
+            View::Search => self.search.song_rows()?,
             _ => return None,
         };
         self.visible_rows(rows)
@@ -678,9 +681,12 @@ impl AppState {
 
     fn visible_rows_owned(&self) -> Vec<SongRow> {
         let rows = match self.view {
-            View::Library => &self.library,
-            View::Queue => &self.queue,
-            View::Search => &self.search.results,
+            View::Library => self.library.as_slice(),
+            View::Queue => self.queue.as_slice(),
+            View::Search => match self.search.song_rows() {
+                Some(rows) => rows,
+                None => return Vec::new(),
+            },
             _ => return Vec::new(),
         };
         self.visible_rows(rows)
@@ -693,7 +699,7 @@ impl AppState {
         let body = self.terminal_size.1.saturating_sub(2) as usize;
         match self.view {
             View::Library => body.saturating_sub(1).max(1),
-            View::Search => body.saturating_sub(2).max(1),
+            View::Search => ui::search::page_size(self, self.terminal_size.1),
             View::Queue => body.max(1),
             _ => 1,
         }
@@ -1017,6 +1023,7 @@ impl AppState {
             View::Search => {
                 cols >= crate::ui::search::PREVIEW_MIN_TERMINAL_WIDTH
                     && body_height >= crate::ui::cover_preview::HEIGHT
+                    && self.search.song_rows().is_some()
             }
             _ => false,
         }
@@ -1027,7 +1034,9 @@ impl AppState {
             || self.filter.input
             || self.view == View::Library && self.sidebar_focus
             || self.view == View::Search
-                && (self.search.input || self.search.searching || self.search.error.is_some())
+                && (self.search.input
+                    || self.search.current_searching()
+                    || self.search.current_error().is_some())
         {
             return None;
         }
@@ -1047,8 +1056,8 @@ impl AppState {
             original: self.uses_original_cover(CoverSurface::Selection),
         };
         let rows = match self.view {
-            View::Library => &self.library,
-            View::Search => &self.search.results,
+            View::Library => self.library.as_slice(),
+            View::Search => self.search.song_rows()?,
             _ => return None,
         };
         let visible = self.visible_rows(rows);
