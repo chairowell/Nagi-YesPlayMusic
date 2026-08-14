@@ -690,7 +690,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.dest }}-${{ github.sha }}
+          name: ypm-${{ matrix.target }}
           path: dist-ypm/
           if-no-files-found: error
 
@@ -730,7 +730,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          pattern: ypm-*-${{ github.sha }}
+          pattern: ypm-*
           path: release/ypm
           merge-multiple: true
 
