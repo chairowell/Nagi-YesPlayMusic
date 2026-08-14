@@ -89,6 +89,7 @@ pub enum Action {
     AdjustSetting(i32),
     SaveSettings,
     CancelSettings,
+    NerdFontProbeFinished(crate::nerd_font::Status),
     JumpTop,
     JumpBottom,
     ConfirmYes,

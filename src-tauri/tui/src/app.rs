@@ -16,7 +16,7 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use image::{DynamicImage, Rgba};
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::thread::{ResizeRequest, ResizeResponse, ThreadProtocol};
 use ratatui_image::StatefulImage;
@@ -29,7 +29,7 @@ use yesplaymusic_core::cache::{
 use crate::action::{Action, CoverRenderRequest, CoverSurface, View};
 use crate::api::{self, Ncm, SongRow, Source};
 use crate::config::{self, Config, CoverMode, LoadedConfig};
-use crate::cover_cache::CoverCache;
+use crate::cover_cache::{CoverCache, PixelKeyInputs};
 use crate::event;
 use crate::i18n::{self, Key};
 use crate::pixel::{self, PixelCover};
@@ -367,6 +367,8 @@ pub struct AppState {
     pub view: View,
     pub zen: bool,
     pub theme: Theme,
+    pub(crate) terminal_background: Option<Color>,
+    pub(crate) terminal_is_light: Option<bool>,
     pub config: Config,
     pub(crate) settings: settings::SettingsState,
     pub(crate) command_palette: CommandPaletteState,
@@ -450,6 +452,8 @@ impl AppState {
             view: View::NowPlaying,
             zen: false,
             theme,
+            terminal_background: None,
+            terminal_is_light: None,
             config: config.clone(),
             settings: settings::SettingsState::default(),
             command_palette: CommandPaletteState::default(),
@@ -503,7 +507,7 @@ impl AppState {
             cover: None,
             layout: PlayLayout::from_config(&config.layout),
             thick_progress: config.progress_style == "bar",
-            pixel_detail_scale: config.pixel_scale.clamp(0.5, 2.0),
+            pixel_detail_scale: config.pixel_scale.clamp(0.5, 4.0),
             original_cover: None,
             selected_original_cover: None,
             selected_cover: SelectionCoverState {
@@ -556,19 +560,42 @@ impl AppState {
         }
     }
 
+    pub(crate) fn set_terminal_background(&mut self, background: Option<Color>) {
+        self.terminal_background = background;
+        self.spectrum.set_terminal_background(background);
+    }
+
+    pub(crate) fn selection_style(&self) -> Style {
+        self.theme.selection_style(self.terminal_background)
+    }
+
     /// The cover cell grid that fits the current terminal and layout.
     /// Height-driven in Side layout, width-bounded in Stacked.
     fn desired_cover_cells(&self) -> (u16, u16) {
         let (cols, rows) = self.terminal_size;
-        let body_rows = rows.saturating_sub(if self.zen { 2 } else { 4 });
+        let shell_rows = if self.zen {
+            0
+        } else {
+            ui::HEADER_HEIGHT + ui::FOOTER_HEIGHT + ui::PANEL_GAP_Y * 2
+        };
+        let playing_rows = rows.saturating_sub(shell_rows);
+        let spectrum_rows = ui::now_playing::spectrum_band_height(
+            playing_rows,
+            self.config.spectrum_enabled,
+            self.layout,
+        );
+        let main_rows = playing_rows
+            .saturating_sub(ui::now_playing::PROGRESS_HEIGHT)
+            .saturating_sub(spectrum_rows);
         let height = match self.layout {
-            PlayLayout::Side => body_rows.saturating_sub(2),
-            PlayLayout::Stacked => body_rows / 2,
+            PlayLayout::Side => main_rows,
+            PlayLayout::Stacked => main_rows / 2,
         };
         let height = height.clamp(8, 40);
+        let content_width = ui::centered_content(Rect::new(0, 0, cols, rows)).width;
         let width = (height * 2).min(match self.layout {
-            PlayLayout::Side => cols.saturating_sub(30).max(16),
-            PlayLayout::Stacked => cols.saturating_sub(4).max(16),
+            PlayLayout::Side => content_width.saturating_sub(30).max(16),
+            PlayLayout::Stacked => content_width.saturating_sub(4).max(16),
         });
         (width, width / 2)
     }
@@ -980,19 +1007,21 @@ impl AppState {
     }
 
     fn pixel_cover_key(&self, request: &CoverRenderRequest) -> String {
-        CoverCache::pixel_key(
-            request.song_id,
-            &request.source_key,
-            request.cells,
-            self.pixel_detail_scale,
-            self.config.cover_detail,
-            self.theme.bg,
-            self.theme.palette,
-        )
+        CoverCache::pixel_key(PixelKeyInputs {
+            song_id: request.song_id,
+            original_key: &request.source_key,
+            cells: request.cells,
+            detail_scale: self.pixel_detail_scale,
+            detail: self.config.cover_detail,
+            palette_mode: self.config.cover_palette,
+            background: self.theme.bg,
+            palette: self.theme.palette,
+        })
     }
 
     fn pixel_style(&self) -> PixelStyle {
         PixelStyle {
+            palette_mode: self.config.cover_palette,
             palette: self.theme.palette,
             background: self.theme.bg,
             detail_scale: self.pixel_detail_scale,
@@ -1642,6 +1671,7 @@ struct CoverStyle {
 
 #[derive(Clone, Copy)]
 struct PixelStyle {
+    palette_mode: pixel::CoverPalette,
     palette: &'static [(u8, u8, u8)],
     background: Color,
     detail_scale: f32,
@@ -1793,10 +1823,10 @@ async fn process_cover(
         }
         let cover = pixel::from_image_bytes(
             &bytes,
+            load.style.pixel.palette_mode,
             load.style.pixel.palette,
             load.style.pixel.background,
-            load.request.cells.0,
-            load.request.cells.1,
+            load.request.cells,
             load.style.pixel.detail_scale,
             load.style.pixel.detail,
         )?;
@@ -1843,15 +1873,16 @@ fn send_cover(
 }
 
 fn pixel_cache_key(load: &CoverLoad) -> String {
-    CoverCache::pixel_key(
-        load.request.song_id,
-        &load.request.source_key,
-        load.request.cells,
-        load.style.pixel.detail_scale,
-        load.style.pixel.detail,
-        load.style.pixel.background,
-        load.style.pixel.palette,
-    )
+    CoverCache::pixel_key(PixelKeyInputs {
+        song_id: load.request.song_id,
+        original_key: &load.request.source_key,
+        cells: load.request.cells,
+        detail_scale: load.style.pixel.detail_scale,
+        detail: load.style.pixel.detail,
+        palette_mode: load.style.pixel.palette_mode,
+        background: load.style.pixel.background,
+        palette: load.style.pixel.palette,
+    })
 }
 
 enum EitherCover {
@@ -1972,10 +2003,10 @@ fn spawn_render_idle(
         let cover = tokio::task::spawn_blocking(move || {
             pixel::from_image_bytes(
                 &bytes,
+                style.palette_mode,
                 style.palette,
                 style.background,
-                cells.0,
-                cells.1,
+                cells,
                 style.detail_scale,
                 style.detail,
             )
@@ -2019,10 +2050,15 @@ fn shellexpand_home(path: &str) -> std::path::PathBuf {
 
 pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
     let mut terminal = ratatui::init();
-    if loaded.should_probe_terminal_background() {
-        let is_light = crate::terminal_background::probe()
-            .map(|appearance| matches!(appearance, crate::terminal_background::Appearance::Light));
-        loaded.apply_terminal_brightness(is_light);
+    let detected_background = crate::terminal_background::probe();
+    let terminal_is_light = detected_background.map(|background| {
+        matches!(
+            background.appearance(),
+            crate::terminal_background::Appearance::Light
+        )
+    });
+    if loaded.should_apply_terminal_brightness() {
+        loaded.apply_terminal_brightness(terminal_is_light);
     }
     let config = loaded.config;
     let _ = crossterm::execute!(
@@ -2030,7 +2066,13 @@ pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste
     );
-    let result = event_loop(&mut terminal, &config).await;
+    let result = event_loop(
+        &mut terminal,
+        &config,
+        detected_background.map(crate::terminal_background::Rgb::color),
+        terminal_is_light,
+    )
+    .await;
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::DisableMouseCapture,
@@ -2040,7 +2082,12 @@ pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
     result
 }
 
-async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) -> Result<()> {
+async fn event_loop(
+    terminal: &mut ratatui::DefaultTerminal,
+    config: &Config,
+    terminal_background: Option<Color>,
+    terminal_is_light: Option<bool>,
+) -> Result<()> {
     let (player, mut player_events) = player::spawn(tokio::runtime::Handle::current());
     let (actions_tx, mut actions) = mpsc::unbounded_channel();
     let (playing_resize_tx, playing_resize_rx) = mpsc::unbounded_channel();
@@ -2052,7 +2099,11 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
 
     // Graphics protocol queries must finish before EventStream starts reading
     // the same terminal response bytes.
-    let theme = Theme::by_name(&config.theme);
+    let theme = Theme::by_name(crate::theme::resolved_name(
+        &config.theme,
+        config.theme_mode,
+        terminal_is_light,
+    ));
     let picker = query_graphics_picker(config.cover_mode, theme.bg);
     let original_cover = picker
         .clone()
@@ -2105,6 +2156,9 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         config_path: config::config_dir().join("config.toml"),
     };
     let mut state = AppState::new(config);
+    state.set_terminal_background(terminal_background);
+    state.terminal_is_light = terminal_is_light;
+    state.theme = theme;
     state.original_cover = original_cover;
     state.selected_original_cover = selected_original_cover;
     if let Some(playback) = fx.store.load_playback() {

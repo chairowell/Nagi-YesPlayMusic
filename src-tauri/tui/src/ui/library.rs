@@ -131,9 +131,9 @@ fn draw_sidebar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits
         };
         let marker = if is_current { "▸" } else { " " };
         let mut style = if selected {
-            Style::new()
+            state
+                .selection_style()
                 .fg(if is_current { theme.accent } else { theme.fg })
-                .bg(theme.selection_bg())
                 .add_modifier(Modifier::BOLD)
         } else if is_current {
             Style::new().fg(theme.accent)
@@ -206,7 +206,14 @@ fn draw_list(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         ));
         let selected =
             visible_index == state.selected && !state.filter.input && !state.sidebar_focus;
-        lines.push(columns.row(theme, index + 1, row, selected, marquee_frame));
+        lines.push(columns.row(
+            theme,
+            state.selection_style(),
+            index + 1,
+            row,
+            selected,
+            marquee_frame,
+        ));
     }
     frame.render_widget(Paragraph::new(lines), inner);
 }
@@ -278,13 +285,14 @@ impl SongColumns {
     fn row(
         self,
         theme: &crate::theme::Theme,
+        selection_style: Style,
         index: usize,
         row: &crate::api::SongRow,
         selected: bool,
         marquee_frame: u64,
     ) -> Line<'static> {
         let base = if selected {
-            Style::new().bg(theme.selection_bg())
+            selection_style
         } else {
             Style::new()
         };
@@ -459,7 +467,7 @@ mod tests {
 
         let title = &buffer[(27, 2)];
         assert_eq!(title.fg, state.theme.fg);
-        assert_eq!(title.bg, state.theme.selection_bg());
+        assert_eq!(title.bg, state.selection_style().bg.unwrap());
         assert!(title.modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(69, 2)].fg, state.theme.dim);
         assert_eq!(buffer[(85, 2)].fg, state.theme.faint);
@@ -494,9 +502,29 @@ mod tests {
 
         let title = &buffer[(72, 4)];
         assert_eq!(title.fg, state.theme.fg);
-        assert_eq!(title.bg, state.theme.selection_bg());
+        assert_eq!(title.bg, state.selection_style().bg.unwrap());
         assert!(title.modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(104, 4)].fg, state.theme.dim);
         assert_eq!(buffer[(120, 4)].fg, state.theme.faint);
+    }
+
+    #[test]
+    fn transparent_selection_reverses_when_osc_background_is_unavailable() {
+        let config = Config {
+            theme: "transparent".into(),
+            ..Config::default()
+        };
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new(&config);
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let title = &terminal.backend().buffer()[(27, 2)];
+        assert!(title.modifier.contains(Modifier::REVERSED));
+        assert!(title.modifier.contains(Modifier::BOLD));
     }
 }

@@ -19,6 +19,34 @@ use crate::ui::{format_duration, Hits};
 // so the pixel grid is square); the frame must hug exactly that grid or the
 // border reads as a stretched rectangle.
 const COVER_GRID: (u16, u16) = (26, 13);
+pub(crate) const PROGRESS_HEIGHT: u16 = 2;
+const SPECTRUM_MIN_HEIGHT: u16 = 5;
+const SPECTRUM_MAX_HEIGHT: u16 = 7;
+const SIDE_MIN_MAIN_HEIGHT: u16 = 10;
+const STACKED_MIN_MAIN_HEIGHT: u16 = 21;
+const STACKED_MIN_META_HEIGHT: u16 = 8;
+const MAX_LYRIC_CONTEXT_ROWS: usize = 9;
+
+/// Keep enough room for metadata and lyrics before reserving a spectrum band.
+pub(crate) fn spectrum_band_height(
+    total_height: u16,
+    enabled: bool,
+    layout: crate::app::PlayLayout,
+) -> u16 {
+    if !enabled {
+        return 0;
+    }
+    let candidate = (total_height / 6).clamp(SPECTRUM_MIN_HEIGHT, SPECTRUM_MAX_HEIGHT);
+    let minimum_main = match layout {
+        crate::app::PlayLayout::Side => SIDE_MIN_MAIN_HEIGHT,
+        crate::app::PlayLayout::Stacked => STACKED_MIN_MAIN_HEIGHT,
+    };
+    if total_height.saturating_sub(PROGRESS_HEIGHT + candidate) < minimum_main {
+        0
+    } else {
+        candidate
+    }
+}
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
     if state.now.is_none() {
@@ -26,8 +54,14 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
         return;
     }
 
-    let [main, progress_area] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas(area);
+    let spectrum_height =
+        spectrum_band_height(area.height, state.config.spectrum_enabled, state.layout);
+    let [main, spectrum_area, progress_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(spectrum_height),
+        Constraint::Length(PROGRESS_HEIGHT),
+    ])
+    .areas(area);
     let progress_hits = progress_area;
     let (cover_w, cover_h) = state
         .cover
@@ -55,7 +89,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
             draw_meta(frame, state, meta_area, false);
         }
         crate::app::PlayLayout::Stacked => {
-            let art_height = cover_h.min(main.height.saturating_sub(4));
+            let art_height = cover_h.min(
+                main.height
+                    .saturating_sub(STACKED_MIN_META_HEIGHT.saturating_add(1)),
+            );
             let [cover_row, _, meta_area] = Layout::vertical([
                 Constraint::Length(art_height),
                 Constraint::Length(1),
@@ -66,6 +103,15 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
             draw_cover(frame, state, cover_area);
             draw_meta(frame, state, meta_area, true);
         }
+    }
+    if spectrum_height > 0 {
+        state.spectrum.render(
+            state.config.spectrum_style,
+            state.config.spectrum_glow,
+            spectrum_area,
+            frame.buffer_mut(),
+            &state.theme,
+        );
     }
     draw_progress(frame, state, progress_hits, hits);
 }
@@ -164,14 +210,6 @@ fn draw_cover(frame: &mut Frame, state: &mut AppState, area: Rect) {
 
 fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text: bool) {
     let theme = state.theme;
-    let (text_area, spectrum_area) = if state.config.spectrum_enabled && area.height >= 10 {
-        let spectrum_height = (area.height / 3).clamp(6, 8);
-        let [text, spectrum] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(spectrum_height)]).areas(area);
-        (text, Some(spectrum))
-    } else {
-        (area, None)
-    };
     let indent = if centered_text { "" } else { "  " };
     let mut lines = Vec::new();
     if centered_text {
@@ -195,10 +233,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
         if !state.lyrics.is_empty() {
             lines.push(Line::default());
             let reserved = lines.len() as u16;
-            lines.extend(lyric_window(
-                state,
-                text_area.height.saturating_sub(reserved),
-            ));
+            lines.extend(lyric_window(state, area.height.saturating_sub(reserved)));
         } else if let Some(status) = &state.status {
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
@@ -212,35 +247,29 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
     } else {
         Paragraph::new(lines)
     };
-    frame.render_widget(paragraph, text_area);
-    if let Some(spectrum_area) = spectrum_area {
-        state.spectrum.render(
-            state.config.spectrum_style,
-            state.config.spectrum_glow,
-            spectrum_area,
-            frame.buffer_mut(),
-            &theme,
-        );
-    }
+    frame.render_widget(paragraph, area);
 }
 
 /// Rows of synced lyrics with the current pair pinned mid-window.
 fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
-    let theme = &state.theme;
+    if height == 0 || state.lyrics.is_empty() {
+        return Vec::new();
+    }
     let current = current_lyric_index(&state.lyrics, state.position);
-    let rows = height.max(1) as usize;
+    let rows = usize::from(height);
     let anchor = current.unwrap_or(0);
-    // Walk backwards in *display rows* (a translated line costs two),
-    // so the anchor really sits mid-window instead of drifting bottom.
-    let target_above = rows / 2;
+    let current_cost = lyric_display_rows(&state.lyrics[anchor]);
+    let window_rows = rows.min(MAX_LYRIC_CONTEXT_ROWS * 2 + current_cost);
+    let target_above = ((window_rows.saturating_sub(current_cost)) / 2).min(MAX_LYRIC_CONTEXT_ROWS);
+    let target_below = window_rows
+        .saturating_sub(target_above + current_cost)
+        .min(MAX_LYRIC_CONTEXT_ROWS);
+
     let mut start = anchor;
     let mut used_above = 0_usize;
     while start > 0 {
         let previous = start - 1;
-        let cost = 1 + state.lyrics[previous]
-            .translation
-            .as_ref()
-            .is_some_and(|text| !text.is_empty()) as usize;
+        let cost = lyric_display_rows(&state.lyrics[previous]);
         if used_above + cost > target_above {
             break;
         }
@@ -248,55 +277,83 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
         start = previous;
     }
 
-    let mut lines = Vec::new();
-    let mut used = 0_usize;
-    for (index, lyric) in state.lyrics.iter().enumerate().skip(start) {
-        if used >= rows {
+    let mut end = anchor + 1;
+    let mut used_below = 0_usize;
+    while end < state.lyrics.len() {
+        let cost = lyric_display_rows(&state.lyrics[end]);
+        if used_below + cost > target_below {
             break;
         }
+        used_below += cost;
+        end += 1;
+    }
+
+    let window_top = rows.saturating_sub(window_rows) / 2;
+    let leading = window_top + target_above.saturating_sub(used_above);
+    let mut lines = vec![Line::default(); leading];
+    for (index, lyric) in state.lyrics.iter().enumerate().take(end).skip(start) {
         let is_current = Some(index) == current;
-        let original_style = if is_current {
-            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD)
+        lines.extend(lyric_pair_lines(state, lyric, is_current));
+    }
+    lines.truncate(rows);
+    lines
+}
+
+fn lyric_display_rows(lyric: &crate::lyrics::LyricLine) -> usize {
+    1 + usize::from(
+        lyric
+            .translation
+            .as_ref()
+            .is_some_and(|translation| !translation.is_empty()),
+    )
+}
+
+fn lyric_pair_lines(
+    state: &AppState,
+    lyric: &crate::lyrics::LyricLine,
+    is_current: bool,
+) -> Vec<Line<'static>> {
+    let theme = &state.theme;
+    let original_style = if is_current {
+        Style::new().fg(theme.fg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(theme.dim)
+    };
+    let marker_style = if is_current {
+        Style::new().fg(theme.accent)
+    } else {
+        original_style
+    };
+    let mut original = vec![Span::styled(
+        if is_current { "▎ " } else { "  " },
+        marker_style,
+    )];
+    if is_current {
+        original.extend(current_lyric_spans(lyric, state.position, theme));
+    } else {
+        original.push(Span::styled(lyric.text.clone(), original_style));
+    }
+    let mut lines = vec![Line::from(original)];
+    if let Some(translation) = lyric
+        .translation
+        .as_ref()
+        .filter(|translation| !translation.is_empty())
+    {
+        let translation_style = if is_current {
+            Style::new().fg(theme.fg)
         } else {
-            Style::new().fg(theme.dim)
-        };
+            Style::new().fg(theme.faint)
+        }
+        .add_modifier(Modifier::ITALIC);
         let marker_style = if is_current {
             Style::new().fg(theme.accent)
         } else {
-            original_style
+            translation_style
         };
-        let mut original = vec![Span::styled(
-            if is_current { "▎ " } else { "  " },
-            marker_style,
-        )];
-        if is_current {
-            original.extend(current_lyric_spans(lyric, state.position, theme));
-        } else {
-            original.push(Span::styled(lyric.text.clone(), original_style));
-        }
-        lines.push(Line::from(original));
-        used += 1;
-        // Every line carries its translation; the current pair reads brighter.
-        if let Some(translation) = &lyric.translation {
-            if used < rows && !translation.is_empty() {
-                let translation_style = if is_current {
-                    Style::new().fg(theme.fg)
-                } else {
-                    Style::new().fg(theme.faint)
-                }
-                .add_modifier(Modifier::ITALIC);
-                let marker_style = if is_current {
-                    Style::new().fg(theme.accent)
-                } else {
-                    translation_style
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(if is_current { "▎ " } else { "  " }, marker_style),
-                    Span::styled(translation.clone(), translation_style),
-                ]));
-                used += 1;
-            }
-        }
+        lines.push(Line::from(vec![
+            Span::styled(if is_current { "▎ " } else { "  " }, marker_style),
+            Span::styled(translation.clone(), translation_style),
+        ]));
     }
     lines
 }
@@ -539,13 +596,14 @@ mod tests {
 
     use super::{
         current_lyric_index, current_lyric_spans, draw_meta, draw_progress, lyric_window,
-        menu_entries,
+        menu_entries, spectrum_band_height,
     };
     use crate::action::{Action, MenuEntry};
-    use crate::app::{AppState, NowPlaying, PlayMode};
+    use crate::app::{AppState, NowPlaying, PlayLayout, PlayMode};
     use crate::config::Config;
     use crate::event;
     use crate::lyrics::LyricLine;
+    use crate::spectrum::{SampleBuffer, SpectrumKind};
     use crate::ui::Hits;
     use crate::yrc::{YrcLine, YrcWord};
 
@@ -583,33 +641,173 @@ mod tests {
             },
         ];
 
-        let lines = lyric_window(&state, 4);
-        assert_eq!(lines[0].spans[0].content, "▎ ");
-        assert_eq!(lines[0].spans[0].style.fg, Some(state.theme.accent));
-        assert_eq!(lines[0].spans[1].style.fg, Some(state.theme.fg));
-        assert!(lines[0].spans[1]
+        let lines = lyric_window(&state, 6);
+        assert_eq!(lines[2].spans[0].content, "▎ ");
+        assert_eq!(lines[2].spans[0].style.fg, Some(state.theme.accent));
+        assert_eq!(lines[2].spans[1].style.fg, Some(state.theme.fg));
+        assert!(lines[2].spans[1]
             .style
             .add_modifier
             .contains(Modifier::BOLD));
 
-        assert_eq!(lines[1].spans[0].content, "▎ ");
-        assert_eq!(lines[1].spans[0].style.fg, Some(state.theme.accent));
-        assert_eq!(lines[1].spans[1].style.fg, Some(state.theme.fg));
-        assert!(lines[1].spans[1]
-            .style
-            .add_modifier
-            .contains(Modifier::ITALIC));
-
-        assert_eq!(lines[2].spans[1].style.fg, Some(state.theme.dim));
-        assert!(!lines[2].spans[1]
-            .style
-            .add_modifier
-            .contains(Modifier::ITALIC));
-        assert_eq!(lines[3].spans[1].style.fg, Some(state.theme.faint));
+        assert_eq!(lines[3].spans[0].content, "▎ ");
+        assert_eq!(lines[3].spans[0].style.fg, Some(state.theme.accent));
+        assert_eq!(lines[3].spans[1].style.fg, Some(state.theme.fg));
         assert!(lines[3].spans[1]
             .style
             .add_modifier
             .contains(Modifier::ITALIC));
+
+        assert_eq!(lines[4].spans[1].style.fg, Some(state.theme.dim));
+        assert!(!lines[4].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::ITALIC));
+        assert_eq!(lines[5].spans[1].style.fg, Some(state.theme.faint));
+        assert!(lines[5].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn lyric_context_is_capped_and_the_current_line_stays_centered() {
+        let mut state = AppState::new(&Config::default());
+        state.position = Duration::from_secs(15);
+        state.lyrics = (0..31)
+            .map(|index| LyricLine {
+                time: Duration::from_secs(index),
+                text: format!("Line {index}"),
+                translation: None,
+                word_timing: None,
+            })
+            .collect();
+
+        let lines = lyric_window(&state, 31);
+        assert_eq!(lines.len(), 25, "six leading rows plus a 19-row window");
+        let current = lines
+            .iter()
+            .position(|line| line.spans.first().is_some_and(|span| span.content == "▎ "))
+            .unwrap();
+        assert_eq!(current, 15);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line
+                    .spans
+                    .get(1)
+                    .is_some_and(|span| span.content.starts_with("Line")))
+                .count(),
+            19
+        );
+    }
+
+    #[test]
+    fn spectrum_band_is_full_width_and_layout_aware() {
+        assert_eq!(spectrum_band_height(20, true, PlayLayout::Side), 5);
+        assert_eq!(spectrum_band_height(36, true, PlayLayout::Side), 6);
+        assert_eq!(spectrum_band_height(56, true, PlayLayout::Side), 7);
+        assert_eq!(spectrum_band_height(20, true, PlayLayout::Stacked), 0);
+        assert_eq!(spectrum_band_height(36, true, PlayLayout::Stacked), 6);
+        assert_eq!(spectrum_band_height(56, false, PlayLayout::Side), 0);
+
+        for (layout, height, line_y) in [(PlayLayout::Side, 24, 19), (PlayLayout::Stacked, 40, 35)]
+        {
+            let config = Config {
+                spectrum_enabled: true,
+                spectrum_style: SpectrumKind::Reflect,
+                ..Config::default()
+            };
+            let mut state = AppState::new(&config);
+            state.layout = layout;
+            state.now = Some(NowPlaying {
+                title: "Title".into(),
+                artist: "Artist".into(),
+                album: String::new(),
+            });
+            state.spectrum.tick(&SampleBuffer::default(), false, true);
+            let backend = TestBackend::new(80, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut hits = Hits::default();
+
+            terminal
+                .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+                .unwrap();
+
+            assert!((0..80).all(|x| terminal.backend().buffer()[(x, line_y)].symbol() == "─"));
+        }
+    }
+
+    #[test]
+    fn wide_and_zen_spectrum_stays_inside_the_centered_110_column_canvas() {
+        for (zen, line_y) in [(false, 52), (true, 54)] {
+            let config = Config {
+                spectrum_enabled: true,
+                spectrum_style: SpectrumKind::Reflect,
+                ..Config::default()
+            };
+            let mut state = AppState::new(&config);
+            state.zen = zen;
+            state.now = Some(NowPlaying {
+                title: "Title".into(),
+                artist: "Artist".into(),
+                album: String::new(),
+            });
+            state.spectrum.tick(&SampleBuffer::default(), false, true);
+            let backend = TestBackend::new(200, 60);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut hits = Hits::default();
+
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut state, &mut hits))
+                .unwrap();
+
+            let buffer = terminal.backend().buffer();
+            assert!((45..155).all(|x| buffer[(x, line_y)].symbol() == "─"));
+            assert_eq!(buffer[(44, line_y)].symbol(), " ");
+            assert_eq!(buffer[(155, line_y)].symbol(), " ");
+        }
+    }
+
+    #[test]
+    fn short_stacked_layout_hides_spectrum_to_keep_lyrics() {
+        let config = Config {
+            spectrum_enabled: true,
+            spectrum_style: SpectrumKind::Reflect,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.layout = PlayLayout::Stacked;
+        state.now = Some(NowPlaying {
+            title: "Title".into(),
+            artist: "Artist".into(),
+            album: String::new(),
+        });
+        state.lyrics = vec![LyricLine {
+            time: Duration::ZERO,
+            text: "Kept lyric".into(),
+            translation: None,
+            word_timing: None,
+        }];
+        state.spectrum.tick(&SampleBuffer::default(), false, true);
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let symbols = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(symbols.contains("Kept lyric"));
+        assert!(!(0..18)
+            .any(|y| { (0..80).all(|x| terminal.backend().buffer()[(x, y)].symbol() == "─") }));
     }
 
     fn word_synced_line() -> LyricLine {

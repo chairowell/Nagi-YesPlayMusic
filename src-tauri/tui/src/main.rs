@@ -9,6 +9,7 @@ mod event;
 mod i18n;
 mod icons;
 mod lyrics;
+mod nerd_font;
 pub mod pixel;
 mod player;
 mod spectrum;

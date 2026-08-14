@@ -5,7 +5,7 @@ pub(crate) mod cover_preview;
 pub(crate) mod library;
 mod login;
 pub(crate) mod mini_player;
-mod now_playing;
+pub(crate) mod now_playing;
 pub(crate) mod queue;
 pub(crate) mod search;
 mod settings;

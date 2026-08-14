@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tempfile::NamedTempFile;
 use yesplaymusic_core::cache::AudioQuality;
 
-use crate::pixel::CoverDetail;
+use crate::pixel::{CoverDetail, CoverPalette};
 use crate::spectrum::SpectrumKind;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -26,6 +26,16 @@ pub enum IconStyle {
     Nerd,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Follow the terminal background detected over OSC 11; unknown = dark.
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -42,6 +52,9 @@ pub struct Config {
     pub unm_enabled: bool,
     /// Built-in theme name or a TOML file in themes/.
     pub theme: String,
+    /// Swap paired themes to their light/dark counterpart; Auto follows
+    /// the terminal background. Themes without a pair ignore this.
+    pub theme_mode: ThemeMode,
     /// Explicit ypm process cache cap in MiB. None keeps the database value.
     pub cache_limit_mib: Option<u64>,
     /// Enter on a list: true = the list becomes the queue from that song
@@ -60,9 +73,11 @@ pub struct Config {
     pub icons: IconStyle,
     /// Cover renderer: palette pixel art or terminal graphics protocol.
     pub cover_mode: CoverMode,
+    /// Pixel cover colors: source truecolor or the active theme palette.
+    pub cover_palette: CoverPalette,
     /// Sub-cell glyph resolution used by the pixel renderer.
     pub cover_detail: CoverDetail,
-    /// Pixel sampling detail (0.5 chunky … 2.0 fine). The final cell
+    /// Pixel sampling detail (0.5 chunky … 4.0 fine). The final cell
     /// footprint is unchanged.
     pub pixel_scale: f32,
     /// Retro spectrum visibility, renderer, and phosphor afterglow.
@@ -77,7 +92,7 @@ pub struct LoadedConfig {
 }
 
 impl LoadedConfig {
-    pub fn should_probe_terminal_background(&self) -> bool {
+    pub fn should_apply_terminal_brightness(&self) -> bool {
         !self.theme_is_explicit
     }
 
@@ -97,6 +112,7 @@ impl Default for Config {
             quality: AudioQuality::High320,
             unm_enabled: true,
             theme: "db16".into(),
+            theme_mode: ThemeMode::default(),
             cache_limit_mib: None,
             enter_replaces_queue: true,
             layout: "side".into(),
@@ -104,6 +120,7 @@ impl Default for Config {
             progress_style: "dot".into(),
             icons: IconStyle::Unicode,
             cover_mode: CoverMode::Pixel,
+            cover_palette: CoverPalette::Original,
             cover_detail: CoverDetail::Half,
             pixel_scale: 1.0,
             spectrum_enabled: false,
@@ -177,13 +194,14 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
 # icons = "unicode"           # unicode（无需特殊字体）| nerd（需要 Nerd Font）
-# cover_mode = "pixel"        # pixel（主题像素画）| original（终端原图协议，不支持时回退 pixel）
+# cover_mode = "pixel"        # pixel（字符像素画）| original（终端原图协议，不支持时回退 pixel）
+# cover_palette = "original"  # original（原图真彩）| theme（主题配色）
 # cover_detail = "half"       # half（1×2）| quad（2×2）| sextant（2×3）| octant（2×4，需 Unicode 16 字体）
 #                              # octant 显示方框时请切回 sextant
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 8192       # 仅显式设置时更新 ypm 进程共享的上限
-# pixel_scale = 1.0            # 像素细腻度：0.5 更复古块状，2.0 更细腻
+# pixel_scale = 1.0            # 像素细腻度：0.5 更复古块状，4.0 更细腻
 # spectrum_enabled = false     # v 键也可全局开关
 # spectrum_style = "blocks"   # blocks | mirror | led | braille | shade | scope | fire | waterfall | vu | reflect
 # spectrum_glow = false        # 荧光余辉残影
@@ -299,6 +317,7 @@ mod tests {
         assert!(config.unm_enabled);
         assert_eq!(config.theme, "db16");
         assert_eq!(config.cover_mode, CoverMode::Pixel);
+        assert_eq!(config.cover_palette, CoverPalette::Original);
         assert_eq!(config.cover_detail, CoverDetail::Half);
         assert_eq!(config.icons, IconStyle::Unicode);
         assert_eq!(config.cache_limit_mib, None);
@@ -317,6 +336,12 @@ mod tests {
 
         let parsed: Config = toml::from_str("cover_mode = \"original\"").unwrap();
         assert_eq!(parsed.cover_mode, CoverMode::Original);
+
+        let parsed: Config = toml::from_str("cover_palette = \"theme\"").unwrap();
+        assert_eq!(parsed.cover_palette, CoverPalette::Theme);
+
+        let migrated: Config = toml::from_str("cover_mode = \"pixel\"").unwrap();
+        assert_eq!(migrated.cover_palette, CoverPalette::Original);
 
         let parsed: Config = toml::from_str("icons = \"nerd\"").unwrap();
         assert_eq!(parsed.icons, IconStyle::Nerd);
@@ -338,7 +363,7 @@ mod tests {
     fn terminal_theme_only_applies_when_theme_is_implicit() {
         let mut light = parse_with_metadata("quality = \"lossless\"");
         assert!(!light.theme_is_explicit);
-        assert!(light.should_probe_terminal_background());
+        assert!(light.should_apply_terminal_brightness());
         light.apply_terminal_brightness(Some(true));
         assert_eq!(light.config.theme, "fairyfloss");
 
@@ -353,7 +378,7 @@ mod tests {
         for is_light in [false, true] {
             let mut explicit = parse_with_metadata("theme = \"dracula\"");
             assert!(explicit.theme_is_explicit);
-            assert!(!explicit.should_probe_terminal_background());
+            assert!(!explicit.should_apply_terminal_brightness());
             explicit.apply_terminal_brightness(Some(is_light));
             assert_eq!(explicit.config.theme, "dracula");
         }
@@ -404,6 +429,7 @@ mod tests {
                 quality,
                 unm_enabled: false,
                 theme: "tokyo-night".into(),
+                theme_mode: ThemeMode::Light,
                 cache_limit_mib: Some(2048),
                 enter_replaces_queue: false,
                 layout: "stacked".into(),
@@ -411,6 +437,7 @@ mod tests {
                 progress_style: "bar".into(),
                 icons: IconStyle::Nerd,
                 cover_mode: CoverMode::Original,
+                cover_palette: CoverPalette::Theme,
                 cover_detail: CoverDetail::Quad,
                 pixel_scale: 1.5,
                 spectrum_enabled: true,
@@ -421,6 +448,7 @@ mod tests {
             let encoded = toml::to_string(&config).unwrap();
             assert!(encoded.contains(&format!("quality = \"{name}\"")));
             assert!(encoded.contains("icons = \"nerd\""));
+            assert!(encoded.contains("cover_palette = \"theme\""));
             let decoded: Config = toml::from_str(&encoded).unwrap();
             assert_eq!(decoded, config);
         }

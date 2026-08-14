@@ -228,6 +228,8 @@ impl SpectrumAnalyzer {
 }
 
 pub trait SpectrumStyle {
+    fn set_terminal_background(&mut self, _background: Option<Color>) {}
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -247,6 +249,7 @@ pub struct SpectrumView {
     glow: GhostBuffer,
     ticks: u64,
     settled: bool,
+    terminal_background: Option<Color>,
 }
 
 impl SpectrumView {
@@ -260,7 +263,12 @@ impl SpectrumView {
             glow: GhostBuffer::default(),
             ticks: 0,
             settled: true,
+            terminal_background: None,
         }
+    }
+
+    pub fn set_terminal_background(&mut self, background: Option<Color>) {
+        self.terminal_background = background;
     }
 
     pub fn tick(&mut self, capture: &SampleBuffer, playing: bool, preview: bool) {
@@ -299,6 +307,7 @@ impl SpectrumView {
             self.style = style_for(kind);
             self.glow.clear();
         }
+        self.style.set_terminal_background(self.terminal_background);
         clear_area(buf, area, theme.bg);
         if self.settled {
             self.glow.clear();
@@ -307,7 +316,7 @@ impl SpectrumView {
         self.style
             .render(&self.bins, &self.samples, area, buf, theme);
         if glow {
-            self.glow.apply(area, buf, theme);
+            self.glow.apply(area, buf, theme, self.terminal_background);
         } else {
             self.glow.clear();
         }
@@ -381,6 +390,21 @@ fn mix_color(foreground: Color, background: Color, background_weight: f32) -> Co
                 foreground
             }
         }
+    }
+}
+
+fn mix_with_background(
+    foreground: Color,
+    theme: &Theme,
+    terminal_background: Option<Color>,
+    background_weight: f32,
+) -> Color {
+    let Some(background) = theme.resolved_background(terminal_background) else {
+        return theme.faint;
+    };
+    match (foreground, background) {
+        (Color::Rgb(..), Color::Rgb(..)) => mix_color(foreground, background, background_weight),
+        _ => theme.faint,
     }
 }
 
@@ -482,11 +506,13 @@ fn draw_brick_bar(
     filled.min(height)
 }
 
-fn reflection_color(main: Color, theme: &Theme) -> Color {
-    match (main, theme.bg) {
-        (Color::Rgb(..), Color::Rgb(..)) => mix_color(main, theme.bg, REFLECTION_BACKGROUND_WEIGHT),
-        _ => theme.faint,
-    }
+fn reflection_color(main: Color, theme: &Theme, terminal_background: Option<Color>) -> Color {
+    mix_with_background(
+        main,
+        theme,
+        terminal_background,
+        REFLECTION_BACKGROUND_WEIGHT,
+    )
 }
 
 fn reflection_brick_visible(tick: u64, index: usize, distance: u16) -> bool {
@@ -615,9 +641,14 @@ impl SpectrumStyle for Mirror {
 struct Led {
     peaks: Vec<f32>,
     holds: Vec<u8>,
+    terminal_background: Option<Color>,
 }
 
 impl SpectrumStyle for Led {
+    fn set_terminal_background(&mut self, background: Option<Color>) {
+        self.terminal_background = background;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -630,7 +661,7 @@ impl SpectrumStyle for Led {
         self.peaks.resize(count, 0.0);
         self.holds.resize(count, 0);
         let ramp = Ramp::new(theme);
-        let afterglow = mix_color(ramp.at(0.25), theme.bg, 0.68);
+        let afterglow = mix_with_background(ramp.at(0.25), theme, self.terminal_background, 0.68);
         for index in 0..count {
             let value = bin_value(bins, index, count);
             if value >= self.peaks[index] {
@@ -994,9 +1025,14 @@ impl Vu {
 #[derive(Default)]
 struct Reflect {
     tick: u64,
+    terminal_background: Option<Color>,
 }
 
 impl SpectrumStyle for Reflect {
+    fn set_terminal_background(&mut self, background: Option<Color>) {
+        self.terminal_background = background;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -1023,7 +1059,11 @@ impl SpectrumStyle for Reflect {
             for distance in 0..reflected.min(area.height.saturating_sub(line + 1)) {
                 if reflection_brick_visible(self.tick, index, distance) {
                     let source_row = (distance * 2).min(main_height.saturating_sub(1));
-                    let color = reflection_color(brick_row_color(ramp, source_row, line), theme);
+                    let color = reflection_color(
+                        brick_row_color(ramp, source_row, line),
+                        theme,
+                        self.terminal_background,
+                    );
                     draw_brick(
                         buf,
                         area,
@@ -1156,7 +1196,13 @@ impl GhostBuffer {
         self.cells.clear();
     }
 
-    fn apply(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    fn apply(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &Theme,
+        terminal_background: Option<Color>,
+    ) {
         if self.area.width != area.width || self.area.height != area.height {
             self.area = Rect::new(0, 0, area.width, area.height);
             self.cells =
@@ -1176,14 +1222,24 @@ impl GhostBuffer {
                     ghost.symbol = cell.symbol().to_owned();
                     ghost.color = cell.fg;
                     if ghost.intensity > current {
-                        cell.set_fg(mix_color(cell.fg, theme.bg, 1.0 - ghost.intensity));
+                        cell.set_fg(mix_with_background(
+                            cell.fg,
+                            theme,
+                            terminal_background,
+                            1.0 - ghost.intensity,
+                        ));
                     }
                 } else {
                     ghost.intensity = decayed;
                     if ghost.intensity > 0.04 {
                         cell.set_symbol(&ghost.symbol).set_style(
                             Style::new()
-                                .fg(mix_color(ghost.color, theme.bg, 1.0 - ghost.intensity))
+                                .fg(mix_with_background(
+                                    ghost.color,
+                                    theme,
+                                    terminal_background,
+                                    1.0 - ghost.intensity,
+                                ))
                                 .bg(theme.bg),
                         );
                     }
@@ -1255,9 +1311,16 @@ mod tests {
         view.tick(&capture, true, false);
         view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
         assert!(buffer.content().iter().any(|cell| cell.symbol() != " "));
+        let playing_peak = view.bins.iter().copied().fold(0.0_f32, f32::max);
 
         capture.clear();
-        for _ in 0..200 {
+        view.tick(&capture, false, false);
+        let fading_peak = view.bins.iter().copied().fold(0.0_f32, f32::max);
+        assert!(fading_peak > 0.0 && fading_peak < playing_peak);
+        view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
+        assert!(buffer.content().iter().any(|cell| cell.symbol() != " "));
+
+        for _ in 1..200 {
             view.tick(&capture, false, false);
         }
         view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
@@ -1271,12 +1334,28 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         let mut glow = GhostBuffer::default();
         put(&mut buffer, area, 0, 0, "█", theme.accent, theme.bg);
-        glow.apply(area, &mut buffer, &theme);
+        glow.apply(area, &mut buffer, &theme, None);
         clear_area(&mut buffer, area, theme.bg);
-        glow.apply(area, &mut buffer, &theme);
+        glow.apply(area, &mut buffer, &theme, None);
 
         assert_eq!(buffer[(0, 0)].symbol(), "█");
         assert!((glow.cells[0].intensity - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn transparent_glow_blends_with_detected_rgb_without_painting_the_background() {
+        let theme = Theme::by_name("transparent");
+        let detected = Color::Rgb(20, 30, 40);
+        let area = Rect::new(0, 0, 1, 1);
+        let mut buffer = Buffer::empty(area);
+        let mut glow = GhostBuffer::default();
+        put(&mut buffer, area, 0, 0, "█", theme.accent, theme.bg);
+        glow.apply(area, &mut buffer, &theme, Some(detected));
+        clear_area(&mut buffer, area, theme.bg);
+        glow.apply(area, &mut buffer, &theme, Some(detected));
+
+        assert_eq!(buffer[(0, 0)].fg, mix_color(theme.accent, detected, 0.3));
+        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
     }
 
     #[test]
@@ -1423,14 +1502,23 @@ mod tests {
         let mut theme = Theme::db16();
         theme.bg = Color::Rgb(20, 30, 40);
         assert_eq!(
-            reflection_color(Color::Rgb(100, 150, 200), &theme),
+            reflection_color(Color::Rgb(100, 150, 200), &theme, None),
             Color::Rgb(50, 76, 101)
         );
 
         theme.bg = Color::Reset;
         assert_eq!(
-            reflection_color(Color::Rgb(100, 150, 200), &theme),
+            reflection_color(Color::Rgb(100, 150, 200), &theme, None),
             theme.faint
+        );
+
+        assert_eq!(
+            reflection_color(
+                Color::Rgb(100, 150, 200),
+                &theme,
+                Some(Color::Rgb(20, 30, 40)),
+            ),
+            Color::Rgb(50, 76, 101)
         );
     }
 }

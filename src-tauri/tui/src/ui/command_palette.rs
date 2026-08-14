@@ -85,7 +85,7 @@ fn draw_input(frame: &mut Frame, state: &AppState, area: Rect) {
             ),
             Span::styled("▎", Style::new().fg(theme.accent)),
         ]))
-        .style(Style::new().bg(theme.selection_bg())),
+        .style(state.selection_style()),
         area,
     );
 }
@@ -110,8 +110,11 @@ fn draw_commands(
     for (row, command) in commands.iter().skip(offset).take(visible).enumerate() {
         let index = offset + row;
         let selected = index == state.command_palette.selected;
-        let background = selected.then_some(theme.selection_bg());
-        let base = Style::new().bg(background.unwrap_or(theme.bg));
+        let base = if selected {
+            state.selection_style()
+        } else {
+            Style::new().bg(theme.bg)
+        };
         let marker_width = 2_usize.min(usize::from(area.width));
         let content_width = usize::from(area.width).saturating_sub(marker_width);
         let alias_width = text::display_width(command.aliases)

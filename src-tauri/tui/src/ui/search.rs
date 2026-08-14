@@ -326,7 +326,7 @@ fn draw_song_rows(
         ));
         let selected = visible_index == state.selected && selection_enabled && !state.filter.input;
         lines.push(columns.row(
-            &state.theme,
+            state,
             icons.heart,
             row,
             state.liked.contains(&row.id),
@@ -395,6 +395,7 @@ fn draw_entities<'a>(
         ));
         lines.push(columns.row(
             &state.theme,
+            state.selection_style(),
             visible_index + 1,
             row,
             visible_index == state.selected && !state.search.input,
@@ -473,12 +474,13 @@ impl EntityColumns {
     fn row(
         self,
         theme: &crate::theme::Theme,
+        selection_style: Style,
         index: usize,
         row: &EntityRow<'_>,
         selected: bool,
     ) -> Line<'static> {
         let base = if selected {
-            Style::new().bg(theme.selection_bg())
+            selection_style
         } else {
             Style::new()
         };
@@ -548,15 +550,16 @@ impl SearchColumns {
 
     fn row(
         self,
-        theme: &crate::theme::Theme,
+        state: &AppState,
         heart: &'static str,
         row: &SongRow,
         liked: bool,
         selected: bool,
         marquee_frame: u64,
     ) -> Line<'static> {
+        let theme = &state.theme;
         let base = if selected {
-            Style::new().bg(theme.selection_bg())
+            state.selection_style()
         } else {
             Style::new()
         };
@@ -747,7 +750,7 @@ mod tests {
             secondary: "Artist",
             count: "12 Songs".into(),
         };
-        let line = columns.row(&state.theme, 1, &row, true);
+        let line = columns.row(&state.theme, state.selection_style(), 1, &row, true);
         assert_eq!(line.width(), 76);
         assert_eq!(line.spans[0].style.fg, Some(state.theme.faint));
         assert_eq!(line.spans[2].style.fg, Some(state.theme.fg));
@@ -757,7 +760,7 @@ mod tests {
         assert!(line
             .spans
             .iter()
-            .all(|span| span.style.bg == Some(state.theme.selection_bg())));
+            .all(|span| span.style.bg == state.selection_style().bg));
     }
 
     #[test]
@@ -843,7 +846,7 @@ mod tests {
         assert_eq!(terminal.backend().buffer()[(79, 0)].symbol(), "╮");
         assert!(!(0..80).any(|x| terminal.backend().buffer()[(x, 23)].symbol() == "/"));
         let selected = &terminal.backend().buffer()[(7, 4)];
-        assert_eq!(selected.bg, state.theme.selection_bg());
+        assert_eq!(selected.bg, state.selection_style().bg.unwrap());
         assert_eq!(selected.fg, state.theme.fg);
     }
 
@@ -864,7 +867,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let title = &buffer[(4, 5)];
         assert_eq!(title.fg, state.theme.fg);
-        assert_eq!(title.bg, state.theme.selection_bg());
+        assert_eq!(title.bg, state.selection_style().bg.unwrap());
         assert!(title.modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(58, 5)].fg, state.theme.dim);
         assert_eq!(buffer[(73, 5)].fg, state.theme.faint);

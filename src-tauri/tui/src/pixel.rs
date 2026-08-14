@@ -26,6 +26,29 @@ pub enum CoverDetail {
     Octant,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CoverPalette {
+    #[default]
+    Original,
+    Theme,
+}
+
+impl CoverPalette {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::Theme => "theme",
+        }
+    }
+}
+
+impl fmt::Display for CoverPalette {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 impl CoverDetail {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -134,14 +157,18 @@ pub fn vinyl(
 
 pub fn from_image_bytes(
     bytes: &[u8],
+    palette_mode: CoverPalette,
     palette: &[Rgb],
     background: Color,
-    cell_width: u16,
-    cell_height: u16,
+    cells: (u16, u16),
     detail_scale: f32,
     detail: CoverDetail,
 ) -> Result<PixelCover> {
-    ensure!(!palette.is_empty(), "pixel cover palette cannot be empty");
+    let (cell_width, cell_height) = cells;
+    ensure!(
+        palette_mode == CoverPalette::Original || !palette.is_empty(),
+        "theme pixel cover palette cannot be empty"
+    );
     ensure!(
         cell_width > 0 && cell_height > 0,
         "pixel cover dimensions must be non-zero"
@@ -157,7 +184,7 @@ pub fn from_image_bytes(
     let (samples_x, samples_y) = detail.sample_size();
     let target_width = u32::from(cell_width) * samples_x;
     let target_height = u32::from(cell_height) * samples_y;
-    let detail_scale = detail_scale.clamp(0.5, 2.0);
+    let detail_scale = detail_scale.clamp(0.5, 4.0);
     let detail_width = ((target_width as f32 * detail_scale).round() as u32).max(1);
     let detail_height = ((target_height as f32 * detail_scale).round() as u32).max(1);
     let (resized_width, resized_height) = fitted_dimensions(
@@ -185,40 +212,37 @@ pub fn from_image_bytes(
                 detail_pixels[index] = background;
                 continue;
             };
-            let plain = nearest_color((red, green, blue), palette);
-            let error = color_distance_sq((red, green, blue), plain);
-            detail_pixels[index] = if error <= CLEAN_MATCH_SQ {
-                to_color(plain)
-            } else {
-                let offset = bayer_offset(target_x, target_y);
-                to_color(nearest_color(
-                    (
-                        apply_offset(red, offset),
-                        apply_offset(green, offset),
-                        apply_offset(blue, offset),
-                    ),
-                    palette,
-                ))
-            };
+            detail_pixels[index] = Color::Rgb(red, green, blue);
         }
     }
 
-    let candidates = color_candidates(palette, background);
+    let theme_candidates = color_candidates(palette, background);
     let mut cells = Vec::with_capacity(cell_width as usize * cell_height as usize);
     for cell_y in 0..cell_height {
         for cell_x in 0..cell_width {
             let samples = cell_samples(samples_x, samples_y, |sample_x, sample_y| {
-                sampled_color(
+                let x = u32::from(cell_x) * samples_x + sample_x;
+                let y = u32::from(cell_y) * samples_y + sample_y;
+                let color = sampled_color(
                     &detail_pixels,
                     detail_width,
                     detail_height,
-                    u32::from(cell_x) * samples_x + sample_x,
-                    u32::from(cell_y) * samples_y + sample_y,
+                    x,
+                    y,
                     target_width,
                     target_height,
-                )
+                );
+                render_sample(color, background, palette_mode, palette, x, y)
             });
-            cells.push(select_cell(&samples, detail, &candidates));
+            let original_candidates;
+            let candidates = match palette_mode {
+                CoverPalette::Original => {
+                    original_candidates = sample_candidates(&samples, detail);
+                    original_candidates.as_slice()
+                }
+                CoverPalette::Theme => theme_candidates.as_slice(),
+            };
+            cells.push(select_cell(&samples, detail, candidates));
         }
     }
 
@@ -227,6 +251,61 @@ pub fn from_image_bytes(
         height: cell_height,
         cells,
     })
+}
+
+fn render_sample(
+    color: Color,
+    background: Color,
+    palette_mode: CoverPalette,
+    palette: &[Rgb],
+    x: u32,
+    y: u32,
+) -> Color {
+    if color == background {
+        return color;
+    }
+    let Color::Rgb(red, green, blue) = color else {
+        return color;
+    };
+    let offset = bayer_offset(x, y);
+    match palette_mode {
+        CoverPalette::Original => Color::Rgb(
+            apply_offset(red, offset),
+            apply_offset(green, offset),
+            apply_offset(blue, offset),
+        ),
+        CoverPalette::Theme => {
+            let plain = nearest_color((red, green, blue), palette);
+            if color_distance_sq((red, green, blue), plain) <= CLEAN_MATCH_SQ {
+                to_color(plain)
+            } else {
+                to_color(nearest_color(
+                    (
+                        apply_offset(red, offset),
+                        apply_offset(green, offset),
+                        apply_offset(blue, offset),
+                    ),
+                    palette,
+                ))
+            }
+        }
+    }
+}
+
+fn sample_candidates(samples: &[Color; 8], detail: CoverDetail) -> Vec<Color> {
+    let count = match detail {
+        CoverDetail::Half => 2,
+        CoverDetail::Quad => 4,
+        CoverDetail::Sextant => 6,
+        CoverDetail::Octant => 8,
+    };
+    let mut candidates = Vec::with_capacity(count);
+    for &color in &samples[..count] {
+        if !candidates.contains(&color) {
+            candidates.push(color);
+        }
+    }
+    candidates
 }
 
 fn premultiply_channel(channel: u8, alpha: u8) -> u8 {
@@ -587,7 +666,7 @@ mod tests {
 
     use super::{
         fitted_dimensions, from_image_bytes, octant_glyph, select_cell, sextant_glyph, CoverDetail,
-        PixelCell, PixelCover, Rgb,
+        CoverPalette, PixelCell, PixelCover, Rgb,
     };
 
     const BLACK: Rgb = (0, 0, 0);
@@ -598,8 +677,16 @@ mod tests {
         let bytes = png_bytes(2, 2, &[(255, 0, 0), (0, 255, 0), (0, 0, 255), WHITE]);
         let palette = [(255, 0, 0), (0, 255, 0), (0, 0, 255), WHITE];
 
-        let cover =
-            from_image_bytes(&bytes, &palette, Color::Black, 2, 1, 1.0, CoverDetail::Half).unwrap();
+        let cover = from_image_bytes(
+            &bytes,
+            CoverPalette::Theme,
+            &palette,
+            Color::Black,
+            (2, 1),
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
 
         assert_eq!(
             cover.cells,
@@ -619,14 +706,111 @@ mod tests {
     }
 
     #[test]
+    fn original_palette_keeps_truecolor_and_applies_bayer() {
+        let bytes = png_bytes(1, 2, &[(100, 150, 200); 2]);
+
+        let original = from_image_bytes(
+            &bytes,
+            CoverPalette::Original,
+            &[],
+            Color::Reset,
+            (1, 1),
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
+        let theme = from_image_bytes(
+            &bytes,
+            CoverPalette::Theme,
+            &[BLACK, WHITE],
+            Color::Reset,
+            (1, 1),
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
+
+        assert_eq!(
+            original.cells,
+            vec![PixelCell {
+                glyph: '▀',
+                fg: Color::Rgb(93, 143, 193),
+                bg: Color::Rgb(104, 154, 204),
+            }]
+        );
+        assert_ne!(original, theme);
+        assert!(theme.cells.iter().all(|cell| {
+            [cell.fg, cell.bg]
+                .into_iter()
+                .all(|color| matches!(color, Color::Rgb(0, 0, 0) | Color::Rgb(255, 255, 255)))
+        }));
+    }
+
+    #[test]
+    fn four_x_detail_keeps_multiple_final_bayer_phases() {
+        let bytes = png_bytes(4, 4, &[(100, 150, 200); 16]);
+
+        let cover = from_image_bytes(
+            &bytes,
+            CoverPalette::Original,
+            &[],
+            Color::Reset,
+            (4, 2),
+            4.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
+
+        assert_eq!(cover.cells[0].fg, Color::Rgb(93, 143, 193));
+        assert_eq!(cover.cells[3].fg, Color::Rgb(102, 152, 202));
+        assert_ne!(cover.cells[0].fg, cover.cells[3].fg);
+    }
+
+    #[test]
+    fn original_palette_preserves_transparent_reset_samples() {
+        let bytes = rgba_png_bytes(1, 2, &[(255, 0, 0, 255), (0, 0, 0, 0)]);
+
+        let cover = from_image_bytes(
+            &bytes,
+            CoverPalette::Original,
+            &[],
+            Color::Reset,
+            (1, 1),
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
+
+        assert_eq!(cover.cells[0].glyph, '▀');
+        assert!(matches!(cover.cells[0].fg, Color::Rgb(248, 0, 0)));
+        assert_eq!(cover.cells[0].bg, Color::Reset);
+    }
+
+    #[test]
     fn bayer_dithering_is_deterministic() {
         let bytes = png_bytes(4, 4, &[(128, 128, 128); 16]);
         let palette = [BLACK, WHITE];
 
-        let first =
-            from_image_bytes(&bytes, &palette, Color::Black, 4, 2, 1.0, CoverDetail::Half).unwrap();
-        let second =
-            from_image_bytes(&bytes, &palette, Color::Black, 4, 2, 1.0, CoverDetail::Half).unwrap();
+        let first = from_image_bytes(
+            &bytes,
+            CoverPalette::Theme,
+            &palette,
+            Color::Black,
+            (4, 2),
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
+        let second = from_image_bytes(
+            &bytes,
+            CoverPalette::Theme,
+            &palette,
+            Color::Black,
+            (4, 2),
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
 
         assert_eq!(first, second);
         assert_eq!((first.width, first.height), (4, 2));
@@ -646,10 +830,10 @@ mod tests {
 
         let cover = from_image_bytes(
             &bytes,
+            CoverPalette::Theme,
             &[BLACK, red],
             background,
-            4,
-            2,
+            (4, 2),
             1.0,
             CoverDetail::Half,
         )
@@ -686,10 +870,10 @@ mod tests {
 
         let cover = from_image_bytes(
             &bytes,
+            CoverPalette::Theme,
             &[BLACK, red],
             Color::Reset,
-            1,
-            1,
+            (1, 1),
             1.0,
             CoverDetail::Half,
         )
@@ -712,10 +896,10 @@ mod tests {
 
         let cover = from_image_bytes(
             &bytes,
+            CoverPalette::Theme,
             &[BLACK, (128, 0, 0), red],
             Color::Reset,
-            1,
-            1,
+            (1, 1),
             1.0,
             CoverDetail::Half,
         )
@@ -729,13 +913,13 @@ mod tests {
         let bytes = png_bytes(8, 8, &[(128, 128, 128); 64]);
         let palette = [BLACK, WHITE];
 
-        for scale in [0.5, 1.0, 2.0] {
+        for scale in [0.5, 1.0, 2.0, 4.0] {
             let cover = from_image_bytes(
                 &bytes,
+                CoverPalette::Theme,
                 &palette,
                 Color::Black,
-                7,
-                3,
+                (7, 3),
                 scale,
                 CoverDetail::Half,
             )
@@ -743,6 +927,40 @@ mod tests {
             assert_eq!((cover.width, cover.height), (7, 3));
             assert_eq!(cover.cells.len(), 21);
         }
+    }
+
+    #[test]
+    fn detail_scale_is_clamped_to_four() {
+        let pixels = (0..64)
+            .map(|index| {
+                let value = (index * 4) as u8;
+                (value, 255 - value, value / 2)
+            })
+            .collect::<Vec<_>>();
+        let bytes = png_bytes(8, 8, &pixels);
+
+        let at_limit = from_image_bytes(
+            &bytes,
+            CoverPalette::Original,
+            &[],
+            Color::Reset,
+            (3, 2),
+            4.0,
+            CoverDetail::Quad,
+        )
+        .unwrap();
+        let beyond_limit = from_image_bytes(
+            &bytes,
+            CoverPalette::Original,
+            &[],
+            Color::Reset,
+            (3, 2),
+            99.0,
+            CoverDetail::Quad,
+        )
+        .unwrap();
+
+        assert_eq!(at_limit, beyond_limit);
     }
 
     #[test]
