@@ -3,6 +3,7 @@ import {
   createTrackSwitchGuard,
   runLatestTrackSwitch,
 } from '../src/utils/trackSwitch';
+import { reportNeteaseScrobble } from '../src/utils/scrobbleReport';
 
 function deferred<T>() {
   let resolve: (value: T | PromiseLike<T>) => void = () => {};
@@ -13,6 +14,35 @@ function deferred<T>() {
 }
 
 describe('快速切歌事务', () => {
+  test('网易云上报失败会被接住，不阻塞切歌', async () => {
+    let rejectReport: (error: Error) => void = () => {};
+    const pendingReport = new Promise<never>((_, reject) => {
+      rejectReport = reject;
+    });
+    const failures: unknown[] = [];
+    const switched: string[] = [];
+
+    const result = reportNeteaseScrobble(
+      { id: 42, sourceid: 7, time: 31 },
+      () => pendingReport,
+      error => failures.push(error)
+    );
+    const switchResult = await runLatestTrackSwitch(createTrackSwitchGuard(), {
+      loadTrack: async () => 'next track',
+      commitTrack: track => switched.push(track),
+      loadSource: async () => 'next source',
+      commitSource: source => switched.push(source),
+    });
+
+    expect(result).toBeUndefined();
+    expect(switchResult).toBe(true);
+    expect(switched).toEqual(['next track', 'next source']);
+    const failure = new Error('offline');
+    rejectReport(failure);
+    await Promise.resolve();
+    expect(failures).toEqual([failure]);
+  });
+
   test('新切歌会立即清场，并阻止旧请求晚到后覆盖音频', async () => {
     const guard = createTrackSwitchGuard();
     const firstDetail = deferred<{ name: string }>();

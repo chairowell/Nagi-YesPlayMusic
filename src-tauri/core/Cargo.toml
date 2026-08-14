@@ -19,6 +19,7 @@ async-trait = "=0.1.92"
 base64 = "=0.22.1"
 futures-util = "=0.3.33"
 md-5 = { version = "=0.10.6", optional = true }
+ncm-api-rs = "=0.1.0"
 reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"], optional = true }
 serde = { version = "=1.0.229", features = ["derive"] }

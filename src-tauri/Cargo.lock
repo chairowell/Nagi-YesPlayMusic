@@ -7382,6 +7382,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "md-5",
+ "ncm-api-rs",
  "reqwest 0.12.23",
  "rusqlite",
  "serde",
