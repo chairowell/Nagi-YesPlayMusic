@@ -31,6 +31,18 @@ fn read_entry(cache: &TrackCache, key: CacheKey) -> Option<Vec<u8>> {
 }
 
 #[test]
+fn empty_streams_are_rejected_instead_of_cached() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache = TrackCache::open(directory.path().join("cache")).unwrap();
+    let key = CacheKey::new(7, AudioQuality::High320);
+    let writer = cache
+        .begin_write(CacheWriteRequest::new(key, AudioCodec::Mp3, 320_000))
+        .unwrap();
+    assert!(matches!(writer.finish(), Err(CacheError::EmptyEntry)));
+    assert!(cache.lookup(key).unwrap().is_none());
+}
+
+#[test]
 fn quality_values_and_stream_integrity_are_part_of_the_public_contract() {
     assert_eq!(AudioQuality::Low128.bitrate(), 128_000);
     assert_eq!(AudioQuality::Medium192.bitrate(), 192_000);

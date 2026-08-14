@@ -69,6 +69,8 @@ pub enum CacheError {
     GenerationExhausted,
     #[error("audio length mismatch: expected {expected} bytes, received {actual}")]
     LengthMismatch { expected: u64, actual: u64 },
+    #[error("refusing to cache an empty audio stream")]
+    EmptyEntry,
     #[error("audio MD5 mismatch: expected {expected:02x?}, received {actual:02x?}")]
     Md5Mismatch {
         expected: [u8; 16],

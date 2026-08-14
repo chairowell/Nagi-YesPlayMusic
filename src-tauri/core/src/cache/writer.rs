@@ -40,6 +40,11 @@ impl<'cache> CacheWriter<'cache> {
     pub fn finish(mut self) -> Result<CacheMetadata, CacheError> {
         self.staging.as_file_mut().flush()?;
 
+        // A 200 + empty body upstream would otherwise publish a permanently
+        // "valid" zero-byte entry that every later lookup trusts.
+        if self.bytes == 0 {
+            return Err(CacheError::EmptyEntry);
+        }
         if let Some(expected) = self.request.expected_bytes {
             if expected != self.bytes {
                 return Err(CacheError::LengthMismatch {
