@@ -185,6 +185,28 @@
       </div>
       <div v-if="isDesktop" class="item">
         <div class="left">
+          <div class="title">
+            {{ $t('settings.sharedCache.title') }}
+          </div>
+          <div v-if="sharedCacheDescription" class="description">
+            {{ sharedCacheDescription }}
+          </div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="share-cache-with-ypm"
+              v-model="shareCacheWithYpm"
+              type="checkbox"
+              name="share-cache-with-ypm"
+              :disabled="sharedCacheMigrationState === 'running'"
+            />
+            <label for="share-cache-with-ypm"></label>
+          </div>
+        </div>
+      </div>
+      <div v-if="isDesktop" class="item">
+        <div class="left">
           <div class="title"> {{ $t('settings.cacheLimit.text') }} </div>
         </div>
         <div class="right">
@@ -904,6 +926,12 @@ import {
   installPendingAppUpdate,
 } from '@/services/appUpdater';
 import { syncDesktopSettings } from '@/services/desktopSettings';
+import {
+  getSharedCacheStatus,
+  migrateIndexedDbTracksToSharedCache,
+  syncSharedCacheSetting,
+} from '@/services/sharedCache';
+import type { SharedCacheMigrationProgress } from '@/services/sharedCache';
 
 // Only these locales spell out the space bar; English keeps the key name.
 const SPACE_KEY_LABELS: Partial<Record<LocaleCode, string>> = {
@@ -925,6 +953,7 @@ const SHORTCUT_NAME_KEYS = Object.freeze({
 const validShortcutCodes = ['=', '-', '~', '[', ']', ';', "'", ',', '.', '/'];
 
 type ShortcutKind = 'shortcut' | 'globalShortcut';
+type SharedCacheMigrationState = 'idle' | 'running' | 'complete' | 'failed';
 type AppUpdaterState =
   | 'idle'
   | 'checking'
@@ -967,6 +996,14 @@ export default defineComponent({
       updaterVersion: '',
       updaterNotes: '',
       updaterProgress: null as number | null,
+      sharedCacheTerminalDetected: false,
+      sharedCacheMigrationState: 'idle' as SharedCacheMigrationState,
+      sharedCacheMigrationProgress: {
+        completed: 0,
+        total: 0,
+        imported: 0,
+        skipped: 0,
+      } as SharedCacheMigrationProgress,
     };
   },
   computed: {
@@ -1027,6 +1064,40 @@ export default defineComponent({
         return String(this.$t('settings.updater.failed'));
       }
       return String(this.$t('settings.updater.ready'));
+    },
+    sharedCacheDescription(): string {
+      const progress = this.sharedCacheMigrationProgress;
+      if (this.sharedCacheMigrationState === 'running') {
+        return String(
+          this.$t('settings.sharedCache.migrating', {
+            completed: progress.completed,
+            total: progress.total,
+          })
+        );
+      }
+      if (this.sharedCacheMigrationState === 'complete') {
+        return String(
+          this.$t('settings.sharedCache.migrated', {
+            imported: progress.imported,
+            total: progress.total,
+          })
+        );
+      }
+      if (this.sharedCacheMigrationState === 'failed') {
+        return String(
+          this.$t('settings.sharedCache.failed', {
+            completed: progress.completed,
+            total: progress.total,
+          })
+        );
+      }
+      if (
+        this.sharedCacheTerminalDetected &&
+        !this.settings.shareCacheWithYpm
+      ) {
+        return String(this.$t('settings.sharedCache.detected'));
+      }
+      return '';
     },
     showUserInfo() {
       return isLooseLoggedIn() && this.data.user.nickname;
@@ -1258,6 +1329,14 @@ export default defineComponent({
           key: 'automaticallyCacheSongs',
           value,
         });
+      },
+    },
+    shareCacheWithYpm: {
+      get() {
+        return this.settings.shareCacheWithYpm;
+      },
+      set(value: boolean) {
+        void this.changeSharedCacheSetting(value);
       },
     },
     showLyricsTranslation: {
@@ -1548,11 +1627,17 @@ export default defineComponent({
   },
   created() {
     this.countDBSize();
-    if (isDesktopRuntime) this.getAllOutputDevices();
+    if (isDesktopRuntime) {
+      this.getAllOutputDevices();
+      void this.refreshSharedCacheStatus();
+    }
   },
   activated() {
     this.countDBSize();
-    if (isDesktopRuntime) this.getAllOutputDevices();
+    if (isDesktopRuntime) {
+      this.getAllOutputDevices();
+      void this.refreshSharedCacheStatus();
+    }
   },
   beforeUnmount() {
     this.stopLastfmChecker();
@@ -1618,6 +1703,56 @@ export default defineComponent({
       clearTrackSourceCache().then(() => {
         this.countDBSize();
       });
+    },
+    async refreshSharedCacheStatus() {
+      try {
+        await syncSharedCacheSetting(this.settings.shareCacheWithYpm);
+        const status = await getSharedCacheStatus();
+        this.sharedCacheTerminalDetected = status.terminalCacheDetected;
+        if (
+          this.settings.shareCacheWithYpm &&
+          this.sharedCacheMigrationState === 'idle'
+        ) {
+          await this.migrateLegacyTrackCache();
+        }
+      } catch (error) {
+        console.warn('[shared-cache] status check failed', error);
+      }
+    },
+    async changeSharedCacheSetting(value: boolean) {
+      if (this.sharedCacheMigrationState === 'running') return;
+      try {
+        await syncSharedCacheSetting(value);
+        this.updateSettings({ key: 'shareCacheWithYpm', value });
+        if (!value) {
+          this.sharedCacheMigrationState = 'idle';
+          await this.refreshSharedCacheStatus();
+          return;
+        }
+        this.sharedCacheTerminalDetected = false;
+        await this.migrateLegacyTrackCache();
+      } catch (error) {
+        console.warn('[shared-cache] configuration failed', error);
+        this.showToast(String(this.$t('settings.sharedCache.enableFailed')));
+      }
+    },
+    async migrateLegacyTrackCache() {
+      if (this.sharedCacheMigrationState === 'running') return;
+      this.sharedCacheMigrationState = 'running';
+      try {
+        this.sharedCacheMigrationProgress =
+          await migrateIndexedDbTracksToSharedCache({
+            quality: this.settings.musicQuality,
+            onProgress: progress => {
+              this.sharedCacheMigrationProgress = progress;
+            },
+          });
+        this.sharedCacheMigrationState = 'complete';
+      } catch (error) {
+        console.warn('[shared-cache] IndexedDB migration failed', error);
+        this.sharedCacheMigrationState = 'failed';
+        this.showToast(String(this.$t('settings.sharedCache.migrationFailed')));
+      }
     },
     async handleAppUpdate() {
       if (this.updaterState === 'available') {

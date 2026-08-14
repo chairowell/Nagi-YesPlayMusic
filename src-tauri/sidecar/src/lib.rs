@@ -8,4 +8,5 @@ pub mod proxy_relay;
 pub mod renderer;
 pub mod server;
 pub mod session;
+pub mod shared_cache;
 pub mod unm;

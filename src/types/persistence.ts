@@ -24,6 +24,7 @@ export interface SettingsState {
   showPlaylistsByAppleMusic: boolean;
   enableUnblockNeteaseMusic: boolean;
   automaticallyCacheSongs: boolean;
+  shareCacheWithYpm: boolean;
   cacheLimit: number | null;
   enableReversedMode: boolean;
   nyancatStyle: boolean;

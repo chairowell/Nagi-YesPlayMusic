@@ -13,6 +13,7 @@ async-trait = "=0.1.92"
 axum = { version = "=0.8.6", features = ["macros", "multipart"] }
 base64 = "=0.22.1"
 bytes = "=1.12.1"
+dirs = "=6.0.0"
 futures-util = "=0.3.33"
 getrandom = "=0.3.3"
 http-body-util = "=0.1.4"
@@ -40,7 +41,7 @@ unm_api_utils = "=0.4.0"
 unm_engine = "=0.4.0"
 unm_types = "=0.4.0"
 url = "=2.5.8"
-yesplaymusic-core = { path = "../core" }
+yesplaymusic-core = { path = "../core", features = ["cache"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

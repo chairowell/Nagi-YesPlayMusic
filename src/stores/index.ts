@@ -8,6 +8,7 @@ import { isDesktopRuntime } from '@/utils/runtime';
 import { sendDesktop } from '@/services/desktopTransport';
 import { isLastfmCallbackLocation } from '@/services/lastfmAuth';
 import { syncDesktopSettings } from '@/services/desktopSettings';
+import { syncSharedCacheSetting } from '@/services/sharedCache';
 import { normalizePersistedLocale, resolveLocale } from '@/locale/catalog';
 
 const isLastfmCallback = isLastfmCallbackLocation(window.location);
@@ -17,6 +18,12 @@ setActivePinia(pinia);
 
 export const appStore = useAppStore(pinia);
 registerAppStore(appStore);
+
+if (isDesktopRuntime && !isLastfmCallback) {
+  void syncSharedCacheSetting(appStore.settings.shareCacheWithYpm).catch(
+    error => console.warn('[shared-cache] initial configuration failed', error)
+  );
+}
 
 watch(
   () => [appStore.settings, appStore.data],
@@ -39,6 +46,9 @@ appStore.$onAction(({ name, after }) => {
     return;
   after(() => {
     void syncDesktopSettings(appStore.settings);
+    void syncSharedCacheSetting(appStore.settings.shareCacheWithYpm).catch(
+      error => console.warn('[shared-cache] configuration failed', error)
+    );
   });
 });
 
