@@ -1344,8 +1344,10 @@ async fn settings_save_persists_the_preview_and_updates_playback_quality() {
 
     state.update(Action::SwitchView(View::Settings), &fx);
     state.update(Action::AdjustSetting(1), &fx);
-    state.update(Action::MoveSelection(1), &fx);
-    state.update(Action::MoveSelection(1), &fx);
+    state.settings.selected = super::settings::SettingField::ALL
+        .iter()
+        .position(|field| *field == super::settings::SettingField::Quality)
+        .unwrap();
     state.update(Action::AdjustSetting(1), &fx);
     assert_eq!(state.config.quality, AudioQuality::Lossless);
     assert_eq!(fx.ncm.quality(), AudioQuality::Lossless);
@@ -1366,8 +1368,10 @@ async fn quality_preview_rejects_a_prefetch_from_the_previous_setting() {
     let mut state = AppState::new(&Config::default());
     state.queue = vec![row(42)];
     state.update(Action::SwitchView(View::Settings), &fx);
-    state.update(Action::MoveSelection(1), &fx);
-    state.update(Action::MoveSelection(1), &fx);
+    state.settings.selected = super::settings::SettingField::ALL
+        .iter()
+        .position(|field| *field == super::settings::SettingField::Quality)
+        .unwrap();
     state.update(Action::AdjustSetting(1), &fx);
 
     state.update(

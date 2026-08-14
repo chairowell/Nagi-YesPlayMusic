@@ -17,11 +17,15 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "pico8",
     "gameboy",
     "everforest",
+    "everforest-light",
     "tokyo-night",
     "tokyo-night-storm",
+    "tokyo-night-day",
     "one-dark",
     "dracula",
+    "alucard",
     "one-dark-pro",
+    "one-light",
     "synthwave84",
     "laserwave",
     "fairyfloss",
@@ -221,6 +225,78 @@ pub const ULTRAVIOLENCE: &[Rgb] = &[
     (0xc9, 0xa7, 0x6f),
     (0xc9, 0x8a, 0x8e),
 ];
+
+// Official light counterparts, six-role order (bg fg dim faint accent accent2).
+pub const TOKYO_NIGHT_DAY: &[Rgb] = &[
+    (0xe1, 0xe2, 0xe7),
+    (0x37, 0x60, 0xbf),
+    (0x84, 0x8c, 0xb5),
+    (0xa8, 0xae, 0xcb),
+    (0x2e, 0x7d, 0xe9),
+    (0xf5, 0x2a, 0x65),
+];
+
+pub const ALUCARD: &[Rgb] = &[
+    (0xff, 0xfb, 0xeb),
+    (0x1f, 0x1f, 0x1f),
+    (0x6c, 0x66, 0x4b),
+    (0xcf, 0xc9, 0xa5),
+    (0x64, 0x4a, 0xc9),
+    (0xa3, 0x14, 0x4d),
+];
+
+pub const ONE_LIGHT: &[Rgb] = &[
+    (0xfa, 0xfa, 0xfa),
+    (0x38, 0x3a, 0x42),
+    (0x69, 0x6c, 0x77),
+    (0xa0, 0xa1, 0xa7),
+    (0x40, 0x78, 0xf2),
+    (0xe4, 0x56, 0x49),
+];
+
+pub const EVERFOREST_LIGHT: &[Rgb] = &[
+    (0xfd, 0xf6, 0xe3),
+    (0x5c, 0x6a, 0x72),
+    (0x93, 0x9f, 0x91),
+    (0xbd, 0xc3, 0xaf),
+    (0x8d, 0xa1, 0x01),
+    (0xf8, 0x55, 0x52),
+];
+
+/// Appearance-paired builtins as (dark, light). Reverse lookups take the
+/// first dark partner, so canonical entries sit ahead of their aliases.
+const APPEARANCE_PAIRS: &[(&str, &str)] = &[
+    ("tokyo-night", "tokyo-night-day"),
+    ("tokyo-night-storm", "tokyo-night-day"),
+    ("dracula", "alucard"),
+    ("one-dark-pro", "one-light"),
+    ("one-dark", "one-light"),
+    ("everforest", "everforest-light"),
+];
+
+/// Map a theme name onto the requested appearance. Auto follows the
+/// detected terminal background and treats unknown as dark; names
+/// without a paired variant come back unchanged.
+pub fn resolved_name(
+    name: &str,
+    mode: crate::config::ThemeMode,
+    terminal_is_light: Option<bool>,
+) -> &str {
+    let light = match mode {
+        crate::config::ThemeMode::Light => true,
+        crate::config::ThemeMode::Dark => false,
+        crate::config::ThemeMode::Auto => terminal_is_light.unwrap_or(false),
+    };
+    for (dark, light_name) in APPEARANCE_PAIRS {
+        if light && *dark == name {
+            return light_name;
+        }
+        if !light && *light_name == name {
+            return dark;
+        }
+    }
+    name
+}
 
 #[derive(Clone, Copy)]
 struct RoleIndices {
@@ -440,11 +516,15 @@ impl Theme {
             "pico8" => Some(Self::pico8()),
             "gameboy" => Some(Self::gameboy()),
             "everforest" => Some(Self::everforest()),
+            "everforest-light" => Some(Self::six_role_palette(EVERFOREST_LIGHT)),
             "tokyo-night" => Some(Self::tokyo_night()),
             "tokyo-night-storm" => Some(Self::tokyo_night_storm()),
+            "tokyo-night-day" => Some(Self::six_role_palette(TOKYO_NIGHT_DAY)),
             "one-dark" => Some(Self::one_dark()),
             "dracula" => Some(Self::dracula()),
+            "alucard" => Some(Self::six_role_palette(ALUCARD)),
             "one-dark-pro" => Some(Self::one_dark_pro()),
+            "one-light" => Some(Self::six_role_palette(ONE_LIGHT)),
             "synthwave84" => Some(Self::synthwave84()),
             "laserwave" => Some(Self::laserwave()),
             "fairyfloss" => Some(Self::fairyfloss()),
@@ -626,7 +706,7 @@ mod tests {
     use ratatui::style::{Color, Modifier};
     use tempfile::tempdir;
 
-    use super::{parse_hex_color, Theme, BUILTIN_NAMES, DB16};
+    use super::{parse_hex_color, resolved_name, Theme, BUILTIN_NAMES, DB16};
 
     #[test]
     fn builtins_use_their_documented_background_and_accent() {
@@ -903,5 +983,61 @@ accent = 2
     fn assert_db16(theme: Theme) {
         assert_eq!(theme, Theme::db16());
         assert_eq!(theme.palette, DB16);
+    }
+
+    #[test]
+    fn appearance_pairs_resolve_in_both_directions() {
+        use crate::config::ThemeMode;
+        assert_eq!(
+            resolved_name("tokyo-night", ThemeMode::Light, None),
+            "tokyo-night-day"
+        );
+        assert_eq!(resolved_name("alucard", ThemeMode::Dark, None), "dracula");
+        // one-light's canonical dark partner is one-dark-pro, not one-dark.
+        assert_eq!(
+            resolved_name("one-light", ThemeMode::Dark, None),
+            "one-dark-pro"
+        );
+    }
+
+    #[test]
+    fn auto_mode_follows_the_detected_terminal_and_defaults_to_dark() {
+        use crate::config::ThemeMode;
+        assert_eq!(
+            resolved_name("everforest", ThemeMode::Auto, Some(true)),
+            "everforest-light"
+        );
+        assert_eq!(
+            resolved_name("everforest-light", ThemeMode::Auto, Some(false)),
+            "everforest"
+        );
+        // Unknown terminals must not flip a dark selection.
+        assert_eq!(
+            resolved_name("everforest", ThemeMode::Auto, None),
+            "everforest"
+        );
+    }
+
+    #[test]
+    fn unpaired_themes_ignore_the_appearance_mode() {
+        use crate::config::ThemeMode;
+        for mode in [ThemeMode::Auto, ThemeMode::Dark, ThemeMode::Light] {
+            assert_eq!(
+                resolved_name("synthwave84", mode, Some(true)),
+                "synthwave84"
+            );
+            assert_eq!(
+                resolved_name("transparent", mode, Some(true)),
+                "transparent"
+            );
+        }
+    }
+
+    #[test]
+    fn light_builtins_carry_their_official_backgrounds() {
+        let alucard = Theme::by_name("alucard");
+        assert_eq!(alucard.bg, Color::Rgb(0xff, 0xfb, 0xeb));
+        let day = Theme::by_name("tokyo-night-day");
+        assert_eq!(day.bg, Color::Rgb(0xe1, 0xe2, 0xe7));
     }
 }

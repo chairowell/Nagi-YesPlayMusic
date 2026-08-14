@@ -13,6 +13,7 @@ use super::{spawn_render_idle, AppState, Effects, PlayLayout, PREVIEW_CELLS};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SettingField {
     Theme,
+    ThemeMode,
     Language,
     Quality,
     CoverMode,
@@ -29,8 +30,9 @@ pub(crate) enum SettingField {
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 15] = [
         Self::Theme,
+        Self::ThemeMode,
         Self::Language,
         Self::Quality,
         Self::CoverMode,
@@ -49,6 +51,7 @@ impl SettingField {
     pub(crate) const fn label(self) -> Key {
         match self {
             Self::Theme => Key::SettingTheme,
+            Self::ThemeMode => Key::SettingThemeMode,
             Self::Language => Key::SettingLanguage,
             Self::Quality => Key::SettingQuality,
             Self::CoverMode => Key::SettingCoverMode,
@@ -177,6 +180,11 @@ impl AppState {
                 self.config.theme =
                     cycle(BUILTIN_NAMES, &self.config.theme.as_str(), delta).to_owned();
             }
+            SettingField::ThemeMode => {
+                use crate::config::ThemeMode;
+                const VALUES: &[ThemeMode] = &[ThemeMode::Auto, ThemeMode::Dark, ThemeMode::Light];
+                self.config.theme_mode = cycle(VALUES, &self.config.theme_mode, delta);
+            }
             SettingField::Language => {
                 const VALUES: &[&str] = &["zh", "en", "ja"];
                 self.config.language =
@@ -276,7 +284,25 @@ impl AppState {
 
     pub(crate) fn setting_value(&self, field: SettingField) -> String {
         match field {
-            SettingField::Theme => self.config.theme.clone(),
+            SettingField::Theme => crate::theme::resolved_name(
+                &self.config.theme,
+                self.config.theme_mode,
+                self.terminal_is_light,
+            )
+            .to_owned(),
+            SettingField::ThemeMode => {
+                use crate::config::ThemeMode;
+                match self.config.theme_mode {
+                    ThemeMode::Auto => match self.terminal_is_light {
+                        Some(true) => "auto → light",
+                        Some(false) => "auto → dark",
+                        None => "auto",
+                    },
+                    ThemeMode::Dark => "dark",
+                    ThemeMode::Light => "light",
+                }
+                .to_owned()
+            }
             SettingField::Language => match i18n::Lang::from_config(&self.config.language) {
                 i18n::Lang::Zh => "中文",
                 i18n::Lang::En => "English",
@@ -401,7 +427,8 @@ impl AppState {
         before: &Config,
         restored_theme: Option<Theme>,
     ) {
-        let theme_changed = before.theme != self.config.theme;
+        let theme_changed =
+            before.theme != self.config.theme || before.theme_mode != self.config.theme_mode;
         let pixel_changed = (before.pixel_scale - self.config.pixel_scale).abs() > f32::EPSILON
             || before.cover_detail != self.config.cover_detail
             || before.cover_palette != self.config.cover_palette;
@@ -409,7 +436,13 @@ impl AppState {
             || before.spectrum_enabled != self.config.spectrum_enabled;
 
         if theme_changed {
-            self.theme = restored_theme.unwrap_or_else(|| Theme::by_name(&self.config.theme));
+            self.theme = restored_theme.unwrap_or_else(|| {
+                Theme::by_name(crate::theme::resolved_name(
+                    &self.config.theme,
+                    self.config.theme_mode,
+                    self.terminal_is_light,
+                ))
+            });
         }
         self.layout = PlayLayout::from_config(&self.config.layout);
         self.thick_progress = self.config.progress_style == "bar";

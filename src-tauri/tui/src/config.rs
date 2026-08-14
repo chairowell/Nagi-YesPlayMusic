@@ -26,6 +26,16 @@ pub enum IconStyle {
     Nerd,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Follow the terminal background detected over OSC 11; unknown = dark.
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -42,6 +52,9 @@ pub struct Config {
     pub unm_enabled: bool,
     /// Built-in theme name or a TOML file in themes/.
     pub theme: String,
+    /// Swap paired themes to their light/dark counterpart; Auto follows
+    /// the terminal background. Themes without a pair ignore this.
+    pub theme_mode: ThemeMode,
     /// Explicit ypm process cache cap in MiB. None keeps the database value.
     pub cache_limit_mib: Option<u64>,
     /// Enter on a list: true = the list becomes the queue from that song
@@ -99,6 +112,7 @@ impl Default for Config {
             quality: AudioQuality::High320,
             unm_enabled: true,
             theme: "db16".into(),
+            theme_mode: ThemeMode::default(),
             cache_limit_mib: None,
             enter_replaces_queue: true,
             layout: "side".into(),
@@ -415,6 +429,7 @@ mod tests {
                 quality,
                 unm_enabled: false,
                 theme: "tokyo-night".into(),
+                theme_mode: ThemeMode::Light,
                 cache_limit_mib: Some(2048),
                 enter_replaces_queue: false,
                 layout: "stacked".into(),

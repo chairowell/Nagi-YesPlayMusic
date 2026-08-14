@@ -368,6 +368,7 @@ pub struct AppState {
     pub zen: bool,
     pub theme: Theme,
     pub(crate) terminal_background: Option<Color>,
+    pub(crate) terminal_is_light: Option<bool>,
     pub config: Config,
     pub(crate) settings: settings::SettingsState,
     pub(crate) command_palette: CommandPaletteState,
@@ -452,6 +453,7 @@ impl AppState {
             zen: false,
             theme,
             terminal_background: None,
+            terminal_is_light: None,
             config: config.clone(),
             settings: settings::SettingsState::default(),
             command_palette: CommandPaletteState::default(),
@@ -2068,6 +2070,7 @@ pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
         &mut terminal,
         &config,
         detected_background.map(crate::terminal_background::Rgb::color),
+        terminal_is_light,
     )
     .await;
     let _ = crossterm::execute!(
@@ -2083,6 +2086,7 @@ async fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     config: &Config,
     terminal_background: Option<Color>,
+    terminal_is_light: Option<bool>,
 ) -> Result<()> {
     let (player, mut player_events) = player::spawn(tokio::runtime::Handle::current());
     let (actions_tx, mut actions) = mpsc::unbounded_channel();
@@ -2095,7 +2099,11 @@ async fn event_loop(
 
     // Graphics protocol queries must finish before EventStream starts reading
     // the same terminal response bytes.
-    let theme = Theme::by_name(&config.theme);
+    let theme = Theme::by_name(crate::theme::resolved_name(
+        &config.theme,
+        config.theme_mode,
+        terminal_is_light,
+    ));
     let picker = query_graphics_picker(config.cover_mode, theme.bg);
     let original_cover = picker
         .clone()
@@ -2149,6 +2157,8 @@ async fn event_loop(
     };
     let mut state = AppState::new(config);
     state.set_terminal_background(terminal_background);
+    state.terminal_is_light = terminal_is_light;
+    state.theme = theme;
     state.original_cover = original_cover;
     state.selected_original_cover = selected_original_cover;
     if let Some(playback) = fx.store.load_playback() {
