@@ -20,31 +20,69 @@ use crate::ui::{format_duration, Hits};
 // border reads as a stretched rectangle.
 const COVER_GRID: (u16, u16) = (26, 13);
 pub(crate) const PROGRESS_HEIGHT: u16 = 2;
-const SPECTRUM_MIN_HEIGHT: u16 = 5;
-const SPECTRUM_MAX_HEIGHT: u16 = 7;
-const SIDE_MIN_MAIN_HEIGHT: u16 = 10;
-const STACKED_MIN_MAIN_HEIGHT: u16 = 21;
+const STACKED_SPECTRUM_MIN_HEIGHT: u16 = 4;
+const STACKED_SPECTRUM_MAX_HEIGHT: u16 = 8;
+const STACKED_MIN_MAIN_HEIGHT: u16 = 18;
 const STACKED_MIN_META_HEIGHT: u16 = 8;
 const MAX_LYRIC_CONTEXT_ROWS: usize = 9;
+/// Columns the side layout keeps to the right of the cover for the
+/// meta/lyrics/spectrum panel (gutter included); the cover may not grow
+/// into this reserve no matter how tall the terminal is.
+pub(crate) const SIDE_PANEL_RESERVED_COLS: u16 = 46;
+const SIDE_PANEL_GAP_ROWS: u16 = 1;
+const SIDE_PANEL_MIN_SPECTRUM_ROWS: u16 = 4;
+/// Lyric rows shown next to the spectrum: three pairs keeps the current
+/// line readable without turning the panel into a lyrics wall.
+const SIDE_PANEL_LYRIC_PAIRS: u16 = 3;
 
-/// Keep enough room for metadata and lyrics before reserving a spectrum band.
+/// The bottom spectrum band only exists in the stacked layout; the side
+/// layout hosts the spectrum inside the right panel, bottom-aligned with
+/// the cover.
 pub(crate) fn spectrum_band_height(
     total_height: u16,
     enabled: bool,
     layout: crate::app::PlayLayout,
 ) -> u16 {
-    if !enabled {
+    if !enabled || matches!(layout, crate::app::PlayLayout::Side) {
         return 0;
     }
-    let candidate = (total_height / 6).clamp(SPECTRUM_MIN_HEIGHT, SPECTRUM_MAX_HEIGHT);
-    let minimum_main = match layout {
-        crate::app::PlayLayout::Side => SIDE_MIN_MAIN_HEIGHT,
-        crate::app::PlayLayout::Stacked => STACKED_MIN_MAIN_HEIGHT,
-    };
-    if total_height.saturating_sub(PROGRESS_HEIGHT + candidate) < minimum_main {
+    let candidate =
+        (total_height / 5).clamp(STACKED_SPECTRUM_MIN_HEIGHT, STACKED_SPECTRUM_MAX_HEIGHT);
+    if total_height.saturating_sub(PROGRESS_HEIGHT + candidate) < STACKED_MIN_MAIN_HEIGHT {
         0
     } else {
         candidate
+    }
+}
+
+/// Rows the side panel can spare for the spectrum once the meta block and
+/// the capped lyric window are budgeted. Zero hides the panel spectrum.
+fn side_panel_spectrum_rows(state: &AppState, panel_height: u16) -> u16 {
+    if !state.config.spectrum_enabled {
+        return 0;
+    }
+    let Some(now) = &state.now else {
+        return 0;
+    };
+    let mut text_rows: u16 = 2;
+    if !now.album.is_empty() {
+        text_rows += 1;
+    }
+    if !state.lyrics.is_empty() {
+        let translated = state
+            .lyrics
+            .iter()
+            .any(|line| line.translation.as_ref().is_some_and(|t| !t.is_empty()));
+        let pair_rows = if translated { 2 } else { 1 };
+        text_rows += 1 + SIDE_PANEL_LYRIC_PAIRS * pair_rows;
+    } else if state.status.is_some() {
+        text_rows += 2;
+    }
+    let rest = panel_height.saturating_sub(text_rows + SIDE_PANEL_GAP_ROWS);
+    if rest < SIDE_PANEL_MIN_SPECTRUM_ROWS {
+        0
+    } else {
+        rest
     }
 }
 
@@ -72,21 +110,42 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
 
     match state.layout {
         crate::app::PlayLayout::Side => {
-            // Borderless pixel art + one column of breathing room.
-            let [cover_column, _, meta_area] = Layout::horizontal([
-                Constraint::Length(cover_w.min(main.width)),
+            // The cover fixes the group height; meta, lyrics, and spectrum
+            // share the right panel with its bottom edge flush against the
+            // cover's, and the whole group centers vertically.
+            let group_h = cover_h.min(main.height);
+            let group = Rect {
+                x: main.x,
+                y: main.y + main.height.saturating_sub(group_h) / 2,
+                width: main.width,
+                height: group_h,
+            };
+            let [cover_column, _, panel] = Layout::horizontal([
+                Constraint::Length(cover_w.min(group.width)),
                 Constraint::Length(2),
                 Constraint::Min(0),
             ])
-            .areas(main);
-            let cover_area = Rect {
-                x: cover_column.x,
-                y: cover_column.y,
-                width: cover_column.width,
-                height: cover_h.min(main.height),
-            };
-            draw_cover(frame, state, cover_area);
-            draw_meta(frame, state, meta_area, false);
+            .areas(group);
+            draw_cover(frame, state, cover_column);
+            let panel_spectrum = side_panel_spectrum_rows(state, panel.height);
+            if panel_spectrum > 0 {
+                let [text_area, _, panel_spectrum_area] = Layout::vertical([
+                    Constraint::Min(0),
+                    Constraint::Length(SIDE_PANEL_GAP_ROWS),
+                    Constraint::Length(panel_spectrum),
+                ])
+                .areas(panel);
+                draw_meta(frame, state, text_area, false);
+                state.spectrum.render(
+                    state.config.spectrum_style,
+                    state.config.spectrum_glow,
+                    panel_spectrum_area,
+                    frame.buffer_mut(),
+                    &state.theme,
+                );
+            } else {
+                draw_meta(frame, state, panel, false);
+            }
         }
         crate::app::PlayLayout::Stacked => {
             let art_height = cover_h.min(
@@ -596,7 +655,7 @@ mod tests {
 
     use super::{
         current_lyric_index, current_lyric_spans, draw_meta, draw_progress, lyric_window,
-        menu_entries, spectrum_band_height,
+        menu_entries, spectrum_band_height, PROGRESS_HEIGHT,
     };
     use crate::action::{Action, MenuEntry};
     use crate::app::{AppState, NowPlaying, PlayLayout, PlayMode};
@@ -702,45 +761,86 @@ mod tests {
         );
     }
 
+    fn mirror_rows(buffer: &Buffer, range: std::ops::Range<u16>, height: u16) -> Vec<u16> {
+        (0..height)
+            .filter(|y| range.clone().all(|x| buffer[(x, *y)].symbol() == "─"))
+            .collect()
+    }
+
     #[test]
-    fn spectrum_band_is_full_width_and_layout_aware() {
-        assert_eq!(spectrum_band_height(20, true, PlayLayout::Side), 5);
-        assert_eq!(spectrum_band_height(36, true, PlayLayout::Side), 6);
-        assert_eq!(spectrum_band_height(56, true, PlayLayout::Side), 7);
+    fn bottom_spectrum_band_is_stacked_only() {
+        assert_eq!(spectrum_band_height(20, true, PlayLayout::Side), 0);
+        assert_eq!(spectrum_band_height(56, true, PlayLayout::Side), 0);
         assert_eq!(spectrum_band_height(20, true, PlayLayout::Stacked), 0);
-        assert_eq!(spectrum_band_height(36, true, PlayLayout::Stacked), 6);
-        assert_eq!(spectrum_band_height(56, false, PlayLayout::Side), 0);
+        assert_eq!(spectrum_band_height(36, true, PlayLayout::Stacked), 7);
+        assert_eq!(spectrum_band_height(56, true, PlayLayout::Stacked), 8);
+        assert_eq!(spectrum_band_height(56, false, PlayLayout::Stacked), 0);
 
-        for (layout, height, line_y) in [(PlayLayout::Side, 24, 19), (PlayLayout::Stacked, 40, 35)]
-        {
-            let config = Config {
-                spectrum_enabled: true,
-                spectrum_style: SpectrumKind::Reflect,
-                ..Config::default()
-            };
-            let mut state = AppState::new(&config);
-            state.layout = layout;
-            state.now = Some(NowPlaying {
-                title: "Title".into(),
-                artist: "Artist".into(),
-                album: String::new(),
-            });
-            state.spectrum.tick(&SampleBuffer::default(), false, true);
-            let backend = TestBackend::new(80, height);
-            let mut terminal = Terminal::new(backend).unwrap();
-            let mut hits = Hits::default();
+        let config = Config {
+            spectrum_enabled: true,
+            spectrum_style: SpectrumKind::Reflect,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.layout = PlayLayout::Stacked;
+        state.now = Some(NowPlaying {
+            title: "Title".into(),
+            artist: "Artist".into(),
+            album: String::new(),
+        });
+        state.spectrum.tick(&SampleBuffer::default(), false, true);
+        let backend = TestBackend::new(80, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
 
-            terminal
-                .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
-                .unwrap();
+        terminal
+            .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
 
-            assert!((0..80).all(|x| terminal.backend().buffer()[(x, line_y)].symbol() == "─"));
-        }
+        let rows = mirror_rows(terminal.backend().buffer(), 0..80, 40);
+        assert_eq!(rows.len(), 1, "one full-width reflect mirror line");
+        let band_top = 40 - PROGRESS_HEIGHT - spectrum_band_height(40, true, PlayLayout::Stacked);
+        assert!(rows[0] >= band_top && rows[0] < 40 - PROGRESS_HEIGHT);
+    }
+
+    #[test]
+    fn side_layout_spectrum_lives_in_the_panel_and_ends_with_the_cover() {
+        let config = Config {
+            spectrum_enabled: true,
+            spectrum_style: SpectrumKind::Reflect,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.layout = PlayLayout::Side;
+        state.now = Some(NowPlaying {
+            title: "Title".into(),
+            artist: "Artist".into(),
+            album: String::new(),
+        });
+        state.spectrum.tick(&SampleBuffer::default(), false, true);
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        // Without a rendered cover the placeholder grid is 26 columns wide,
+        // so the panel starts at column 28.
+        let buffer = terminal.backend().buffer();
+        let panel_rows = mirror_rows(buffer, 28..120, 40);
+        assert_eq!(panel_rows.len(), 1, "the mirror line spans only the panel");
+        assert!(mirror_rows(buffer, 0..120, 40).is_empty());
+
+        // The group is vertically centered: main = 38 rows, cover grid = 13.
+        let group_top = (38 - 13) / 2;
+        assert!(panel_rows[0] >= group_top && panel_rows[0] < group_top + 13);
     }
 
     #[test]
     fn wide_and_zen_spectrum_stays_inside_the_centered_110_column_canvas() {
-        for (zen, line_y) in [(false, 52), (true, 54)] {
+        for zen in [false, true] {
             let config = Config {
                 spectrum_enabled: true,
                 spectrum_style: SpectrumKind::Reflect,
@@ -762,10 +862,13 @@ mod tests {
                 .draw(|frame| crate::ui::draw(frame, &mut state, &mut hits))
                 .unwrap();
 
+            // Canvas spans columns 45..155; the placeholder cover grid is 26
+            // wide, so the panel spectrum lives in 73..155.
             let buffer = terminal.backend().buffer();
-            assert!((45..155).all(|x| buffer[(x, line_y)].symbol() == "─"));
-            assert_eq!(buffer[(44, line_y)].symbol(), " ");
-            assert_eq!(buffer[(155, line_y)].symbol(), " ");
+            let rows = mirror_rows(buffer, 73..155, 60);
+            assert_eq!(rows.len(), 1, "zen={zen}: one panel mirror line");
+            assert_eq!(buffer[(72, rows[0])].symbol(), " ");
+            assert_eq!(buffer[(155, rows[0])].symbol(), " ");
         }
     }
 

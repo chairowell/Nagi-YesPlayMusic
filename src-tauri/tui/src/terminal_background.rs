@@ -6,7 +6,18 @@ use std::time::Duration;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const OSC_11_WITH_DA1_QUERY: &[u8] = b"\x1b]11;?\x07\x1b[c";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+const DA1_QUERY: &[u8] = b"\x1b[c";
+// A terminal that answers at all sends the first byte quickly relative to
+// its own load, but a busy multiplexer can take well over a second (seen
+// with Herdr under compile load). Waiting only bounds startup on the rare
+// terminal that never answers DA1; giving up early leaks the late reply
+// into the input stream, which is far worse.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const TOTAL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Appearance {
@@ -48,6 +59,15 @@ impl Rgb {
 
 pub(crate) fn probe() -> Option<Rgb> {
     platform::read_response()
+}
+
+/// Sweep stray query responses out of the tty before the event stream owns
+/// stdin. Third-party startup probes (ratatui-image sends its own OSC 11)
+/// stop reading before a slow terminal finishes answering; the leftover
+/// bytes would otherwise arrive as phantom key presses. DA1 acts as the
+/// sync point: every real terminal answers it, and it always comes last.
+pub(crate) fn drain_pending_responses() {
+    platform::drain_pending();
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -157,12 +177,16 @@ fn expect(input: &[u8], cursor: &mut usize, expected: u8) -> Option<()> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod platform {
     use std::ffi::{c_int, c_short};
-    use std::fs::OpenOptions;
-    use std::io::{self, Read, Write};
-    use std::os::fd::{AsRawFd, RawFd};
+    use std::fs::{File, OpenOptions};
+    use std::io::{self, IsTerminal, Read, Write};
+    use std::mem::ManuallyDrop;
+    use std::os::fd::{FromRawFd, RawFd};
     use std::time::{Duration, Instant};
 
-    use super::{parse_response, ProbeResponse, Rgb, OSC_11_WITH_DA1_QUERY, QUERY_TIMEOUT};
+    use super::{
+        find_da1_end, parse_response, ProbeResponse, Rgb, DA1_QUERY, FIRST_BYTE_TIMEOUT,
+        IDLE_TIMEOUT, OSC_11_WITH_DA1_QUERY, TOTAL_TIMEOUT,
+    };
 
     const POLLIN: c_short = 0x0001;
 
@@ -184,39 +208,104 @@ mod platform {
     }
 
     pub(super) fn read_response() -> Option<Rgb> {
-        if !crossterm::terminal::is_raw_mode_enabled().ok()? {
+        match parse_response(&transact(OSC_11_WITH_DA1_QUERY)?) {
+            ProbeResponse::Complete(rgb) => rgb,
+            ProbeResponse::AwaitingDa1 => None,
+        }
+    }
+
+    pub(super) fn drain_pending() {
+        let _ = transact(DA1_QUERY);
+    }
+
+    /// Send a query whose reply chain ends in a DA1 response and collect
+    /// every byte up to and including that response.
+    fn transact(query: &[u8]) -> Option<Vec<u8>> {
+        let result = transact_inner(query);
+        debug_log(query, result.as_deref());
+        result
+    }
+
+    // Replies must be read from stdin (fd 0), not from a fresh `/dev/tty`
+    // handle: macOS `poll()` reports POLLNVAL for the `/dev/tty` alias
+    // device even while its data is readable, so polling it gives up
+    // instantly and the reply later leaks into the input stream as
+    // phantom key presses.
+    const STDIN_FD: RawFd = 0;
+
+    fn transact_inner(query: &[u8]) -> Option<Vec<u8>> {
+        match crossterm::terminal::is_raw_mode_enabled() {
+            Ok(true) => {}
+            other => {
+                debug_step(&format!("raw-mode gate failed: {other:?}"));
+                return None;
+            }
+        }
+        if !io::stdin().is_terminal() {
+            debug_step("stdin is not a terminal");
             return None;
         }
 
-        let mut terminal = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-            .ok()?;
-        terminal.write_all(OSC_11_WITH_DA1_QUERY).ok()?;
-        terminal.flush().ok()?;
+        let mut terminal = match OpenOptions::new().write(true).open("/dev/tty") {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                debug_step(&format!("open /dev/tty failed: {error}"));
+                return None;
+            }
+        };
+        if let Err(error) = terminal.write_all(query).and_then(|()| terminal.flush()) {
+            debug_step(&format!("query write failed: {error}"));
+            return None;
+        }
+        debug_step("query written");
 
-        let deadline = Instant::now().checked_add(QUERY_TIMEOUT)?;
+        // SAFETY: fd 0 outlives this function; ManuallyDrop keeps the
+        // borrowed descriptor open when the File wrapper goes away.
+        let mut stdin = ManuallyDrop::new(unsafe { File::from_raw_fd(STDIN_FD) });
+        let deadline = Instant::now().checked_add(TOTAL_TIMEOUT)?;
         let mut response = Vec::with_capacity(64);
         loop {
             let remaining = deadline.checked_duration_since(Instant::now())?;
-            match wait_readable(terminal.as_raw_fd(), remaining) {
+            let patience = if response.is_empty() {
+                FIRST_BYTE_TIMEOUT
+            } else {
+                IDLE_TIMEOUT
+            };
+            match wait_readable(STDIN_FD, patience.min(remaining)) {
                 Ok(true) => {}
-                Ok(false) => return None,
+                Ok(false) => {
+                    debug_step(&format!("timed out with partial {response:?}"));
+                    return None;
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => return None,
             }
 
             let mut byte = [0];
-            match terminal.read(&mut byte) {
+            match stdin.read(&mut byte) {
                 Ok(1) => response.push(byte[0]),
                 Ok(_) => return None,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => return None,
             }
-            if let ProbeResponse::Complete(rgb) = parse_response(&response) {
-                return rgb;
+            if find_da1_end(&response).is_some() {
+                return Some(response);
             }
+        }
+    }
+
+    /// `YPM_OSC_DEBUG=<file>` appends every terminal transaction for
+    /// diagnosing reply leaks on exotic terminals; off by default.
+    fn debug_log(query: &[u8], response: Option<&[u8]>) {
+        debug_step(&format!("query={query:?} response={response:?}"));
+    }
+
+    fn debug_step(message: &str) {
+        let Ok(path) = std::env::var("YPM_OSC_DEBUG") else {
+            return;
+        };
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{message}");
         }
     }
 
@@ -247,6 +336,8 @@ mod platform {
         // Windows has no `/dev/tty`; unsupported platforms skip probing without reading input.
         None
     }
+
+    pub(super) fn drain_pending() {}
 }
 
 #[cfg(test)]
