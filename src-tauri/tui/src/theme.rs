@@ -16,6 +16,12 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "tokyo-night",
     "tokyo-night-storm",
     "one-dark",
+    "dracula",
+    "one-dark-pro",
+    "synthwave84",
+    "laserwave",
+    "fairyfloss",
+    "ultraviolence",
     "transparent",
 ];
 
@@ -158,6 +164,60 @@ pub const ONE_DARK: &[Rgb] = &[
     (0x56, 0xb6, 0xc2),
 ];
 
+pub const ONE_DARK_PRO: &[Rgb] = &[
+    (0x28, 0x2c, 0x34),
+    (0xab, 0xb2, 0xbf),
+    (0x5c, 0x63, 0x70),
+    (0x3e, 0x44, 0x51),
+    (0x61, 0xaf, 0xef),
+    (0xe0, 0x6c, 0x75),
+];
+
+pub const DRACULA: &[Rgb] = &[
+    (0x28, 0x2a, 0x36),
+    (0xf8, 0xf8, 0xf2),
+    (0x62, 0x72, 0xa4),
+    (0x44, 0x47, 0x5a),
+    (0xbd, 0x93, 0xf9),
+    (0xff, 0x79, 0xc6),
+];
+
+pub const SYNTHWAVE84: &[Rgb] = &[
+    (0x26, 0x23, 0x35),
+    (0xf0, 0xef, 0xf1),
+    (0x49, 0x54, 0x95),
+    (0x34, 0x29, 0x4f),
+    (0xff, 0x7e, 0xdb),
+    (0x36, 0xf9, 0xf6),
+];
+
+pub const LASERWAVE: &[Rgb] = &[
+    (0x27, 0x21, 0x2e),
+    (0xf2, 0xec, 0xf7),
+    (0x91, 0x88, 0x9b),
+    (0x71, 0x63, 0x85),
+    (0xeb, 0x64, 0xb9),
+    (0x74, 0xdf, 0xc4),
+];
+
+pub const FAIRYFLOSS: &[Rgb] = &[
+    (0x5a, 0x54, 0x75),
+    (0xf8, 0xf8, 0xf2),
+    (0xa8, 0xa1, 0xc7),
+    (0x80, 0x77, 0xa8),
+    (0xc5, 0xa3, 0xff),
+    (0xff, 0xb8, 0xd1),
+];
+
+pub const ULTRAVIOLENCE: &[Rgb] = &[
+    (0x19, 0x11, 0x14),
+    (0xe9, 0xdf, 0xd2),
+    (0xa0, 0x8d, 0x80),
+    (0x55, 0x45, 0x4a),
+    (0xc9, 0xa7, 0x6f),
+    (0xc9, 0x8a, 0x8e),
+];
+
 #[derive(Clone, Copy)]
 struct RoleIndices {
     bg: usize,
@@ -257,10 +317,10 @@ impl Theme {
             RoleIndices {
                 bg: 0,
                 fg: 7,
-                dim: 10,
-                faint: 8,
+                dim: 9,
+                faint: 4,
                 accent: 13,
-                accent2: 15,
+                accent2: 11,
                 sel: 13,
             },
         )
@@ -272,10 +332,10 @@ impl Theme {
             RoleIndices {
                 bg: 0,
                 fg: 7,
-                dim: 5,
-                faint: 4,
+                dim: 4,
+                faint: 3,
                 accent: 8,
-                accent2: 15,
+                accent2: 14,
                 sel: 8,
             },
         )
@@ -311,6 +371,30 @@ impl Theme {
         )
     }
 
+    fn one_dark_pro() -> Self {
+        Self::six_role_palette(ONE_DARK_PRO)
+    }
+
+    fn dracula() -> Self {
+        Self::six_role_palette(DRACULA)
+    }
+
+    fn synthwave84() -> Self {
+        Self::six_role_palette(SYNTHWAVE84)
+    }
+
+    fn laserwave() -> Self {
+        Self::six_role_palette(LASERWAVE)
+    }
+
+    fn fairyfloss() -> Self {
+        Self::six_role_palette(FAIRYFLOSS)
+    }
+
+    fn ultraviolence() -> Self {
+        Self::six_role_palette(ULTRAVIOLENCE)
+    }
+
     fn builtin(name: &str) -> Option<Self> {
         match name {
             "db16" => Some(Self::db16()),
@@ -320,6 +404,12 @@ impl Theme {
             "tokyo-night" => Some(Self::tokyo_night()),
             "tokyo-night-storm" => Some(Self::tokyo_night_storm()),
             "one-dark" => Some(Self::one_dark()),
+            "dracula" => Some(Self::dracula()),
+            "one-dark-pro" => Some(Self::one_dark_pro()),
+            "synthwave84" => Some(Self::synthwave84()),
+            "laserwave" => Some(Self::laserwave()),
+            "fairyfloss" => Some(Self::fairyfloss()),
+            "ultraviolence" => Some(Self::ultraviolence()),
             "transparent" => Some(Self::transparent()),
             _ => None,
         }
@@ -361,6 +451,21 @@ impl Theme {
             sel: rgb(palette[roles.sel]),
             palette,
         }
+    }
+
+    fn six_role_palette(palette: &'static [Rgb]) -> Self {
+        Self::from_palette(
+            palette,
+            RoleIndices {
+                bg: 0,
+                fg: 1,
+                dim: 2,
+                faint: 3,
+                accent: 4,
+                accent2: 5,
+                sel: 4,
+            },
+        )
     }
 }
 
@@ -471,7 +576,7 @@ mod tests {
     use ratatui::style::Color;
     use tempfile::tempdir;
 
-    use super::{parse_hex_color, Theme, DB16};
+    use super::{parse_hex_color, Theme, BUILTIN_NAMES, DB16};
 
     #[test]
     fn builtins_use_their_documented_background_and_accent() {
@@ -493,10 +598,6 @@ mod tests {
         assert_eq!(everforest.bg, Color::Rgb(0x2d, 0x35, 0x3b));
         assert_eq!(everforest.accent, Color::Rgb(0xa7, 0xc0, 0x80));
 
-        let tokyo_night = Theme::by_name_in_dir("tokyo-night", directory.path());
-        assert_eq!(tokyo_night.bg, Color::Rgb(0x1a, 0x1b, 0x26));
-        assert_eq!(tokyo_night.accent, Color::Rgb(0x7a, 0xa2, 0xf7));
-
         let storm = Theme::by_name_in_dir("tokyo-night-storm", directory.path());
         assert_eq!(storm.bg, Color::Rgb(0x24, 0x28, 0x3b));
         assert_eq!(storm.accent, Color::Rgb(0x7a, 0xa2, 0xf7));
@@ -504,6 +605,118 @@ mod tests {
         let one_dark = Theme::by_name_in_dir("one-dark", directory.path());
         assert_eq!(one_dark.bg, Color::Rgb(0x28, 0x2c, 0x34));
         assert_eq!(one_dark.accent, Color::Rgb(0x61, 0xaf, 0xef));
+    }
+
+    #[test]
+    fn requested_builtin_themes_have_exact_role_colors() {
+        let directory = tempdir().unwrap();
+        let expected = [
+            (
+                "tokyo-night",
+                (
+                    Color::Rgb(0x1a, 0x1b, 0x26),
+                    Color::Rgb(0xc0, 0xca, 0xf5),
+                    Color::Rgb(0x56, 0x5f, 0x89),
+                    Color::Rgb(0x41, 0x48, 0x68),
+                    Color::Rgb(0x7a, 0xa2, 0xf7),
+                    Color::Rgb(0xf7, 0x76, 0x8e),
+                ),
+            ),
+            (
+                "dracula",
+                (
+                    Color::Rgb(0x28, 0x2a, 0x36),
+                    Color::Rgb(0xf8, 0xf8, 0xf2),
+                    Color::Rgb(0x62, 0x72, 0xa4),
+                    Color::Rgb(0x44, 0x47, 0x5a),
+                    Color::Rgb(0xbd, 0x93, 0xf9),
+                    Color::Rgb(0xff, 0x79, 0xc6),
+                ),
+            ),
+            (
+                "one-dark-pro",
+                (
+                    Color::Rgb(0x28, 0x2c, 0x34),
+                    Color::Rgb(0xab, 0xb2, 0xbf),
+                    Color::Rgb(0x5c, 0x63, 0x70),
+                    Color::Rgb(0x3e, 0x44, 0x51),
+                    Color::Rgb(0x61, 0xaf, 0xef),
+                    Color::Rgb(0xe0, 0x6c, 0x75),
+                ),
+            ),
+            (
+                "everforest",
+                (
+                    Color::Rgb(0x2d, 0x35, 0x3b),
+                    Color::Rgb(0xd3, 0xc6, 0xaa),
+                    Color::Rgb(0x85, 0x92, 0x89),
+                    Color::Rgb(0x47, 0x52, 0x58),
+                    Color::Rgb(0xa7, 0xc0, 0x80),
+                    Color::Rgb(0xe6, 0x7e, 0x80),
+                ),
+            ),
+            (
+                "synthwave84",
+                (
+                    Color::Rgb(0x26, 0x23, 0x35),
+                    Color::Rgb(0xf0, 0xef, 0xf1),
+                    Color::Rgb(0x49, 0x54, 0x95),
+                    Color::Rgb(0x34, 0x29, 0x4f),
+                    Color::Rgb(0xff, 0x7e, 0xdb),
+                    Color::Rgb(0x36, 0xf9, 0xf6),
+                ),
+            ),
+            (
+                "laserwave",
+                (
+                    Color::Rgb(0x27, 0x21, 0x2e),
+                    Color::Rgb(0xf2, 0xec, 0xf7),
+                    Color::Rgb(0x91, 0x88, 0x9b),
+                    Color::Rgb(0x71, 0x63, 0x85),
+                    Color::Rgb(0xeb, 0x64, 0xb9),
+                    Color::Rgb(0x74, 0xdf, 0xc4),
+                ),
+            ),
+            (
+                "fairyfloss",
+                (
+                    Color::Rgb(0x5a, 0x54, 0x75),
+                    Color::Rgb(0xf8, 0xf8, 0xf2),
+                    Color::Rgb(0xa8, 0xa1, 0xc7),
+                    Color::Rgb(0x80, 0x77, 0xa8),
+                    Color::Rgb(0xc5, 0xa3, 0xff),
+                    Color::Rgb(0xff, 0xb8, 0xd1),
+                ),
+            ),
+            (
+                "ultraviolence",
+                (
+                    Color::Rgb(0x19, 0x11, 0x14),
+                    Color::Rgb(0xe9, 0xdf, 0xd2),
+                    Color::Rgb(0xa0, 0x8d, 0x80),
+                    Color::Rgb(0x55, 0x45, 0x4a),
+                    Color::Rgb(0xc9, 0xa7, 0x6f),
+                    Color::Rgb(0xc9, 0x8a, 0x8e),
+                ),
+            ),
+        ];
+
+        for (name, expected_roles) in expected {
+            assert!(BUILTIN_NAMES.contains(&name), "{name} is not selectable");
+            let theme = Theme::by_name_in_dir(name, directory.path());
+            assert_eq!(
+                (
+                    theme.bg,
+                    theme.fg,
+                    theme.dim,
+                    theme.faint,
+                    theme.accent,
+                    theme.accent2,
+                ),
+                expected_roles,
+                "{name} roles changed"
+            );
+        }
     }
 
     #[test]

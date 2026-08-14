@@ -38,6 +38,8 @@ pub struct Config {
         serialize_with = "serialize_quality"
     )]
     pub quality: AudioQuality,
+    /// Try UNM when NCM explicitly returns no playable URL.
+    pub unm_enabled: bool,
     /// Built-in theme name or a TOML file in themes/.
     pub theme: String,
     /// Explicit ypm process cache cap in MiB. None keeps the database value.
@@ -74,6 +76,7 @@ impl Default for Config {
         Self {
             language: "zh".into(),
             quality: AudioQuality::High320,
+            unm_enabled: true,
             theme: "db16".into(),
             cache_limit_mib: None,
             enter_replaces_queue: true,
@@ -129,7 +132,9 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 
 # language = "zh"            # zh | en | ja
 # quality = "exhigh"          # 128 | 192 | 320/exhigh | lossless | hires
-# theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm | one-dark | transparent
+# unm_enabled = true          # 无版权/VIP 曲目无可播地址时尝试 UNM 换源
+# theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm
+#                              # one-dark | one-dark-pro | dracula | synthwave84 | laserwave | fairyfloss | ultraviolence | transparent
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
 # icons = "unicode"           # unicode（无需特殊字体）| nerd（需要 Nerd Font）
@@ -251,6 +256,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.language, "zh");
         assert_eq!(config.quality, AudioQuality::High320);
+        assert!(config.unm_enabled);
         assert_eq!(config.theme, "db16");
         assert_eq!(config.cover_mode, CoverMode::Pixel);
         assert_eq!(config.cover_detail, CoverDetail::Half);
@@ -277,6 +283,9 @@ mod tests {
 
         let parsed: Config = toml::from_str("cover_detail = \"sextant\"").unwrap();
         assert_eq!(parsed.cover_detail, CoverDetail::Sextant);
+
+        let parsed: Config = toml::from_str("unm_enabled = false").unwrap();
+        assert!(!parsed.unm_enabled);
 
         let parsed: Config = toml::from_str("cache_limit_mib = 4096").unwrap();
         assert_eq!(parsed.cache_limit_mib, Some(4096));
@@ -317,6 +326,7 @@ mod tests {
             let config = Config {
                 language: "ja".into(),
                 quality,
+                unm_enabled: false,
                 theme: "tokyo-night".into(),
                 cache_limit_mib: Some(2048),
                 enter_replaces_queue: false,

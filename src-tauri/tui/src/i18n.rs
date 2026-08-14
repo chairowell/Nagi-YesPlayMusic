@@ -24,6 +24,8 @@ impl Lang {
 #[allow(clippy::enum_variant_names)] // Op*/Api* prefixes group the key space deliberately
 pub enum Key {
     Resolving,
+    UnmSourceUsed,
+    TrackUnavailable,
     QueueFinished,
     FetchingQr,
     ScanQr,
@@ -269,6 +271,8 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
     match lang {
         Lang::Zh => match key {
             Key::Resolving => "解析中…",
+            Key::UnmSourceUsed => "已通过 UNM 换源",
+            Key::TrackUnavailable => "无法播放这首歌",
             Key::QueueFinished => "队列播完了",
             Key::FetchingQr => "正在获取二维码…",
             Key::ScanQr => "用网易云音乐 App 扫码",
@@ -383,6 +387,8 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
         },
         Lang::En => match key {
             Key::Resolving => "Resolving…",
+            Key::UnmSourceUsed => "Switched source via UNM",
+            Key::TrackUnavailable => "This track cannot be played",
             Key::QueueFinished => "End of queue",
             Key::FetchingQr => "Getting QR code…",
             Key::ScanQr => "Scan with the NetEase Cloud Music app",
@@ -497,6 +503,8 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
         },
         Lang::Ja => match key {
             Key::Resolving => "読み込み中…",
+            Key::UnmSourceUsed => "UNMで音源を切り替えました",
+            Key::TrackUnavailable => "この曲は再生できません",
             Key::QueueFinished => "キューの再生が終了しました",
             Key::FetchingQr => "QRコードを取得中…",
             Key::ScanQr => "NetEase Cloud Musicアプリでスキャン",

@@ -46,6 +46,22 @@ impl AppState {
         } else {
             action
         };
+        if self.terminal_size.1 < 8 {
+            if let Action::RawKey(key) = &action {
+                if let Some(
+                    mapped @ (Action::TogglePlay
+                    | Action::NextTrack
+                    | Action::PrevTrack
+                    | Action::ToggleLike
+                    | Action::Quit),
+                ) = event::key_action(*key)
+                {
+                    self.show_help = false;
+                    self.update(mapped, fx);
+                    return;
+                }
+            }
+        }
         // The help overlay is modal: any key dismisses it.
         if self.show_help && matches!(action, Action::RawKey(_) | Action::Mouse(_)) {
             self.show_help = false;
@@ -245,8 +261,12 @@ impl AppState {
                     self.status = Some(crate::i18n::t(Key::AddedToQueue).into());
                 }
             }
-            Action::NextTrack => self.step_queue(fx, 1, false),
-            Action::PrevTrack => self.step_queue(fx, -1, false),
+            Action::NextTrack => {
+                self.step_queue(fx, 1, false, true);
+            }
+            Action::PrevTrack => {
+                self.step_queue(fx, -1, false, true);
+            }
             Action::ToggleHelp => self.show_help = true,
             Action::ToggleShuffle => {
                 self.shuffle = !self.shuffle;
@@ -417,6 +437,11 @@ impl AppState {
                     self.status = Some(message);
                 }
             }
+            Action::TrackUnavailable { generation } => {
+                if generation == self.generation {
+                    self.handle_track_unavailable(fx);
+                }
+            }
             Action::CoverLoaded { request, cover } => {
                 let desired_playing = self.desired_cover_cells();
                 match request.surface {
@@ -542,7 +567,7 @@ impl AppState {
                 self.apply_player_event(fx, event);
                 if self.pending_auto_next {
                     self.pending_auto_next = false;
-                    self.step_queue(fx, 1, true);
+                    self.step_queue(fx, 1, true, true);
                 }
             }
             Action::Resize { cols, rows } => {

@@ -3,6 +3,7 @@
 mod cover_preview;
 pub(crate) mod library;
 mod login;
+pub(crate) mod mini_player;
 mod now_playing;
 mod queue;
 mod search;
@@ -57,6 +58,11 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
     let theme = &state.theme;
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::new().bg(theme.bg)), area);
+
+    if area.height < 8 {
+        mini_player::draw(frame, state, area, hits);
+        return;
+    }
 
     if state.zen {
         now_playing::draw(frame, state, area, hits);
@@ -348,9 +354,9 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use super::{draw_help, draw_hints, footer_hints};
+    use super::{draw, draw_help, draw_hints, footer_hints};
     use crate::action::View;
-    use crate::app::AppState;
+    use crate::app::{AppState, NowPlaying};
     use crate::config::Config;
 
     #[test]
@@ -436,5 +442,29 @@ mod tests {
         assert!(footer_hints(&state).len() <= 6);
         state.view = View::Settings;
         assert!(footer_hints(&state).len() <= 6);
+    }
+
+    #[test]
+    fn a_six_line_terminal_uses_the_mini_player_instead_of_the_full_ui() {
+        let mut state = AppState::new(&Config::default());
+        state.now = Some(NowPlaying {
+            title: "Mini title".into(),
+            artist: "Mini artist".into(),
+            album: String::new(),
+        });
+        let backend = TestBackend::new(80, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = super::Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, &mut hits))
+            .unwrap();
+
+        let rendered = (0..80)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Mini title — Mini artist"));
+        assert_eq!(hits.play.len(), 1);
+        assert_eq!(hits.heart.len(), 1);
     }
 }

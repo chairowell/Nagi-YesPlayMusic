@@ -8,7 +8,7 @@
 
 mod cache_stream;
 
-use std::io::{Read, Seek};
+use std::io::{Cursor, Read, Seek};
 use std::sync::{mpsc as std_mpsc, Arc};
 use std::time::{Duration, Instant};
 
@@ -30,6 +30,12 @@ pub enum PlayerCommand {
         generation: u64,
         url: String,
         cache: Option<CacheWritePlan>,
+        unm_source: bool,
+    },
+    PlayBytes {
+        generation: u64,
+        bytes: Vec<u8>,
+        unm_source: bool,
     },
     Play,
     TogglePause,
@@ -59,6 +65,7 @@ pub enum PlayerEvent {
         generation: u64,
         message: String,
         cached: Option<CacheMetadata>,
+        unm_source: bool,
     },
 }
 
@@ -137,6 +144,13 @@ struct Media {
     byte_len: Option<u64>,
     cached: Option<CacheMetadata>,
     cancel: Option<StreamCancel>,
+    unm_source: bool,
+}
+
+struct UrlMedia {
+    url: String,
+    cache: Option<CacheWritePlan>,
+    unm_source: bool,
 }
 
 type StreamCancel = Arc<dyn Fn() + Send + Sync>;
@@ -155,10 +169,11 @@ struct StartedPlayback {
 struct DecodeFailure {
     message: String,
     cached: Option<CacheMetadata>,
+    unm_source: bool,
 }
 
 enum WorkResult {
-    Opened(anyhow::Result<Media>),
+    Opened(Result<Media, DecodeFailure>),
     Decoded(Result<Decoded, DecodeFailure>),
 }
 
@@ -284,6 +299,7 @@ fn actor(context: ActorContext) {
                     generation: g,
                     url,
                     cache,
+                    unm_source,
                 } => {
                     drop(pending.take());
                     stop(&engine, &mut active_cancel);
@@ -295,8 +311,30 @@ fn actor(context: ActorContext) {
                         &runtime,
                         request,
                         g,
-                        url,
-                        cache,
+                        UrlMedia {
+                            url,
+                            cache,
+                            unm_source,
+                        },
+                        work_tx.clone(),
+                        wake_tx.clone(),
+                    ));
+                }
+                PlayerCommand::PlayBytes {
+                    generation: g,
+                    bytes,
+                    unm_source,
+                } => {
+                    drop(pending.take());
+                    stop(&engine, &mut active_cancel);
+                    samples.clear();
+                    active_generation = None;
+                    let request = next_request;
+                    next_request += 1;
+                    pending = Some(spawn_decode(
+                        request,
+                        g,
+                        open_bytes(bytes, unm_source),
                         work_tx.clone(),
                         wake_tx.clone(),
                     ));
@@ -324,6 +362,7 @@ fn actor(context: ActorContext) {
                                 generation,
                                 message: format!("seek failed: {error}"),
                                 cached: None,
+                                unm_source: false,
                             });
                         }
                     }
@@ -370,14 +409,7 @@ fn actor(context: ActorContext) {
                     ));
                 }
                 WorkResult::Opened(Err(error)) => {
-                    report_failure(
-                        &events,
-                        completed.generation,
-                        DecodeFailure {
-                            message: error.to_string(),
-                            cached: None,
-                        },
-                    );
+                    report_failure(&events, completed.generation, error);
                 }
                 WorkResult::Decoded(Ok(decoded)) => {
                     if let Some(started) = start_decoded(
@@ -430,13 +462,18 @@ fn spawn_open(
     runtime: &tokio::runtime::Handle,
     request: u64,
     generation: u64,
-    url: String,
-    cache: Option<CacheWritePlan>,
+    media: UrlMedia,
     completed: std_mpsc::Sender<CompletedWork>,
     wake: std_mpsc::Sender<()>,
 ) -> PendingWork {
     let task = runtime.spawn(async move {
-        let result = open_url(&url, cache).await;
+        let result = open_url(&media.url, media.cache, media.unm_source)
+            .await
+            .map_err(|error| DecodeFailure {
+                message: error.to_string(),
+                cached: None,
+                unm_source: media.unm_source,
+            });
         let _ = completed.send(CompletedWork {
             request,
             generation,
@@ -487,10 +524,25 @@ fn open_cached(lease: CacheLease) -> Media {
         byte_len: Some(metadata.bytes),
         cached: Some(metadata),
         cancel: None,
+        unm_source: false,
     }
 }
 
-async fn open_url(url: &str, cache: Option<CacheWritePlan>) -> anyhow::Result<Media> {
+fn open_bytes(bytes: Vec<u8>, unm_source: bool) -> Media {
+    Media {
+        byte_len: Some(bytes.len() as u64),
+        reader: Box::new(Cursor::new(bytes)),
+        cached: None,
+        cancel: None,
+        unm_source,
+    }
+}
+
+async fn open_url(
+    url: &str,
+    cache: Option<CacheWritePlan>,
+    unm_source: bool,
+) -> anyhow::Result<Media> {
     let (provider, import) = CacheStreamProvider::new()?;
     let (complete_tx, complete_rx) = oneshot::channel();
     let mut complete_tx = cache.as_ref().map(|_| complete_tx);
@@ -513,6 +565,7 @@ async fn open_url(url: &str, cache: Option<CacheWritePlan>) -> anyhow::Result<Me
         byte_len,
         cached: None,
         cancel: Some(cancel),
+        unm_source,
     })
 }
 
@@ -541,6 +594,7 @@ fn decode(media: Media) -> Result<Decoded, DecodeFailure> {
         byte_len,
         cached,
         cancel,
+        unm_source,
     } = media;
     let mut builder = Decoder::builder().with_data(reader).with_seekable(true);
     if let Some(byte_len) = byte_len {
@@ -549,6 +603,7 @@ fn decode(media: Media) -> Result<Decoded, DecodeFailure> {
     let source = builder.build().map_err(|error| DecodeFailure {
         message: error.to_string(),
         cached,
+        unm_source,
     })?;
     let total = rodio::Source::total_duration(&source);
     Ok(Decoded {
@@ -576,6 +631,7 @@ fn start_decoded(
                     generation,
                     message: format!("audio device unavailable: {error}"),
                     cached: None,
+                    unm_source: false,
                 });
                 return None;
             }
@@ -605,6 +661,7 @@ fn report_failure(
         generation,
         message: failure.message,
         cached: failure.cached,
+        unm_source: failure.unm_source,
     });
 }
 
@@ -628,6 +685,7 @@ where
                 DecodeFailure {
                     message: error.to_string(),
                     cached: None,
+                    unm_source: false,
                 },
             );
             return false;
@@ -889,6 +947,7 @@ mod tests {
             generation: 1,
             url: server.url.clone(),
             cache: None,
+            unm_source: false,
         });
         server.wait_until_requested().await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -916,6 +975,7 @@ mod tests {
             generation: 1,
             url: stalled.url.clone(),
             cache: None,
+            unm_source: false,
         });
         stalled.wait_until_requested().await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -925,6 +985,7 @@ mod tests {
             generation: 2,
             url: replacement.url.clone(),
             cache: None,
+            unm_source: false,
         });
         let event = tokio::time::timeout(
             deadline.saturating_duration_since(std::time::Instant::now()),
@@ -965,6 +1026,7 @@ mod tests {
             generation: 7,
             url: server.url.clone(),
             cache: None,
+            unm_source: false,
         });
 
         let started = tokio::time::timeout(Duration::from_secs(1), events.recv())
@@ -997,6 +1059,77 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn in_memory_audio_uses_the_same_generation_stamped_decode_path() {
+        let (player, mut events) =
+            spawn_with_engine(tokio::runtime::Handle::current(), open_silent_engine);
+
+        player.send(PlayerCommand::PlayBytes {
+            generation: 11,
+            bytes: WAV_BODY.to_vec(),
+            unm_source: true,
+        });
+
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("in-memory audio should decode")
+            .expect("player event channel should remain open");
+        assert!(matches!(event, PlayerEvent::Started { generation: 11, .. }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unm_url_open_failure_keeps_its_origin() {
+        let (player, mut events) =
+            spawn_with_engine(tokio::runtime::Handle::current(), open_silent_engine);
+
+        player.send(PlayerCommand::PlayUrl {
+            generation: 12,
+            url: "not a url".into(),
+            cache: None,
+            unm_source: true,
+        });
+
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("invalid UNM URL should fail")
+            .expect("player event channel should remain open");
+        assert!(matches!(
+            event,
+            PlayerEvent::Failed {
+                generation: 12,
+                cached: None,
+                unm_source: true,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unm_bytes_decode_failure_keeps_its_origin() {
+        let (player, mut events) =
+            spawn_with_engine(tokio::runtime::Handle::current(), open_silent_engine);
+
+        player.send(PlayerCommand::PlayBytes {
+            generation: 13,
+            bytes: Vec::new(),
+            unm_source: true,
+        });
+
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("invalid UNM bytes should fail")
+            .expect("player event channel should remain open");
+        assert!(matches!(
+            event,
+            PlayerEvent::Failed {
+                generation: 13,
+                cached: None,
+                unm_source: true,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn naturally_completed_stream_is_published_with_validated_bytes_and_md5() {
         let cache_dir = tempfile::tempdir().expect("cache directory");
         let server = HttpServer::complete(AUDIO_BODY);
@@ -1008,6 +1141,7 @@ mod tests {
                 root: cache_dir.path().to_path_buf(),
                 request,
             }),
+            false,
         )
         .await
         .expect("open complete stream");
@@ -1047,6 +1181,7 @@ mod tests {
                 root: cache_dir.path().to_path_buf(),
                 request,
             }),
+            false,
         )
         .await
         .expect("open partial stream");

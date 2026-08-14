@@ -325,7 +325,7 @@ impl AppState {
         }
         if self.pending_fm_next && self.queue_source == Source::Fm {
             self.pending_fm_next = false;
-            self.step_queue(fx, 1, true);
+            self.step_queue(fx, 1, true, true);
         } else if self.queue_source != Source::Fm {
             self.pending_fm_next = false;
         }

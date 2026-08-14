@@ -594,6 +594,20 @@ impl AppState {
     }
 
     fn active_marquee_target(&self) -> Option<MarqueeTarget> {
+        if self.terminal_size.1 < 8 {
+            let now = self.now.as_ref()?;
+            if !ui::mini_player::marquee_needed(self, self.terminal_size.0) {
+                return None;
+            }
+            return Some(MarqueeTarget {
+                view: View::NowPlaying,
+                source: self.queue_source,
+                underlying: self.queue_pos.unwrap_or(usize::MAX),
+                id: self.current_track_id.unwrap_or_default(),
+                title: now.title.clone(),
+                artist: now.artist.clone(),
+            });
+        }
         if self.show_help
             || self.confirm_quit
             || self.filter.input
@@ -1080,8 +1094,10 @@ impl AppState {
 
     fn apply_resolved(&mut self, fx: &Effects, generation: u64, track: api::ResolvedTrack) {
         let row = song_row_from_resolved(&track);
+        let track_id = track.id;
+        let cache_request = cache_write_request(&track);
         self.active_row = Some(row.clone());
-        self.current_track_id = Some(track.id);
+        self.current_track_id = Some(track_id);
         self.now = Some(NowPlaying {
             title: track.title.clone(),
             artist: track.artist.clone(),
@@ -1089,20 +1105,39 @@ impl AppState {
         });
         self.duration =
             (track.duration_ms > 0).then(|| Duration::from_millis(track.duration_ms as u64));
-        self.status = Some(i18n::t_playing(&track.kind));
-        let request = cache_write_request(&track);
-        fx.player.send(PlayerCommand::PlayUrl {
-            generation,
-            url: track.url.clone(),
-            cache: fx
-                .cache_root
-                .clone()
-                .map(|root| player::CacheWritePlan { root, request }),
+        self.status = Some(if track.media.is_unm() {
+            i18n::t(Key::UnmSourceUsed).into()
+        } else {
+            i18n::t_playing(&track.kind)
         });
+        match track.media {
+            api::ResolvedMedia::NeteaseUrl(url) => {
+                fx.player.send(PlayerCommand::PlayUrl {
+                    generation,
+                    url,
+                    cache: fx.cache_root.clone().map(|root| player::CacheWritePlan {
+                        root,
+                        request: cache_request,
+                    }),
+                    unm_source: false,
+                });
+            }
+            api::ResolvedMedia::UnmUrl(url) => fx.player.send(PlayerCommand::PlayUrl {
+                generation,
+                url,
+                cache: None,
+                unm_source: true,
+            }),
+            api::ResolvedMedia::UnmBytes(bytes) => fx.player.send(PlayerCommand::PlayBytes {
+                generation,
+                bytes,
+                unm_source: true,
+            }),
+        }
         if !self.cover_prefetched {
             self.load_playing_cover(fx, &row);
         }
-        spawn_fetch_lyrics(fx, generation, track.id);
+        spawn_fetch_lyrics(fx, generation, track_id);
         self.prefetch_next(fx);
     }
 
@@ -1209,18 +1244,19 @@ impl AppState {
     }
 
     /// Move within the queue (manual n/p and end-of-track auto-advance).
-    fn step_queue(&mut self, fx: &Effects, delta: i32, auto: bool) {
+    fn step_queue(&mut self, fx: &Effects, delta: i32, auto: bool, allow_list_wrap: bool) -> bool {
         let Some(position) = self.queue_pos else {
-            return;
+            return false;
         };
         if self.queue.is_empty() {
-            return;
+            return false;
         }
         if auto && self.play_mode == PlayMode::One {
             if let Some(row) = self.queue.get(position).cloned() {
                 self.play_row(fx, row);
+                return true;
             }
-            return;
+            return false;
         }
         let next = if self.shuffle {
             self.ensure_shuffle_order();
@@ -1231,8 +1267,8 @@ impl AppState {
                 } else if self.queue_source == Source::Fm {
                     self.pending_fm_next = true;
                     self.fetch_fm_more(fx);
-                    return;
-                } else if self.play_mode == PlayMode::List {
+                    return true;
+                } else if allow_list_wrap && self.play_mode == PlayMode::List {
                     self.shuffle_order = shuffled_order(self.queue.len(), position);
                     self.shuffle_cursor = usize::from(self.shuffle_order.len() > 1);
                     self.shuffle_order.get(self.shuffle_cursor).copied()
@@ -1242,7 +1278,7 @@ impl AppState {
             } else if self.shuffle_cursor > 0 {
                 self.shuffle_cursor -= 1;
                 self.shuffle_order.get(self.shuffle_cursor).copied()
-            } else if self.play_mode == PlayMode::List {
+            } else if allow_list_wrap && self.play_mode == PlayMode::List {
                 self.shuffle_order = shuffled_order(self.queue.len(), position);
                 self.shuffle_cursor = self.shuffle_order.len().saturating_sub(1);
                 self.shuffle_order.get(self.shuffle_cursor).copied()
@@ -1256,8 +1292,8 @@ impl AppState {
             } else if self.queue_source == Source::Fm && delta > 0 {
                 self.pending_fm_next = true;
                 self.fetch_fm_more(fx);
-                return;
-            } else if self.play_mode == PlayMode::List {
+                return true;
+            } else if allow_list_wrap && self.play_mode == PlayMode::List {
                 Some(if delta >= 0 { 0 } else { self.queue.len() - 1 })
             } else {
                 None
@@ -1267,9 +1303,21 @@ impl AppState {
             Some((next, row)) => {
                 self.queue_pos = Some(next);
                 self.play_row(fx, row);
+                true
             }
-            None => self.status = Some(i18n::t(Key::QueueFinished).into()),
+            None => {
+                self.status = Some(i18n::t(Key::QueueFinished).into());
+                false
+            }
         }
+    }
+
+    fn handle_track_unavailable(&mut self, fx: &Effects) {
+        if !self.step_queue(fx, 1, false, false) {
+            self.paused = true;
+            self.resume_on_play = Some(Duration::ZERO);
+        }
+        self.status = Some(i18n::t(Key::TrackUnavailable).into());
     }
 
     fn apply_player_event(&mut self, fx: &Effects, event: PlayerEvent) {
@@ -1310,11 +1358,14 @@ impl AppState {
                 generation,
                 message,
                 cached,
+                unm_source,
             } => {
                 if generation == self.generation {
                     if let (Some(metadata), Some(row)) = (cached, self.active_row.clone()) {
                         self.status = Some(i18n::t(Key::Resolving).into());
                         spawn_cache_fallback(fx, generation, metadata, row);
+                    } else if unm_source {
+                        self.handle_track_unavailable(fx);
                     } else {
                         self.status = Some(message);
                     }
@@ -1349,13 +1400,12 @@ fn spawn_resolve(fx: &Effects, generation: u64, row: SongRow) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        let resolved = if row.id > 0 {
-            ncm.resolve_by_id(&row).await
-        } else {
-            ncm.resolve_for_play(&row.title, &row.artist).await
-        };
+        let resolved = ncm.resolve_for_playback(&row).await;
         let action = match resolved {
             Ok(track) => Action::TrackResolved { generation, track },
+            Err(error) if error.is::<api::TrackUnavailable>() => {
+                Action::TrackUnavailable { generation }
+            }
             Err(error) => Action::ResolveFailed {
                 generation,
                 message: error.to_string(),
@@ -1447,8 +1497,11 @@ fn spawn_cache_fallback(fx: &Effects, generation: u64, metadata: CacheMetadata, 
             Err(error) => tracing::warn!(%error, "audio cache worker failed"),
         }
 
-        let action = match ncm.resolve_by_id(&row).await {
+        let action = match ncm.resolve_for_playback(&row).await {
             Ok(track) => Action::CacheFallbackResolved { generation, track },
+            Err(error) if error.is::<api::TrackUnavailable>() => {
+                Action::TrackUnavailable { generation }
+            }
             Err(error) => Action::ResolveFailed {
                 generation,
                 message: error.to_string(),
@@ -1952,9 +2005,14 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
         }
     });
 
+    let ncm = Arc::new(Ncm::new(
+        config::session_path(),
+        config.quality,
+        config.unm_enabled,
+    ));
     let fx = Effects {
         player,
-        ncm: Arc::new(Ncm::new(config::session_path(), config.quality)),
+        ncm,
         store: Arc::new(crate::store::LibraryStore::new(
             config::cache_dir().join("library"),
         )),

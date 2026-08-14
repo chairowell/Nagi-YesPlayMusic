@@ -14,6 +14,7 @@ fn effects(directory: &TempDir) -> Effects {
         ncm: Arc::new(Ncm::new(
             directory.path().join("session.json"),
             yesplaymusic_core::cache::AudioQuality::High320,
+            true,
         )),
         store: Arc::new(crate::store::LibraryStore::new(
             directory.path().join("library"),
@@ -91,6 +92,63 @@ async fn paused_ui_ticks_advance_the_marquee_without_consuming_the_gg_prefix() {
 }
 
 #[tokio::test]
+async fn paused_mini_player_ticks_advance_its_title_marquee() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let hits = ui::Hits::default();
+    let mut state = AppState::new(&Config::default());
+    state.paused = true;
+    state.now = Some(NowPlaying {
+        title: "A deliberately long title that must scroll in the mini player".into(),
+        artist: "Artist".into(),
+        album: String::new(),
+    });
+
+    apply(&mut state, Action::Resize { cols: 80, rows: 6 }, &fx, &hits);
+    assert!(state.marquee_active());
+    assert_eq!(state.marquee_frame(), 0);
+
+    apply(&mut state, Action::UiTick, &fx, &hits);
+    assert_eq!(state.marquee_frame(), 1);
+}
+
+#[tokio::test]
+async fn mini_player_keys_override_settings_and_text_input_focus() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.terminal_size = (80, 6);
+    state.view = View::Settings;
+    state.active_row = Some(row(1));
+    state.resume_on_play = Some(Duration::from_secs(12));
+    state.show_help = true;
+
+    state.update(raw_key(KeyCode::Char(' ')), &fx);
+    assert_eq!(state.generation, 1);
+    assert!(!state.show_help);
+
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+    state.update(raw_key(KeyCode::Char('n')), &fx);
+    assert_eq!(state.queue_pos, Some(1));
+
+    state.update(raw_key(KeyCode::Char('q')), &fx);
+    assert!(state.confirm_quit);
+    state.update(raw_key(KeyCode::Esc), &fx);
+
+    state.view = View::Search;
+    state.search.input = true;
+    state.search.query = "needle".into();
+    state.update(raw_key(KeyCode::Char('p')), &fx);
+    assert_eq!(state.queue_pos, Some(0));
+    assert_eq!(state.search.query, "needle");
+
+    state.filter.start();
+    state.update(raw_key(KeyCode::Char('*')), &fx);
+    assert!(state.filter.query.is_empty());
+}
+
+#[tokio::test]
 async fn returning_to_a_long_row_restarts_the_marquee_pause() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);
@@ -126,6 +184,7 @@ async fn a_network_cover_waits_for_debounce_and_schedules_three_neighbors_each_s
         ncm: Arc::new(Ncm::new(
             directory.path().join("session.json"),
             AudioQuality::High320,
+            true,
         )),
         store: Arc::new(crate::store::LibraryStore::new(
             directory.path().join("library"),
@@ -217,6 +276,7 @@ async fn an_l2_hit_is_loaded_before_the_network_debounce() {
         ncm: Arc::new(Ncm::new(
             directory.path().join("session.json"),
             AudioQuality::High320,
+            true,
         )),
         store: Arc::new(crate::store::LibraryStore::new(
             directory.path().join("library"),
@@ -442,6 +502,7 @@ async fn a_prefetched_pixel_warms_the_next_selection() {
         ncm: Arc::new(Ncm::new(
             directory.path().join("session.json"),
             AudioQuality::High320,
+            true,
         )),
         store: Arc::new(crate::store::LibraryStore::new(
             directory.path().join("library"),
@@ -499,6 +560,7 @@ async fn a_selection_without_art_still_prefetches_neighbor_originals() {
         ncm: Arc::new(Ncm::new(
             directory.path().join("session.json"),
             AudioQuality::High320,
+            true,
         )),
         store: Arc::new(crate::store::LibraryStore::new(
             directory.path().join("library"),
@@ -835,6 +897,149 @@ async fn a_failed_restored_track_can_be_retried_with_space() {
 }
 
 #[tokio::test]
+async fn current_unavailable_track_reports_failure_and_advances_the_queue() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut fx = effects(&directory);
+    fx.cache_root = Some(directory.path().join("audio"));
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+
+    state.update(Action::TrackUnavailable { generation: 0 }, &fx);
+
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(state.generation, 1);
+    assert_eq!(
+        state.status.as_deref(),
+        Some(i18n::t(Key::TrackUnavailable))
+    );
+}
+
+#[tokio::test]
+async fn unavailable_track_never_wraps_a_list_queue_and_can_be_retried() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(1)];
+    state.queue_pos = Some(0);
+    state.active_row = Some(row(1));
+    state.play_mode = PlayMode::List;
+
+    state.update(Action::TrackUnavailable { generation: 0 }, &fx);
+
+    assert_eq!(state.queue_pos, Some(0));
+    assert_eq!(state.generation, 0);
+    assert!(state.paused);
+    assert_eq!(state.resume_on_play, Some(Duration::ZERO));
+    assert_eq!(
+        state.status.as_deref(),
+        Some(i18n::t(Key::TrackUnavailable))
+    );
+
+    state.update(Action::TogglePlay, &fx);
+    assert_eq!(state.generation, 1);
+}
+
+#[tokio::test]
+async fn unm_media_failure_reports_unavailable_and_advances() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+    state.active_row = Some(row(1));
+    state.generation = 4;
+
+    state.update(
+        Action::Player(PlayerEvent::Failed {
+            generation: 4,
+            message: "decode failed".into(),
+            cached: None,
+            unm_source: true,
+        }),
+        &fx,
+    );
+
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(state.generation, 5);
+    assert_eq!(
+        state.status.as_deref(),
+        Some(i18n::t(Key::TrackUnavailable))
+    );
+}
+
+#[tokio::test]
+async fn ordinary_player_failure_does_not_trigger_unm_auto_next() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+
+    state.update(
+        Action::Player(PlayerEvent::Failed {
+            generation: 0,
+            message: "audio device unavailable".into(),
+            cached: None,
+            unm_source: false,
+        }),
+        &fx,
+    );
+
+    assert_eq!(state.queue_pos, Some(0));
+    assert_eq!(state.generation, 0);
+    assert_eq!(state.status.as_deref(), Some("audio device unavailable"));
+}
+
+#[tokio::test]
+async fn current_unm_result_uses_the_localised_source_status() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.generation = 3;
+
+    state.update(
+        Action::TrackResolved {
+            generation: 3,
+            track: api::ResolvedTrack {
+                id: 42,
+                title: "Recovered".into(),
+                artist: "Artist".into(),
+                media: api::ResolvedMedia::UnmBytes(Vec::new()),
+                kind: "mp3".into(),
+                cache_key: CacheKey::new(42, AudioQuality::High320),
+                codec: AudioCodec::Mp3,
+                actual_bitrate: 128_000,
+                expected_bytes: None,
+                expected_md5: None,
+                duration_ms: 180_000,
+                pic_url: None,
+            },
+        },
+        &fx,
+    );
+
+    assert_eq!(state.status.as_deref(), Some(i18n::t(Key::UnmSourceUsed)));
+    assert_eq!(state.current_track_id, Some(42));
+}
+
+#[tokio::test]
+async fn stale_unavailable_result_cannot_skip_the_current_track() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+    state.generation = 7;
+
+    state.update(Action::TrackUnavailable { generation: 6 }, &fx);
+
+    assert_eq!(state.queue_pos, Some(0));
+    assert_eq!(state.generation, 7);
+    assert!(state.status.is_none());
+}
+
+#[tokio::test]
 async fn quit_dialog_handles_raw_confirm_and_cancel_keys() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);
@@ -997,7 +1202,7 @@ async fn quality_preview_rejects_a_prefetch_from_the_previous_setting() {
                 id: 42,
                 title: "Track 42".into(),
                 artist: "Artist".into(),
-                url: "https://example.test/audio.mp3".into(),
+                media: api::ResolvedMedia::NeteaseUrl("https://example.test/audio.mp3".into()),
                 kind: "mp3".into(),
                 cache_key: CacheKey::new(42, AudioQuality::High320),
                 codec: AudioCodec::Mp3,
@@ -1471,6 +1676,7 @@ async fn a_known_track_uses_the_shared_cache_before_resolving_a_url() {
         ncm: Arc::new(Ncm::new(
             directory.path().join("session.json"),
             yesplaymusic_core::cache::AudioQuality::High320,
+            true,
         )),
         store: Arc::new(crate::store::LibraryStore::new(
             directory.path().join("library"),

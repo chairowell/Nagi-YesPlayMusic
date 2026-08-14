@@ -3,26 +3,43 @@
 //! way the desktop client does (standard quality, no personal data).
 
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use futures_util::future::BoxFuture;
 use ncm_api_rs::api::Query;
 use ncm_api_rs::ApiClient;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use yesplaymusic_core::auth::{Session, SessionStore};
 use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
+use yesplaymusic_core::unm::UnmState;
 
 use crate::i18n::{self, Key};
 
 const PLAYLIST_PAGE_SIZE: usize = 500;
+const UNM_RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResolvedMedia {
+    NeteaseUrl(String),
+    UnmUrl(String),
+    UnmBytes(Vec<u8>),
+}
+
+impl ResolvedMedia {
+    pub const fn is_unm(&self) -> bool {
+        matches!(self, Self::UnmUrl(_) | Self::UnmBytes(_))
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ResolvedTrack {
     pub id: i64,
     pub title: String,
     pub artist: String,
-    pub url: String,
+    pub media: ResolvedMedia,
     pub kind: String,
     pub cache_key: CacheKey,
     pub codec: AudioCodec,
@@ -40,6 +57,40 @@ struct PlaybackSource {
     actual_bitrate: u32,
     expected_bytes: Option<u64>,
     expected_md5: Option<[u8; 16]>,
+}
+
+#[derive(Debug)]
+enum SongUrlFailure {
+    Unavailable,
+    Other(anyhow::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("track has no playable source")]
+pub(crate) struct TrackUnavailable;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UnmResolution {
+    provider: String,
+    url: String,
+}
+
+trait UnmResolver: Send + Sync {
+    fn resolve<'a>(&'a self, payload: &'a Value) -> BoxFuture<'a, Result<Option<UnmResolution>>>;
+}
+
+impl UnmResolver for UnmState {
+    fn resolve<'a>(&'a self, payload: &'a Value) -> BoxFuture<'a, Result<Option<UnmResolution>>> {
+        Box::pin(async move {
+            Ok(UnmState::resolve(self, payload)
+                .await
+                .map_err(|_| anyhow!("UNM rejected the track payload"))?
+                .map(|retrieved| UnmResolution {
+                    provider: retrieved.source.into_owned(),
+                    url: retrieved.url,
+                }))
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -75,10 +126,29 @@ pub struct Ncm {
     store: SessionStore,
     session: RwLock<Option<Session>>,
     quality: RwLock<AudioQuality>,
+    unm_enabled: bool,
+    unm: Arc<dyn UnmResolver>,
+    unm_timeout: Duration,
 }
 
 impl Ncm {
-    pub fn new(session_path: PathBuf, quality: AudioQuality) -> Self {
+    pub fn new(session_path: PathBuf, quality: AudioQuality, unm_enabled: bool) -> Self {
+        Self::with_unm(
+            session_path,
+            quality,
+            unm_enabled,
+            Arc::new(UnmState::new()),
+            UNM_RESOLVE_TIMEOUT,
+        )
+    }
+
+    fn with_unm(
+        session_path: PathBuf,
+        quality: AudioQuality,
+        unm_enabled: bool,
+        unm: Arc<dyn UnmResolver>,
+        unm_timeout: Duration,
+    ) -> Self {
         let store = SessionStore::new(session_path);
         let session = RwLock::new(store.load());
         Self {
@@ -86,6 +156,9 @@ impl Ncm {
             store,
             session,
             quality: RwLock::new(quality),
+            unm_enabled,
+            unm,
+            unm_timeout,
         }
     }
 
@@ -295,21 +368,26 @@ impl Ncm {
 
     // ── playback resolution ──────────────────────────────────────────
 
-    async fn song_url(&self, id: i64) -> Result<(AudioQuality, PlaybackSource)> {
+    async fn song_url(
+        &self,
+        id: i64,
+    ) -> std::result::Result<(AudioQuality, PlaybackSource), SongUrlFailure> {
         let requested_quality = self.quality();
         let bitrate = requested_quality.bitrate().to_string();
         let query = self
             .query()
             .param("id", &id.to_string())
             .param("br", &bitrate);
-        let response = self
-            .client
-            .song_url(&query)
-            .await
-            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))?;
+        let response = self.client.song_url(&query).await.map_err(|error| {
+            SongUrlFailure::Other(anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))
+        })?;
+        let data = &response.body["data"][0];
+        if data["url"].as_str().is_none_or(str::is_empty) {
+            return Err(SongUrlFailure::Unavailable);
+        }
         Ok((
             requested_quality,
-            parse_playback_source(&response.body["data"][0])?,
+            parse_playback_source(data).map_err(SongUrlFailure::Other)?,
         ))
     }
 
@@ -359,8 +437,103 @@ impl Ncm {
 
     /// Resolve a known song id straight to a playable track.
     pub async fn resolve_by_id(&self, row: &SongRow) -> Result<ResolvedTrack> {
-        let (requested_quality, source) = self.song_url(row.id).await?;
+        let (requested_quality, source) =
+            self.song_url(row.id).await.map_err(|error| match error {
+                SongUrlFailure::Unavailable => anyhow!(i18n::t(Key::ApiPlaybackUrlUnavailable)),
+                SongUrlFailure::Other(error) => error,
+            })?;
         Ok(self.resolved_track(row.clone(), requested_quality, source))
+    }
+
+    /// Resolve for active playback. UNM is only consulted after the NCM
+    /// endpoint explicitly returns no URL, never for transport failures.
+    pub async fn resolve_for_playback(&self, row: &SongRow) -> Result<ResolvedTrack> {
+        if row.id <= 0 {
+            return self.resolve_for_play(&row.title, &row.artist).await;
+        }
+        let requested_quality = self.quality();
+        let native = self.song_url(row.id).await.map(|(_, source)| source);
+        self.resolve_after_native(row, requested_quality, native)
+            .await
+    }
+
+    async fn resolve_after_native(
+        &self,
+        row: &SongRow,
+        requested_quality: AudioQuality,
+        native: std::result::Result<PlaybackSource, SongUrlFailure>,
+    ) -> Result<ResolvedTrack> {
+        match native {
+            Ok(source) => Ok(self.resolved_track(row.clone(), requested_quality, source)),
+            Err(SongUrlFailure::Other(error)) => Err(error),
+            Err(SongUrlFailure::Unavailable) => {
+                self.resolve_unm_track(row, requested_quality).await
+            }
+        }
+    }
+
+    async fn resolve_unm_track(
+        &self,
+        row: &SongRow,
+        requested_quality: AudioQuality,
+    ) -> Result<ResolvedTrack> {
+        if !self.unm_enabled {
+            return Err(TrackUnavailable.into());
+        }
+        let payload = json!({
+            "track": {
+                "id": row.id,
+                "name": row.title,
+                "dt": row.duration_ms,
+                "ar": [{ "id": 0, "name": row.artist }]
+            },
+            "context": {}
+        });
+        let resolution =
+            match tokio::time::timeout(self.unm_timeout, self.unm.resolve(&payload)).await {
+                Ok(Ok(Some(resolution))) => resolution,
+                Ok(Ok(None)) => return Err(TrackUnavailable.into()),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "UNM resolution failed");
+                    return Err(TrackUnavailable.into());
+                }
+                Err(_) => {
+                    tracing::warn!("UNM resolution timed out");
+                    return Err(TrackUnavailable.into());
+                }
+            };
+
+        if resolution.url.trim().is_empty() {
+            return Err(TrackUnavailable.into());
+        }
+        let media = if resolution.provider.eq_ignore_ascii_case("bilibili") {
+            let bytes = decode_base64(&resolution.url).map_err(|error| {
+                tracing::warn!(%error, "UNM returned invalid Bilibili audio");
+                TrackUnavailable
+            })?;
+            ResolvedMedia::UnmBytes(bytes)
+        } else {
+            ResolvedMedia::UnmUrl(resolution.url)
+        };
+        let codec = match &media {
+            ResolvedMedia::UnmUrl(url) => codec_from_url(url),
+            ResolvedMedia::UnmBytes(_) => AudioCodec::Mp3,
+            ResolvedMedia::NeteaseUrl(_) => unreachable!(),
+        };
+        Ok(ResolvedTrack {
+            id: row.id,
+            title: row.title.clone(),
+            artist: row.artist.clone(),
+            media,
+            kind: codec.extension().to_owned(),
+            cache_key: CacheKey::new(row.id, requested_quality),
+            codec,
+            actual_bitrate: 128_000,
+            expected_bytes: None,
+            expected_md5: None,
+            duration_ms: row.duration_ms,
+            pic_url: row.pic_url.clone(),
+        })
     }
 
     /// Search by "title artist" and resolve the first *playable* match —
@@ -406,7 +579,7 @@ impl Ncm {
             actual_bitrate: source.actual_bitrate,
             expected_bytes: source.expected_bytes,
             expected_md5: source.expected_md5,
-            url: source.url,
+            media: ResolvedMedia::NeteaseUrl(source.url),
             duration_ms: row.duration_ms,
             pic_url: row.pic_url,
         }
@@ -493,6 +666,15 @@ fn parse_playback_source(data: &Value) -> Result<PlaybackSource> {
     })
 }
 
+fn codec_from_url(url: &str) -> AudioCodec {
+    url.split(['?', '#'])
+        .next()
+        .and_then(|path| path.rsplit('/').next())
+        .and_then(|name| name.rsplit_once('.').map(|(_, extension)| extension))
+        .and_then(|extension| extension.parse().ok())
+        .unwrap_or(AudioCodec::Mp3)
+}
+
 fn parse_md5(value: Option<&str>) -> Result<Option<[u8; 16]>> {
     let Some(value) = value.filter(|value| !value.is_empty()) else {
         return Ok(None);
@@ -508,6 +690,51 @@ fn parse_md5(value: Option<&str>) -> Result<Option<[u8; 16]>> {
             .map_err(|_| anyhow!("playback response contains an invalid MD5"))?;
     }
     Ok(Some(digest))
+}
+
+fn decode_base64(input: &str) -> Result<Vec<u8>> {
+    let bytes = input.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return Err(anyhow!("invalid base64 length"));
+    }
+    let mut decoded = Vec::with_capacity(bytes.len() / 4 * 3);
+    let chunks = bytes.chunks_exact(4);
+    let chunk_count = chunks.len();
+    for (index, chunk) in chunks.enumerate() {
+        let last = index + 1 == chunk_count;
+        let high = base64_value(chunk[0]).ok_or_else(|| anyhow!("invalid base64 digit"))?;
+        let low = base64_value(chunk[1]).ok_or_else(|| anyhow!("invalid base64 digit"))?;
+        decoded.push((high << 2) | (low >> 4));
+        match (chunk[2], chunk[3]) {
+            (b'=', b'=') if last && low & 0x0f == 0 => {}
+            (third, b'=') if last => {
+                let third = base64_value(third).ok_or_else(|| anyhow!("invalid base64 digit"))?;
+                if third & 0x03 != 0 {
+                    return Err(anyhow!("invalid base64 padding"));
+                }
+                decoded.push((low << 4) | (third >> 2));
+            }
+            (third, fourth) if third != b'=' && fourth != b'=' => {
+                let third = base64_value(third).ok_or_else(|| anyhow!("invalid base64 digit"))?;
+                let fourth = base64_value(fourth).ok_or_else(|| anyhow!("invalid base64 digit"))?;
+                decoded.push((low << 4) | (third >> 2));
+                decoded.push((third << 6) | fourth);
+            }
+            _ => return Err(anyhow!("invalid base64 padding")),
+        }
+    }
+    Ok(decoded)
+}
+
+fn base64_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
 }
 
 fn parse_qr_status(body: &Value, cookies: &[String]) -> Result<QrStatus> {
@@ -595,13 +822,82 @@ pub fn qr_unicode(url: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
 
     fn ncm(quality: AudioQuality) -> Ncm {
         let dir = tempfile::tempdir().unwrap();
-        Ncm::new(dir.path().join("session.json"), quality)
+        Ncm::new(dir.path().join("session.json"), quality, true)
+    }
+
+    #[derive(Clone)]
+    enum FakeUnmOutcome {
+        Found(UnmResolution),
+        Missing,
+    }
+
+    struct FakeUnm {
+        outcome: FakeUnmOutcome,
+        delay: Duration,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl UnmResolver for FakeUnm {
+        fn resolve<'a>(
+            &'a self,
+            _payload: &'a Value,
+        ) -> BoxFuture<'a, Result<Option<UnmResolution>>> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                tokio::time::sleep(self.delay).await;
+                Ok(match &self.outcome {
+                    FakeUnmOutcome::Found(resolution) => Some(resolution.clone()),
+                    FakeUnmOutcome::Missing => None,
+                })
+            })
+        }
+    }
+
+    fn ncm_with_unm(
+        enabled: bool,
+        outcome: FakeUnmOutcome,
+        delay: Duration,
+        timeout: Duration,
+        calls: Arc<AtomicUsize>,
+    ) -> Ncm {
+        let dir = tempfile::tempdir().unwrap();
+        Ncm::with_unm(
+            dir.path().join("session.json"),
+            AudioQuality::High320,
+            enabled,
+            Arc::new(FakeUnm {
+                outcome,
+                delay,
+                calls,
+            }),
+            timeout,
+        )
+    }
+
+    fn unavailable_row() -> SongRow {
+        SongRow {
+            id: 42,
+            title: "Unavailable".into(),
+            artist: "Artist".into(),
+            duration_ms: 180_000,
+            pic_url: None,
+        }
+    }
+
+    #[test]
+    fn bilibili_base64_decoder_handles_complete_and_padded_groups() {
+        assert_eq!(decode_base64("YQ==").unwrap(), b"a");
+        assert_eq!(decode_base64("YWI=").unwrap(), b"ab");
+        assert_eq!(decode_base64("YWJj").unwrap(), b"abc");
+        assert!(decode_base64("YQ=A").is_err());
     }
 
     #[test]
@@ -616,6 +912,139 @@ mod tests {
         for (quality, expected) in cases {
             assert_eq!(ncm(quality).quality().bitrate(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn unavailable_native_audio_uses_unm_and_decodes_bilibili_bytes() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ncm = ncm_with_unm(
+            true,
+            FakeUnmOutcome::Found(UnmResolution {
+                provider: "bilibili".into(),
+                url: "YXVkaW8gYnl0ZXM=".into(),
+            }),
+            Duration::ZERO,
+            Duration::from_secs(1),
+            calls.clone(),
+        );
+
+        let track = ncm
+            .resolve_after_native(
+                &unavailable_row(),
+                AudioQuality::High320,
+                Err(SongUrlFailure::Unavailable),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            track.media,
+            ResolvedMedia::UnmBytes(b"audio bytes".to_vec())
+        );
+        assert_eq!(track.codec, AudioCodec::Mp3);
+        assert_eq!(track.actual_bitrate, 128_000);
+    }
+
+    #[tokio::test]
+    async fn unavailable_native_audio_uses_a_regular_unm_url() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let url = "https://audio.example/recovered.FLAC?token=secret";
+        let ncm = ncm_with_unm(
+            true,
+            FakeUnmOutcome::Found(UnmResolution {
+                provider: "kugou".into(),
+                url: url.into(),
+            }),
+            Duration::ZERO,
+            Duration::from_secs(1),
+            calls.clone(),
+        );
+
+        let track = ncm
+            .resolve_after_native(
+                &unavailable_row(),
+                AudioQuality::High320,
+                Err(SongUrlFailure::Unavailable),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(track.media, ResolvedMedia::UnmUrl(url.into()));
+        assert_eq!(track.codec, AudioCodec::Flac);
+    }
+
+    #[tokio::test]
+    async fn disabled_unm_does_not_call_the_resolver() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ncm = ncm_with_unm(
+            false,
+            FakeUnmOutcome::Missing,
+            Duration::ZERO,
+            Duration::from_secs(1),
+            calls.clone(),
+        );
+
+        let error = ncm
+            .resolve_after_native(
+                &unavailable_row(),
+                AudioQuality::High320,
+                Err(SongUrlFailure::Unavailable),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.is::<TrackUnavailable>());
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn unm_timeout_is_bounded_and_returns_unavailable() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ncm = ncm_with_unm(
+            true,
+            FakeUnmOutcome::Missing,
+            Duration::from_secs(1),
+            Duration::from_millis(10),
+            calls.clone(),
+        );
+
+        let error = ncm
+            .resolve_after_native(
+                &unavailable_row(),
+                AudioQuality::High320,
+                Err(SongUrlFailure::Unavailable),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.is::<TrackUnavailable>());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn native_transport_errors_never_trigger_unm() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ncm = ncm_with_unm(
+            true,
+            FakeUnmOutcome::Missing,
+            Duration::ZERO,
+            Duration::from_secs(1),
+            calls.clone(),
+        );
+
+        let error = ncm
+            .resolve_after_native(
+                &unavailable_row(),
+                AudioQuality::High320,
+                Err(SongUrlFailure::Other(anyhow!("offline"))),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "offline");
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 
     fn rows(range: std::ops::Range<usize>) -> Vec<SongRow> {
@@ -816,6 +1245,18 @@ mod tests {
         }));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn unm_url_codec_uses_the_path_extension_and_defaults_to_mp3() {
+        assert_eq!(
+            codec_from_url("https://audio.example/track.FLAC?token=secret"),
+            AudioCodec::Flac
+        );
+        assert_eq!(
+            codec_from_url("https://audio.example/signed?token=secret"),
+            AudioCodec::Mp3
+        );
     }
 
     #[test]

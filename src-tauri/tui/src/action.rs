@@ -117,6 +117,9 @@ pub enum Action {
         generation: u64,
         message: String,
     },
+    TrackUnavailable {
+        generation: u64,
+    },
     CoverLoaded {
         request: CoverRenderRequest,
         cover: PixelCover,
