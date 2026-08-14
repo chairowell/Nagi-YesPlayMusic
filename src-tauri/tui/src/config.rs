@@ -180,9 +180,36 @@ fn parse_with_metadata(text: &str) -> LoadedConfig {
         .as_table()
         .is_some_and(|table| table.contains_key("theme"));
     LoadedConfig {
-        config: value.try_into().unwrap_or_default(),
+        config: parse_lenient(value),
         theme_is_explicit,
     }
+}
+
+/// One unusable field value must not cost the user every other setting:
+/// the next settings write persists the whole struct, so a whole-file
+/// fallback silently overwrites theme/language/… with defaults. Admit the
+/// fields one at a time and drop only the ones that fail to deserialize —
+/// hand-written values, and enum names a downgrade no longer knows.
+fn parse_lenient(value: toml::Value) -> Config {
+    if let Ok(config) = value.clone().try_into::<Config>() {
+        return config;
+    }
+    let Some(table) = value.as_table() else {
+        return Config::default();
+    };
+    let mut accepted = toml::value::Table::new();
+    for (key, field) in table {
+        accepted.insert(key.clone(), field.clone());
+        if toml::Value::Table(accepted.clone())
+            .try_into::<Config>()
+            .is_err()
+        {
+            accepted.remove(key);
+        }
+    }
+    toml::Value::Table(accepted)
+        .try_into::<Config>()
+        .unwrap_or_default()
 }
 
 const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修改；手动编辑后重启生效。
@@ -394,6 +421,68 @@ mod tests {
         let invalid_value = parse_with_metadata("theme = 42");
         assert!(invalid_value.theme_is_explicit);
         assert_eq!(invalid_value.config.theme, "db16");
+    }
+
+    #[test]
+    fn one_invalid_field_value_never_discards_the_rest_of_the_file() {
+        // "flac" is a plausible hand-written quality name the parser rejects.
+        let loaded = parse_with_metadata(
+            r#"
+language = "ja"
+quality = "flac"
+theme = "dracula"
+theme_mode = "light"
+layout = "stacked"
+icons = "nerd"
+spectrum_enabled = true
+update_check = false
+"#,
+        );
+
+        assert!(loaded.theme_is_explicit);
+        let config = loaded.config;
+        assert_eq!(config.quality, Config::default().quality);
+        assert_eq!(config.language, "ja");
+        assert_eq!(config.theme, "dracula");
+        assert_eq!(config.theme_mode, ThemeMode::Light);
+        assert_eq!(config.layout, "stacked");
+        assert_eq!(config.icons, IconStyle::Nerd);
+        assert!(config.spectrum_enabled);
+        assert!(!config.update_check);
+    }
+
+    #[test]
+    fn unknown_enum_values_and_wrong_types_fall_back_field_by_field() {
+        // A downgrade from a newer build leaves enum names this one lacks.
+        let config = parse_with_metadata(
+            r#"
+theme = "pico8"
+spectrum_style = "plasma"
+cover_detail = "duodecant"
+pixel_scale = "chunky"
+cache_limit_mib = -1
+enter_replaces_queue = false
+idle_art = "~/art.png"
+"#,
+        )
+        .config;
+
+        assert_eq!(config.spectrum_style, Config::default().spectrum_style);
+        assert_eq!(config.cover_detail, Config::default().cover_detail);
+        assert_eq!(config.pixel_scale, Config::default().pixel_scale);
+        assert_eq!(config.cache_limit_mib, None);
+        assert_eq!(config.theme, "pico8");
+        assert!(!config.enter_replaces_queue);
+        assert_eq!(config.idle_art.as_deref(), Some("~/art.png"));
+    }
+
+    #[test]
+    fn unknown_keys_and_non_table_documents_keep_the_defaults() {
+        let config = parse_with_metadata("theme = \"gameboy\"\nfuture_option = 7\n").config;
+        assert_eq!(config.theme, "gameboy");
+
+        let config = parse_with_metadata("[[songs]]\nid = 1\n").config;
+        assert_eq!(config, Config::default());
     }
 
     #[test]
