@@ -56,16 +56,73 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         } else {
             Style::new().fg(theme.fg)
         };
-        lines.push(Line::from(Span::styled(
-            format!(
-                "  {marker} {:>3}  {} {} {:>5}",
-                index + 1,
-                pad_or_marquee(&row.title, 24, selected, marquee_frame),
-                pad_or_marquee(&row.artist, 14, selected, marquee_frame),
-                super::format_ms(row.duration_ms)
+        let liked = state.liked.contains(&row.id);
+        let heart_style = if selected {
+            Style::new()
+                .fg(if liked { theme.accent2 } else { theme.faint })
+                .bg(theme.sel)
+        } else {
+            Style::new().fg(if liked { theme.accent2 } else { theme.faint })
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {marker} "), style),
+            Span::styled(icons.heart, heart_style),
+            Span::styled(
+                format!(
+                    " {:>3}  {} {} {:>5}",
+                    index + 1,
+                    pad_or_marquee(&row.title, 24, selected, marquee_frame),
+                    pad_or_marquee(&row.artist, 14, selected, marquee_frame),
+                    super::format_ms(row.duration_ms)
+                ),
+                style,
             ),
-            style,
-        )));
+        ]));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    use super::*;
+    use crate::api::SongRow;
+    use crate::config::Config;
+
+    #[test]
+    fn queue_rows_render_solid_hearts_in_state_colors() {
+        for liked in [false, true] {
+            let backend = TestBackend::new(80, 5);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut state = AppState::new(&Config::default());
+            state.queue.push(SongRow {
+                id: 1,
+                title: "Track".into(),
+                artist: "Artist".into(),
+                duration_ms: 180_000,
+                pic_url: None,
+            });
+            if liked {
+                state.liked.insert(1);
+            }
+            let mut hits = Hits::default();
+
+            terminal
+                .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
+                .unwrap();
+
+            let cell = &terminal.backend().buffer()[(4, 0)];
+            assert_eq!(cell.symbol(), "♥");
+            assert_eq!(
+                cell.fg,
+                if liked {
+                    state.theme.accent2
+                } else {
+                    state.theme.faint
+                }
+            );
+        }
+    }
 }

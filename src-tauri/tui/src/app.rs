@@ -505,10 +505,17 @@ impl AppState {
                     theme.bg,
                     PREVIEW_CELLS.0,
                     PREVIEW_CELLS.1,
+                    config.cover_detail,
                 ),
             },
             hot_pixel_covers: HotPixelCovers::default(),
-            idle_art: pixel::vinyl(theme.palette, theme.bg, idle_cells.0, idle_cells.1),
+            idle_art: pixel::vinyl(
+                theme.palette,
+                theme.bg,
+                idle_cells.0,
+                idle_cells.1,
+                config.cover_detail,
+            ),
             library_synced: false,
             library_request: 0,
             placeholder: None,
@@ -779,6 +786,7 @@ impl AppState {
                 self.theme.bg,
                 desired.0,
                 desired.1,
+                self.config.cover_detail,
             ));
         }
     }
@@ -803,10 +811,8 @@ impl AppState {
             spawn_render_idle(
                 fx,
                 bytes,
-                self.theme.palette,
-                self.theme.bg,
                 self.desired_idle_cells(),
-                self.pixel_detail_scale,
+                self.pixel_style(),
                 self.style_revision,
             );
         } else if let Some(path) = self.idle_path.clone() {
@@ -905,9 +911,19 @@ impl AppState {
             &request.source_key,
             request.cells,
             self.pixel_detail_scale,
+            self.config.cover_detail,
             self.theme.bg,
             self.theme.palette,
         )
+    }
+
+    fn pixel_style(&self) -> PixelStyle {
+        PixelStyle {
+            palette: self.theme.palette,
+            background: self.theme.bg,
+            detail_scale: self.pixel_detail_scale,
+            detail: self.config.cover_detail,
+        }
     }
 
     fn selection_cover_is_ready(&self, row: &SongRow) -> bool {
@@ -949,10 +965,10 @@ impl AppState {
             fx,
             request,
             pic_url.to_owned(),
-            self.theme.palette,
-            self.theme.bg,
-            self.pixel_detail_scale,
-            self.uses_original_cover(CoverSurface::Playing),
+            CoverStyle {
+                pixel: self.pixel_style(),
+                original: self.uses_original_cover(CoverSurface::Playing),
+            },
         );
     }
 
@@ -1035,9 +1051,7 @@ impl AppState {
                 PREVIEW_CELLS,
             ),
             style: CoverStyle {
-                palette: self.theme.palette,
-                background: self.theme.bg,
-                detail_scale: self.pixel_detail_scale,
+                pixel: self.pixel_style(),
                 original: key.original,
             },
         });
@@ -1489,32 +1503,22 @@ struct CoverLoad {
 
 #[derive(Clone, Copy)]
 struct CoverStyle {
-    palette: &'static [(u8, u8, u8)],
-    background: Color,
-    detail_scale: f32,
+    pixel: PixelStyle,
     original: bool,
 }
 
-fn spawn_cover_load(
-    fx: &Effects,
-    request: CoverRenderRequest,
-    pic_url: String,
+#[derive(Clone, Copy)]
+struct PixelStyle {
     palette: &'static [(u8, u8, u8)],
     background: Color,
     detail_scale: f32,
-    original: bool,
-) {
+    detail: pixel::CoverDetail,
+}
+
+fn spawn_cover_load(fx: &Effects, request: CoverRenderRequest, pic_url: String, style: CoverStyle) {
     let cache = fx.covers.clone();
     let actions = fx.actions.clone();
-    let load = CoverLoad {
-        request,
-        style: CoverStyle {
-            palette,
-            background,
-            detail_scale,
-            original,
-        },
-    };
+    let load = CoverLoad { request, style };
     tokio::spawn(async move {
         if send_cached_cover(cache.clone(), &actions, &load).await {
             return;
@@ -1656,11 +1660,12 @@ async fn process_cover(
         }
         let cover = pixel::from_image_bytes(
             &bytes,
-            load.style.palette,
-            load.style.background,
+            load.style.pixel.palette,
+            load.style.pixel.background,
             load.request.cells.0,
             load.request.cells.1,
-            load.style.detail_scale,
+            load.style.pixel.detail_scale,
+            load.style.pixel.detail,
         )?;
         write_original_cover(&cache, downloaded, &source_key, &bytes);
         if let (Some(cache), Some(pixel_key)) = (&cache, pixel_key) {
@@ -1709,9 +1714,10 @@ fn pixel_cache_key(load: &CoverLoad) -> String {
         load.request.song_id,
         &load.request.source_key,
         load.request.cells,
-        load.style.detail_scale,
-        load.style.background,
-        load.style.palette,
+        load.style.pixel.detail_scale,
+        load.style.pixel.detail,
+        load.style.pixel.background,
+        load.style.pixel.palette,
     )
 }
 
@@ -1824,16 +1830,22 @@ const LOGO_BYTES: &[u8] = include_bytes!("../../../images/logo.png");
 fn spawn_render_idle(
     fx: &Effects,
     bytes: Vec<u8>,
-    palette: &'static [(u8, u8, u8)],
-    background: Color,
     cells: (u16, u16),
-    detail_scale: f32,
+    style: PixelStyle,
     style_revision: u64,
 ) {
     let actions = fx.actions.clone();
     tokio::spawn(async move {
         let cover = tokio::task::spawn_blocking(move || {
-            pixel::from_image_bytes(&bytes, palette, background, cells.0, cells.1, detail_scale)
+            pixel::from_image_bytes(
+                &bytes,
+                style.palette,
+                style.background,
+                cells.0,
+                cells.1,
+                style.detail_scale,
+                style.detail,
+            )
         })
         .await;
         if let Ok(Ok(cover)) = cover {

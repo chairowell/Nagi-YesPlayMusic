@@ -7,15 +7,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ratatui::style::Color;
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 
-use crate::pixel::{PixelCell, PixelCover};
+use crate::pixel::{CoverDetail, PixelCell, PixelCover};
 
 const ORIGINAL_LIMIT_BYTES: u64 = 128 * 1024 * 1024;
 const ORIGINAL_MAGIC: &[u8; 8] = b"YPMCOVO1";
-const PIXEL_MAGIC: &[u8; 8] = b"YPMCOVP1";
+const PIXEL_MAGIC: &[u8; 8] = b"YPMCOVP2";
 const ORIGINAL_HEADER_LEN: usize = 8 + 4 + 8 + 8;
 const PIXEL_HEADER_LEN: usize = 8 + 4 + 2 + 2 + 4 + 8 + 8;
 const COLOR_BYTES: usize = 4;
-const CELL_BYTES: usize = COLOR_BYTES * 2;
+const GLYPH_BYTES: usize = 4;
+const CELL_BYTES: usize = GLYPH_BYTES + COLOR_BYTES * 2;
 const MAX_KEY_BYTES: usize = 16 * 1024;
 const MAX_PIXEL_CELLS: usize = 4096;
 const MAX_PIXEL_FILE_BYTES: u64 =
@@ -23,12 +24,23 @@ const MAX_PIXEL_FILE_BYTES: u64 =
 const TEMP_PREFIX: &str = ".ypm-cover-";
 const TEMP_SUFFIX: &str = ".tmp";
 
-const PIXEL_ALGORITHM_REVISION: u32 = 1;
+const PIXEL_ALGORITHM_REVISION: u32 = 2;
 
 #[derive(Debug)]
 pub struct CoverCache {
     root: PathBuf,
     original_limit: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PixelKeyInputs<'a> {
+    song_id: i64,
+    original_key: &'a str,
+    cells: (u16, u16),
+    detail_scale: f32,
+    detail: CoverDetail,
+    background: Color,
+    palette: &'a [(u8, u8, u8)],
 }
 
 impl CoverCache {
@@ -65,17 +77,21 @@ impl CoverCache {
         original_key: &str,
         cells: (u16, u16),
         detail_scale: f32,
+        detail: CoverDetail,
         background: Color,
         palette: &[(u8, u8, u8)],
     ) -> String {
         pixel_key_with_revision(
             PIXEL_ALGORITHM_REVISION,
-            song_id,
-            original_key,
-            cells,
-            detail_scale,
-            background,
-            palette,
+            PixelKeyInputs {
+                song_id,
+                original_key,
+                cells,
+                detail_scale,
+                detail,
+                background,
+                palette,
+            },
         )
     }
 
@@ -179,8 +195,9 @@ impl CoverCache {
 
         let mut payload = Vec::with_capacity(expected_cells * CELL_BYTES);
         for cell in &cover.cells {
-            encode_color(&mut payload, cell.upper)?;
-            encode_color(&mut payload, cell.lower)?;
+            payload.extend_from_slice(&(cell.glyph as u32).to_le_bytes());
+            encode_color(&mut payload, cell.fg)?;
+            encode_color(&mut payload, cell.bg)?;
         }
         let cell_count = u32::try_from(expected_cells)
             .map_err(|_| invalid_input("pixel cover has too many cells"))?;
@@ -322,22 +339,24 @@ impl CoverCache {
     }
 }
 
-fn pixel_key_with_revision(
-    revision: u32,
-    song_id: i64,
-    original_key: &str,
-    cells: (u16, u16),
-    detail_scale: f32,
-    background: Color,
-    palette: &[(u8, u8, u8)],
-) -> String {
+fn pixel_key_with_revision(revision: u32, inputs: PixelKeyInputs<'_>) -> String {
+    let PixelKeyInputs {
+        song_id,
+        original_key,
+        cells,
+        detail_scale,
+        detail,
+        background,
+        palette,
+    } = inputs;
     let mut key = format!(
-        "pixel-v1|algorithm={revision}|song={song_id}|original={}:{}|cells={}x{}|scale={:08x}|background=",
+        "pixel-v2|algorithm={revision}|song={song_id}|original={}:{}|cells={}x{}|scale={:08x}|detail={}|background=",
         original_key.len(),
         original_key,
         cells.0,
         cells.1,
-        detail_scale.to_bits()
+        detail_scale.to_bits(),
+        detail.as_str()
     );
     append_color_key(&mut key, background);
     write!(&mut key, "|palette={}", palette.len()).expect("writing to String cannot fail");
@@ -451,9 +470,13 @@ fn decode_pixel(encoded: &[u8], expected_key: &str) -> Option<PixelCover> {
 
     let mut cells = Vec::with_capacity(expected_cells);
     for encoded_cell in payload.chunks_exact(CELL_BYTES) {
+        let glyph = char::from_u32(u32::from_le_bytes(
+            encoded_cell[..GLYPH_BYTES].try_into().ok()?,
+        ))?;
         cells.push(PixelCell {
-            upper: decode_color(&encoded_cell[..COLOR_BYTES])?,
-            lower: decode_color(&encoded_cell[COLOR_BYTES..])?,
+            glyph,
+            fg: decode_color(&encoded_cell[GLYPH_BYTES..GLYPH_BYTES + COLOR_BYTES])?,
+            bg: decode_color(&encoded_cell[GLYPH_BYTES + COLOR_BYTES..])?,
         });
     }
     Some(PixelCover {
@@ -562,12 +585,14 @@ mod tests {
             height: 1,
             cells: vec![
                 PixelCell {
-                    upper: Color::Rgb(1, 2, 3),
-                    lower: Color::Reset,
+                    glyph: '\u{1fb00}',
+                    fg: Color::Rgb(1, 2, 3),
+                    bg: Color::Reset,
                 },
                 PixelCell {
-                    upper: Color::Reset,
-                    lower: Color::Rgb(4, 5, 6),
+                    glyph: '▄',
+                    fg: Color::Rgb(4, 5, 6),
+                    bg: Color::Reset,
                 },
             ],
         }
@@ -593,48 +618,89 @@ mod tests {
     #[test]
     fn pixel_key_includes_every_rendering_input() {
         let palette = [(1, 2, 3), (4, 5, 6)];
-        let key = pixel_key_with_revision(7, 42, "source", (26, 13), 1.0, Color::Reset, &palette);
+        let reordered = [(4, 5, 6), (1, 2, 3)];
+        let changed_palette = [(1, 2, 3), (4, 5, 7)];
+        let inputs = PixelKeyInputs {
+            song_id: 42,
+            original_key: "source",
+            cells: (26, 13),
+            detail_scale: 1.0,
+            detail: CoverDetail::Half,
+            background: Color::Reset,
+            palette: &palette,
+        };
+        let key = pixel_key_with_revision(7, inputs);
         let changed = [
-            pixel_key_with_revision(8, 42, "source", (26, 13), 1.0, Color::Reset, &palette),
-            pixel_key_with_revision(7, 43, "source", (26, 13), 1.0, Color::Reset, &palette),
-            pixel_key_with_revision(7, 42, "other", (26, 13), 1.0, Color::Reset, &palette),
-            pixel_key_with_revision(7, 42, "source", (25, 13), 1.0, Color::Reset, &palette),
-            pixel_key_with_revision(7, 42, "source", (26, 12), 1.0, Color::Reset, &palette),
+            pixel_key_with_revision(8, inputs),
             pixel_key_with_revision(
                 7,
-                42,
-                "source",
-                (26, 13),
-                f32::from_bits(1.0_f32.to_bits() + 1),
-                Color::Reset,
-                &palette,
+                PixelKeyInputs {
+                    song_id: 43,
+                    ..inputs
+                },
             ),
             pixel_key_with_revision(
                 7,
-                42,
-                "source",
-                (26, 13),
-                1.0,
-                Color::Rgb(0, 0, 0),
-                &palette,
+                PixelKeyInputs {
+                    original_key: "other",
+                    ..inputs
+                },
             ),
             pixel_key_with_revision(
                 7,
-                42,
-                "source",
-                (26, 13),
-                1.0,
-                Color::Reset,
-                &[(4, 5, 6), (1, 2, 3)],
+                PixelKeyInputs {
+                    cells: (25, 13),
+                    ..inputs
+                },
             ),
             pixel_key_with_revision(
                 7,
-                42,
-                "source",
-                (26, 13),
-                1.0,
-                Color::Reset,
-                &[(1, 2, 3), (4, 5, 7)],
+                PixelKeyInputs {
+                    cells: (26, 12),
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
+                    detail_scale: f32::from_bits(1.0_f32.to_bits() + 1),
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
+                    detail: CoverDetail::Quad,
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
+                    detail: CoverDetail::Sextant,
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
+                    background: Color::Rgb(0, 0, 0),
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
+                    palette: &reordered,
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
+                    palette: &changed_palette,
+                    ..inputs
+                },
             ),
         ];
         assert!(changed.iter().all(|changed| changed != &key));

@@ -7,7 +7,6 @@ pub(crate) struct IconSet {
     pub(crate) play: &'static str,
     pub(crate) pause: &'static str,
     pub(crate) heart: &'static str,
-    pub(crate) heart_outline: &'static str,
     pub(crate) shuffle: &'static str,
     pub(crate) repeat_list: &'static str,
     pub(crate) repeat_one: &'static str,
@@ -22,7 +21,6 @@ const UNICODE: IconSet = IconSet {
     play: "▶",
     pause: "⏸",
     heart: "♥",
-    heart_outline: "♡",
     shuffle: "⇆",
     repeat_list: "↺",
     repeat_one: "↺¹",
@@ -36,8 +34,7 @@ const UNICODE: IconSet = IconSet {
 const NERD: IconSet = IconSet {
     play: "\u{f04b}",
     pause: "\u{f04c}",
-    heart: "\u{f004}",
-    heart_outline: "\u{f08a}",
+    heart: "\u{f02d1}",
     shuffle: "\u{f074}",
     repeat_list: "\u{f01e}",
     repeat_one: "\u{f0458}",
@@ -59,12 +56,11 @@ pub(crate) const fn for_style(style: IconStyle) -> &'static IconSet {
 mod tests {
     use super::*;
 
-    fn glyphs(icons: &IconSet) -> [&str; 12] {
+    fn glyphs(icons: &IconSet) -> [&str; 11] {
         [
             icons.play,
             icons.pause,
             icons.heart,
-            icons.heart_outline,
             icons.shuffle,
             icons.repeat_list,
             icons.repeat_one,
@@ -94,5 +90,11 @@ mod tests {
         assert!(glyphs(for_style(IconStyle::Nerd))
             .into_iter()
             .all(|icon| icon.chars().all(is_private_use)));
+    }
+
+    #[test]
+    fn both_palettes_use_the_requested_solid_heart() {
+        assert_eq!(for_style(IconStyle::Unicode).heart, "♥");
+        assert_eq!(for_style(IconStyle::Nerd).heart, "\u{f02d1}");
     }
 }

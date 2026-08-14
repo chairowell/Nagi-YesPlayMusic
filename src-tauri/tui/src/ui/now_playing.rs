@@ -317,7 +317,7 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         .unwrap_or_else(|| "--:--".into());
 
     let play_slot_width = display_width(icons.play).max(display_width(icons.pause));
-    let heart_slot_width = display_width(icons.heart).max(display_width(icons.heart_outline));
+    let heart_slot_width = display_width(icons.heart);
     let mode_slot_width = [
         icons.sequential,
         icons.repeat_list,
@@ -395,31 +395,16 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         Rect {
             x: heart_x,
             y: area.y,
-            width: if liked {
-                display_width(icons.heart) as u16
-            } else {
-                display_width(icons.heart_outline) as u16
-            },
+            width: display_width(icons.heart) as u16,
             height: 1,
         },
         (),
     ));
     spans.push(Span::raw("  "));
-    // Filled+bright = liked, hollow+faint = not — glyph AND color both signal.
-    if liked {
-        spans.push(Span::styled(icons.heart, Style::new().fg(theme.accent2)));
-        spans.push(Span::raw(" ".repeat(
-            heart_slot_width.saturating_sub(display_width(icons.heart)),
-        )));
-    } else {
-        spans.push(Span::styled(
-            icons.heart_outline,
-            Style::new().fg(theme.faint),
-        ));
-        spans.push(Span::raw(" ".repeat(
-            heart_slot_width.saturating_sub(display_width(icons.heart_outline)),
-        )));
-    }
+    spans.push(Span::styled(
+        icons.heart,
+        Style::new().fg(if liked { theme.accent2 } else { theme.faint }),
+    ));
     spans.push(Span::raw("  "));
     let mode_x = area.x
         + spans
@@ -585,6 +570,36 @@ mod tests {
         let progress = (0..80).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
         assert!(progress.contains('♥'));
         assert!(!progress.contains('♡'));
+    }
+
+    #[test]
+    fn progress_heart_uses_color_as_the_only_liked_state_signal() {
+        for liked in [false, true] {
+            let mut state = AppState::new(&Config::default());
+            state.current_track_id = Some(42);
+            if liked {
+                state.liked.insert(42);
+            }
+            let backend = TestBackend::new(100, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut hits = Hits::default();
+
+            terminal
+                .draw(|frame| draw_progress(frame, &state, frame.area(), &mut hits))
+                .unwrap();
+
+            let rect = hits.heart[0].0;
+            let buffer = terminal.backend().buffer();
+            assert_eq!(rect_text(buffer, rect), "♥");
+            assert_eq!(
+                buffer[(rect.x, rect.y)].fg,
+                if liked {
+                    state.theme.accent2
+                } else {
+                    state.theme.faint
+                }
+            );
+        }
     }
 
     #[test]

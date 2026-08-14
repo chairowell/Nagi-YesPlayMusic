@@ -62,8 +62,9 @@ fn solid_preview(color: ratatui::style::Color) -> PixelCover {
         height: PREVIEW_CELLS.1,
         cells: vec![
             crate::pixel::PixelCell {
-                upper: color,
-                lower: color,
+                glyph: '█',
+                fg: color,
+                bg: color,
             };
             usize::from(PREVIEW_CELLS.0) * usize::from(PREVIEW_CELLS.1)
         ],
@@ -192,6 +193,7 @@ async fn a_hot_selected_cover_replaces_the_placeholder_synchronously() {
         &request.source_key,
         request.cells,
         state.pixel_detail_scale,
+        state.config.cover_detail,
         state.theme.bg,
         state.theme.palette,
     );
@@ -903,6 +905,26 @@ async fn icon_setting_previews_immediately_and_cancel_restores_unicode() {
 }
 
 #[tokio::test]
+async fn cover_detail_setting_rebuilds_pixel_art_immediately() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let previous = state.selected_cover.placeholder.clone();
+    let revision = state.style_revision;
+    state.update(Action::SwitchView(View::Settings), &fx);
+    state.settings.selected = super::settings::SettingField::ALL
+        .iter()
+        .position(|field| *field == super::settings::SettingField::CoverDetail)
+        .unwrap();
+
+    state.update(Action::AdjustSetting(1), &fx);
+
+    assert_eq!(state.config.cover_detail, pixel::CoverDetail::Quad);
+    assert_eq!(state.style_revision, revision + 1);
+    assert_ne!(state.selected_cover.placeholder, previous);
+}
+
+#[tokio::test]
 async fn settings_save_persists_the_preview_and_updates_playback_quality() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);
@@ -1246,7 +1268,13 @@ async fn back_leaves_library_when_the_sidebar_is_hidden() {
 #[test]
 fn starting_a_cover_load_clears_the_previous_song_art() {
     let mut state = AppState::new(&Config::default());
-    state.cover = Some(pixel::vinyl(state.theme.palette, state.theme.bg, 4, 2));
+    state.cover = Some(pixel::vinyl(
+        state.theme.palette,
+        state.theme.bg,
+        4,
+        2,
+        pixel::CoverDetail::Half,
+    ));
 
     state.clear_cover();
 
@@ -1256,9 +1284,15 @@ fn starting_a_cover_load_clears_the_previous_song_art() {
 #[test]
 fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
     let theme = Theme::db16();
-    let current = pixel::vinyl(theme.palette, theme.bg, 4, 2);
-    let replacement = pixel::vinyl(theme.palette, Color::Rgb(1, 2, 3), 4, 2);
-    let stale = pixel::vinyl(theme.palette, theme.bg, 8, 4);
+    let current = pixel::vinyl(theme.palette, theme.bg, 4, 2, pixel::CoverDetail::Half);
+    let replacement = pixel::vinyl(
+        theme.palette,
+        Color::Rgb(1, 2, 3),
+        4,
+        2,
+        pixel::CoverDetail::Half,
+    );
+    let stale = pixel::vinyl(theme.palette, theme.bg, 8, 4, pixel::CoverDetail::Half);
     let mut slot = Some(current.clone());
 
     apply_pixel_cover(
@@ -1309,7 +1343,13 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
         stale,
     );
 
-    let previous_theme = pixel::vinyl(Theme::db16().palette, Color::Rgb(9, 9, 9), 4, 2);
+    let previous_theme = pixel::vinyl(
+        Theme::db16().palette,
+        Color::Rgb(9, 9, 9),
+        4,
+        2,
+        pixel::CoverDetail::Half,
+    );
     apply_pixel_cover(
         &mut slot,
         7,

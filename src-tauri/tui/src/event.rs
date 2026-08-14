@@ -245,6 +245,7 @@ mod tests {
             Some(Action::SwitchView(View::Library))
         ));
         assert!(matches!(map(KeyCode::Char('z')), Some(Action::ToggleZen)));
+        assert!(map(KeyCode::Char('v')).is_none());
         assert!(map(KeyCode::Char('i')).is_none());
         assert!(map(KeyCode::Char('f')).is_none());
         assert!(map(KeyCode::Char('x')).is_none());

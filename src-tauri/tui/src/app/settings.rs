@@ -3,6 +3,7 @@ use yesplaymusic_core::cache::AudioQuality;
 use crate::action::View;
 use crate::config::{Config, CoverMode, IconStyle};
 use crate::i18n::{self, Key};
+use crate::pixel::CoverDetail;
 use crate::theme::{Theme, BUILTIN_NAMES};
 
 use super::{spawn_render_idle, AppState, Effects, PlayLayout, PREVIEW_CELLS};
@@ -13,6 +14,7 @@ pub(crate) enum SettingField {
     Language,
     Quality,
     CoverMode,
+    CoverDetail,
     Layout,
     ProgressStyle,
     PixelDetail,
@@ -21,11 +23,12 @@ pub(crate) enum SettingField {
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::Theme,
         Self::Language,
         Self::Quality,
         Self::CoverMode,
+        Self::CoverDetail,
         Self::Layout,
         Self::ProgressStyle,
         Self::PixelDetail,
@@ -39,6 +42,7 @@ impl SettingField {
             Self::Language => Key::SettingLanguage,
             Self::Quality => Key::SettingQuality,
             Self::CoverMode => Key::SettingCoverMode,
+            Self::CoverDetail => Key::SettingCoverDetail,
             Self::Layout => Key::SettingLayout,
             Self::ProgressStyle => Key::SettingProgressStyle,
             Self::PixelDetail => Key::SettingPixelDetail,
@@ -125,6 +129,11 @@ impl AppState {
                 const VALUES: &[CoverMode] = &[CoverMode::Pixel, CoverMode::Original];
                 self.config.cover_mode = cycle(VALUES, &self.config.cover_mode, delta);
             }
+            SettingField::CoverDetail => {
+                const VALUES: &[CoverDetail] =
+                    &[CoverDetail::Half, CoverDetail::Quad, CoverDetail::Sextant];
+                self.config.cover_detail = cycle(VALUES, &self.config.cover_detail, delta);
+            }
             SettingField::Layout => {
                 const VALUES: &[&str] = &["side", "stacked"];
                 self.config.layout = cycle(VALUES, &self.config.layout.as_str(), delta).to_owned();
@@ -202,6 +211,7 @@ impl AppState {
                 CoverMode::Original if self.original_cover.is_some() => "Original".to_owned(),
                 CoverMode::Original => "Original (restart)".to_owned(),
             },
+            SettingField::CoverDetail => self.config.cover_detail.as_str().to_owned(),
             SettingField::Layout => match self.config.layout.as_str() {
                 "stacked" => "Stacked",
                 _ => "Side",
@@ -234,7 +244,8 @@ impl AppState {
         restored_theme: Option<Theme>,
     ) {
         let theme_changed = before.theme != self.config.theme;
-        let pixel_changed = (before.pixel_scale - self.config.pixel_scale).abs() > f32::EPSILON;
+        let pixel_changed = (before.pixel_scale - self.config.pixel_scale).abs() > f32::EPSILON
+            || before.cover_detail != self.config.cover_detail;
         let layout_changed = before.layout != self.config.layout;
 
         if theme_changed {
@@ -275,6 +286,7 @@ impl AppState {
                 self.theme.bg,
                 desired.0,
                 desired.1,
+                self.config.cover_detail,
             ));
         }
         self.selected_cover.placeholder = crate::pixel::vinyl(
@@ -282,6 +294,7 @@ impl AppState {
             self.theme.bg,
             PREVIEW_CELLS.0,
             PREVIEW_CELLS.1,
+            self.config.cover_detail,
         );
         self.cover = None;
         if let Some(row) = self.active_row.clone() {
@@ -291,10 +304,8 @@ impl AppState {
             spawn_render_idle(
                 fx,
                 bytes,
-                self.theme.palette,
-                self.theme.bg,
                 self.desired_idle_cells(),
-                self.pixel_detail_scale,
+                self.pixel_style(),
                 self.style_revision,
             );
         }

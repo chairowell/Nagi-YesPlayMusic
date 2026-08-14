@@ -117,24 +117,31 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
         } else {
             Style::new().fg(theme.fg)
         };
-        let liked = if state.liked.contains(&row.id) {
-            icons.heart
+        let liked = state.liked.contains(&row.id);
+        let heart_style = if selected {
+            Style::new()
+                .fg(if liked { theme.accent2 } else { theme.faint })
+                .bg(theme.sel)
         } else {
-            " "
+            Style::new().fg(if liked { theme.accent2 } else { theme.faint })
         };
         let mut line_style = style;
         if selected {
             line_style = line_style.add_modifier(Modifier::BOLD);
         }
-        lines.push(Line::from(Span::styled(
-            format!(
-                "  {liked} {} {} {:>5}",
-                pad_or_marquee(&row.title, 26, selected, marquee_frame),
-                pad_or_marquee(&row.artist, 16, selected, marquee_frame),
-                super::format_ms(row.duration_ms)
+        lines.push(Line::from(vec![
+            Span::styled("  ", line_style),
+            Span::styled(icons.heart, heart_style),
+            Span::styled(
+                format!(
+                    " {} {} {:>5}",
+                    pad_or_marquee(&row.title, 26, selected, marquee_frame),
+                    pad_or_marquee(&row.artist, 16, selected, marquee_frame),
+                    super::format_ms(row.duration_ms)
+                ),
+                line_style,
             ),
-            line_style,
-        )));
+        ]));
     }
     frame.render_widget(Paragraph::new(lines), list_area);
     if let Some(preview_area) = preview_area {
@@ -186,5 +193,41 @@ mod tests {
         assert_eq!(hits.rows.len(), 1);
         assert_eq!(hits.rows[0].0, Rect::new(0, 2, 80, 1));
         assert_ne!(buffer[(55, 2)].symbol(), "▀");
+    }
+
+    #[test]
+    fn search_rows_render_solid_hearts_in_state_colors() {
+        for liked in [false, true] {
+            let backend = TestBackend::new(80, 15);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut state = AppState::new(&Config::default());
+            state.search.input = false;
+            state.search.results.push(SongRow {
+                id: 1,
+                title: "Track".into(),
+                artist: "Artist".into(),
+                duration_ms: 180_000,
+                pic_url: None,
+            });
+            if liked {
+                state.liked.insert(1);
+            }
+            let mut hits = Hits::default();
+
+            terminal
+                .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+                .unwrap();
+
+            let cell = &terminal.backend().buffer()[(2, 2)];
+            assert_eq!(cell.symbol(), "♥");
+            assert_eq!(
+                cell.fg,
+                if liked {
+                    state.theme.accent2
+                } else {
+                    state.theme.faint
+                }
+            );
+        }
     }
 }

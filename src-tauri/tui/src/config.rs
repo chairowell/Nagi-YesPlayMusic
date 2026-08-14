@@ -7,6 +7,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tempfile::NamedTempFile;
 use yesplaymusic_core::cache::AudioQuality;
 
+use crate::pixel::CoverDetail;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoverMode {
@@ -55,6 +57,8 @@ pub struct Config {
     pub icons: IconStyle,
     /// Cover renderer: palette pixel art or terminal graphics protocol.
     pub cover_mode: CoverMode,
+    /// Sub-cell glyph resolution used by the pixel renderer.
+    pub cover_detail: CoverDetail,
     /// Pixel sampling detail (0.5 chunky … 2.0 fine). The final cell
     /// footprint is unchanged.
     pub pixel_scale: f32,
@@ -73,6 +77,7 @@ impl Default for Config {
             progress_style: "dot".into(),
             icons: IconStyle::Unicode,
             cover_mode: CoverMode::Pixel,
+            cover_detail: CoverDetail::Half,
             pixel_scale: 1.0,
         }
     }
@@ -121,6 +126,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
 # icons = "unicode"           # unicode（无需特殊字体）| nerd（需要 Nerd Font）
 # cover_mode = "pixel"        # pixel（主题像素画）| original（终端原图协议，不支持时回退 pixel）
+# cover_detail = "half"       # half（1×2）| quad（2×2）| sextant（2×3）
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 8192       # 仅显式设置时更新 ypm 进程共享的上限
@@ -236,6 +242,7 @@ mod tests {
         assert_eq!(config.quality, AudioQuality::High320);
         assert_eq!(config.theme, "db16");
         assert_eq!(config.cover_mode, CoverMode::Pixel);
+        assert_eq!(config.cover_detail, CoverDetail::Half);
         assert_eq!(config.icons, IconStyle::Unicode);
         assert_eq!(config.cache_limit_mib, None);
 
@@ -253,6 +260,9 @@ mod tests {
 
         let parsed: Config = toml::from_str("icons = \"nerd\"").unwrap();
         assert_eq!(parsed.icons, IconStyle::Nerd);
+
+        let parsed: Config = toml::from_str("cover_detail = \"sextant\"").unwrap();
+        assert_eq!(parsed.cover_detail, CoverDetail::Sextant);
 
         let parsed: Config = toml::from_str("cache_limit_mib = 4096").unwrap();
         assert_eq!(parsed.cache_limit_mib, Some(4096));
@@ -301,6 +311,7 @@ mod tests {
                 progress_style: "bar".into(),
                 icons: IconStyle::Nerd,
                 cover_mode: CoverMode::Original,
+                cover_detail: CoverDetail::Quad,
                 pixel_scale: 1.5,
             };
 

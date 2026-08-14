@@ -277,65 +277,47 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
         return;
     }
-    let hints: &[(&str, Key)] = match state.view {
-        View::Library => &[
-            ("l/Enter", Key::Play),
-            ("a", Key::AddToQueue),
-            ("Tab", Key::LibraryFocus),
-            ("/", Key::Filter),
-            ("j/k", Key::Select),
-            ("PgUp/PgDn", Key::Page),
-            ("h", Key::Back),
+    let hints = footer_hints(state);
+    let mut spans = Vec::new();
+    for (key, label) in hints {
+        spans.push(Span::styled(*key, Style::new().fg(theme.fg)));
+        spans.push(Span::styled(
+            format!(" {} ", i18n::t(*label)),
+            Style::new().fg(theme.dim),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+const PLAYBACK_HINTS: &[(&str, Key)] = &[
+    ("Space", Key::Pause),
+    ("←/→", Key::Seek),
+    ("*", Key::LabelLike),
+    ("/", Key::Filter),
+    ("q", Key::Quit),
+    ("?", Key::LabelHelp),
+];
+
+fn footer_hints(state: &AppState) -> &'static [(&'static str, Key)] {
+    match state.view {
+        View::Login => &[
+            ("h/Esc", Key::Back),
+            ("q", Key::Quit),
+            ("?", Key::LabelHelp),
         ],
-        View::Queue => &[
-            ("l/Enter", Key::JumpToTrack),
-            ("a", Key::AddToQueue),
-            ("/", Key::Filter),
-            ("j/k", Key::Select),
-            ("PgUp/PgDn", Key::Page),
-            ("h", Key::Back),
-        ],
-        View::Login => &[("h/Esc", Key::Back), ("q", Key::Quit)],
         View::Search if state.search.input => &[
             ("Enter", Key::Search),
             ("Tab/↓", Key::Select),
             ("Esc", Key::Back),
         ],
-        View::Search => &[
-            ("l/Enter", Key::Play),
-            ("a", Key::AddToQueue),
-            ("/", Key::Filter),
-            ("PgUp/PgDn", Key::Page),
-            ("h", Key::Back),
-        ],
         View::Settings => &[
             ("j/k", Key::Select),
             ("h/l", Key::SettingAdjust),
             ("Enter", Key::Save),
-            ("Esc", Key::Cancel),
+            ("Esc/q", Key::Cancel),
         ],
-        _ => &[
-            ("Space", Key::Pause),
-            ("←/→ 5s · ⇧ 30s", Key::Seek),
-            ("-/+", Key::Volume),
-            ("m", Key::Mute),
-            ("s", Key::Shuffle),
-            ("r", Key::Repeat),
-            ("*", Key::LabelLike),
-            ("3", Key::Search),
-            ("n/p", Key::ChangeTrack),
-            ("q", Key::Quit),
-        ],
-    };
-    let mut spans = Vec::new();
-    for (key, label) in hints {
-        spans.push(Span::styled(*key, Style::new().fg(theme.fg)));
-        spans.push(Span::styled(
-            format!(" {}   ", i18n::t(*label)),
-            Style::new().fg(theme.dim),
-        ));
+        _ => PLAYBACK_HINTS,
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 pub fn format_duration(duration: std::time::Duration) -> String {
@@ -364,7 +346,8 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use super::draw_help;
+    use super::{draw_help, draw_hints, footer_hints};
+    use crate::action::View;
     use crate::app::AppState;
     use crate::config::Config;
 
@@ -396,5 +379,59 @@ mod tests {
         ] {
             assert!(rendered.contains(&format!("  {keys:<28}")), "{keys}");
         }
+    }
+
+    #[test]
+    fn footer_keeps_only_six_high_frequency_playback_hints() {
+        let mut state = AppState::new(&Config::default());
+        for view in [View::NowPlaying, View::Library, View::Search, View::Queue] {
+            state.view = view;
+            state.search.input = false;
+            assert_eq!(footer_hints(&state).len(), 6, "{view:?}");
+        }
+
+        let backend = TestBackend::new(160, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| draw_hints(frame, &state, frame.area()))
+            .unwrap();
+        let rendered = (0..160)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+
+        for key in ["Space", "←/→", "*", "/", "q", "?"] {
+            assert!(
+                rendered.contains(key),
+                "missing footer key {key}: {rendered}"
+            );
+        }
+        for removed in [
+            "-/+",
+            "n/p",
+            "PgUp/PgDn",
+            " Mute ",
+            " 静音 ",
+            " ミュート ",
+            " Shuffle ",
+            " 随机开 / 关 ",
+            " シャッフル ",
+        ] {
+            assert!(!rendered.contains(removed), "stale footer key {removed}");
+        }
+    }
+
+    #[test]
+    fn every_contextual_footer_stays_within_six_items() {
+        let mut state = AppState::new(&Config::default());
+        for view in [View::NowPlaying, View::Library, View::Queue, View::Login] {
+            state.view = view;
+            assert!(footer_hints(&state).len() <= 6, "{view:?}");
+        }
+
+        state.view = View::Search;
+        state.search.input = true;
+        assert!(footer_hints(&state).len() <= 6);
+        state.view = View::Settings;
+        assert!(footer_hints(&state).len() <= 6);
     }
 }

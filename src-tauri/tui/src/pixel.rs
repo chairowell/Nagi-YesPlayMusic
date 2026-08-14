@@ -4,6 +4,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::widgets::Widget;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 type Rgb = (u8, u8, u8);
 
@@ -14,10 +16,44 @@ const VISIBLE_ALPHA: u8 = 128;
 // dithering there would only speckle smooth gradients (the dirty-logo bug).
 const CLEAN_MATCH_SQ: i32 = 2800;
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CoverDetail {
+    #[default]
+    Half,
+    Quad,
+    Sextant,
+}
+
+impl CoverDetail {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Half => "half",
+            Self::Quad => "quad",
+            Self::Sextant => "sextant",
+        }
+    }
+
+    const fn sample_size(self) -> (u32, u32) {
+        match self {
+            Self::Half => (1, 2),
+            Self::Quad => (2, 2),
+            Self::Sextant => (2, 3),
+        }
+    }
+}
+
+impl fmt::Display for CoverDetail {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PixelCell {
-    pub upper: Color,
-    pub lower: Color,
+    pub glyph: char,
+    pub fg: Color,
+    pub bg: Color,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,21 +65,30 @@ pub struct PixelCover {
 
 /// Built-in idle art: a procedural vinyl record quantized to the theme
 /// palette — no bundled asset, and it recolors with the theme like covers.
-pub fn vinyl(palette: &[Rgb], background: Color, cell_width: u16, cell_height: u16) -> PixelCover {
+pub fn vinyl(
+    palette: &[Rgb],
+    background: Color,
+    cell_width: u16,
+    cell_height: u16,
+    detail: CoverDetail,
+) -> PixelCover {
     let last = palette.len().saturating_sub(1);
     let disc = palette[1.min(last)];
     let ring = palette[last / 2];
     let shine = palette[last * 5 / 8];
     let label = palette[last.saturating_sub(1).max(1)];
 
-    let width_px = cell_width as f64;
-    let height_px = (cell_height * 2) as f64;
+    let (samples_x, samples_y) = detail.sample_size();
+    let width_px = f64::from(cell_width);
+    let height_px = f64::from(cell_height) * 2.0;
     let (cx, cy) = (width_px / 2.0, height_px / 2.0);
     let radius = width_px.min(height_px) / 2.0 - 0.5;
 
     let mut cells = Vec::with_capacity(cell_width as usize * cell_height as usize);
     let color_at = |x: u32, y: u32| -> Color {
-        let (dx, dy) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
+        let sample_x = (f64::from(x) + 0.5) / f64::from(samples_x);
+        let sample_y = (f64::from(y) + 0.5) * 2.0 / f64::from(samples_y);
+        let (dx, dy) = (sample_x - cx, sample_y - cy);
         let r = (dx * dx + dy * dy).sqrt();
         if r > radius {
             return background;
@@ -68,12 +113,13 @@ pub fn vinyl(palette: &[Rgb], background: Color, cell_width: u16, cell_height: u
             to_color(disc)
         }
     };
-    for cell_y in 0..cell_height as u32 {
-        for x in 0..cell_width as u32 {
-            cells.push(PixelCell {
-                upper: color_at(x, cell_y * 2),
-                lower: color_at(x, cell_y * 2 + 1),
+    let candidates = color_candidates(palette, background);
+    for cell_y in 0..u32::from(cell_height) {
+        for cell_x in 0..u32::from(cell_width) {
+            let samples = cell_samples(samples_x, samples_y, |sample_x, sample_y| {
+                color_at(cell_x * samples_x + sample_x, cell_y * samples_y + sample_y)
             });
+            cells.push(select_cell(&samples, detail, &candidates));
         }
     }
     PixelCover {
@@ -90,6 +136,7 @@ pub fn from_image_bytes(
     cell_width: u16,
     cell_height: u16,
     detail_scale: f32,
+    detail: CoverDetail,
 ) -> Result<PixelCover> {
     ensure!(!palette.is_empty(), "pixel cover palette cannot be empty");
     ensure!(
@@ -104,13 +151,20 @@ pub fn from_image_bytes(
         pixel.0[1] = premultiply_channel(pixel.0[1], alpha);
         pixel.0[2] = premultiply_channel(pixel.0[2], alpha);
     }
-    let target_width = u32::from(cell_width);
-    let target_height = u32::from(cell_height) * 2;
+    let (samples_x, samples_y) = detail.sample_size();
+    let target_width = u32::from(cell_width) * samples_x;
+    let target_height = u32::from(cell_height) * samples_y;
     let detail_scale = detail_scale.clamp(0.5, 2.0);
     let detail_width = ((target_width as f32 * detail_scale).round() as u32).max(1);
     let detail_height = ((target_height as f32 * detail_scale).round() as u32).max(1);
-    let (resized_width, resized_height) =
-        fitted_dimensions(source.width(), source.height(), detail_width, detail_height);
+    let (resized_width, resized_height) = fitted_dimensions(
+        source.width(),
+        source.height(),
+        detail_width,
+        detail_height,
+        samples_x,
+        samples_y,
+    );
     let resized = resize(&source, resized_width, resized_height, FilterType::Triangle);
     let offset_x = (detail_width - resized_width) / 2;
     let offset_y = (detail_height - resized_height) / 2;
@@ -146,29 +200,22 @@ pub fn from_image_bytes(
         }
     }
 
+    let candidates = color_candidates(palette, background);
     let mut cells = Vec::with_capacity(cell_width as usize * cell_height as usize);
     for cell_y in 0..cell_height {
         for cell_x in 0..cell_width {
-            cells.push(PixelCell {
-                upper: sampled_color(
+            let samples = cell_samples(samples_x, samples_y, |sample_x, sample_y| {
+                sampled_color(
                     &detail_pixels,
                     detail_width,
                     detail_height,
-                    u32::from(cell_x),
-                    u32::from(cell_y) * 2,
+                    u32::from(cell_x) * samples_x + sample_x,
+                    u32::from(cell_y) * samples_y + sample_y,
                     target_width,
                     target_height,
-                ),
-                lower: sampled_color(
-                    &detail_pixels,
-                    detail_width,
-                    detail_height,
-                    u32::from(cell_x),
-                    u32::from(cell_y) * 2 + 1,
-                    target_width,
-                    target_height,
-                ),
+                )
             });
+            cells.push(select_cell(&samples, detail, &candidates));
         }
     }
 
@@ -227,6 +274,169 @@ fn sampled_color(
     pixels[(source_y * source_width + source_x) as usize]
 }
 
+fn cell_samples(
+    sample_width: u32,
+    sample_height: u32,
+    mut color_at: impl FnMut(u32, u32) -> Color,
+) -> [Color; 6] {
+    let mut samples = [Color::Reset; 6];
+    for y in 0..sample_height {
+        for x in 0..sample_width {
+            samples[(y * sample_width + x) as usize] = color_at(x, y);
+        }
+    }
+    samples
+}
+
+fn color_candidates(palette: &[Rgb], background: Color) -> Vec<Color> {
+    let mut candidates = Vec::with_capacity(palette.len() + 1);
+    for &rgb in palette {
+        let color = to_color(rgb);
+        if !candidates.contains(&color) {
+            candidates.push(color);
+        }
+    }
+    if !candidates.contains(&background) {
+        candidates.push(background);
+    }
+    candidates
+}
+
+fn select_cell(samples: &[Color; 6], detail: CoverDetail, candidates: &[Color]) -> PixelCell {
+    match detail {
+        CoverDetail::Half => half_cell(samples[0], samples[1]),
+        CoverDetail::Quad => select_pattern_cell(&samples[..4], 16, candidates, quadrant_glyph),
+        CoverDetail::Sextant => select_pattern_cell(&samples[..6], 64, candidates, sextant_glyph),
+    }
+}
+
+fn half_cell(upper: Color, lower: Color) -> PixelCell {
+    match (upper == Color::Reset, lower == Color::Reset) {
+        (true, true) => PixelCell {
+            glyph: ' ',
+            fg: Color::Reset,
+            bg: Color::Reset,
+        },
+        (false, true) => PixelCell {
+            glyph: '▀',
+            fg: upper,
+            bg: Color::Reset,
+        },
+        (true, false) => PixelCell {
+            glyph: '▄',
+            fg: lower,
+            bg: Color::Reset,
+        },
+        (false, false) => PixelCell {
+            glyph: '▀',
+            fg: upper,
+            bg: lower,
+        },
+    }
+}
+
+fn select_pattern_cell(
+    samples: &[Color],
+    mask_count: u8,
+    candidates: &[Color],
+    glyph_for_mask: fn(u8) -> char,
+) -> PixelCell {
+    debug_assert!(!candidates.is_empty());
+    let mut best = PixelCell {
+        glyph: ' ',
+        fg: candidates[0],
+        bg: candidates[0],
+    };
+    let mut best_error = u64::MAX;
+
+    for mask in 0..mask_count {
+        let fg = best_partition_color(samples, mask, true, candidates);
+        let bg = best_partition_color(samples, mask, false, candidates);
+        let error = pattern_error(samples, mask, fg, bg);
+        if error < best_error {
+            best_error = error;
+            let (mask, fg, bg) = if fg == Color::Reset && bg != Color::Reset {
+                (mask ^ (mask_count - 1), bg, fg)
+            } else {
+                (mask, fg, bg)
+            };
+            best = PixelCell {
+                glyph: glyph_for_mask(mask),
+                fg,
+                bg,
+            };
+        }
+    }
+    best
+}
+
+fn best_partition_color(
+    samples: &[Color],
+    mask: u8,
+    foreground: bool,
+    candidates: &[Color],
+) -> Color {
+    let mut best = candidates[0];
+    let mut best_error = u64::MAX;
+    for &candidate in candidates {
+        let error = samples
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| (((mask >> index) & 1) != 0) == foreground)
+            .map(|(_, &sample)| terminal_color_distance_sq(sample, candidate))
+            .sum();
+        if error < best_error {
+            best = candidate;
+            best_error = error;
+        }
+    }
+    best
+}
+
+fn pattern_error(samples: &[Color], mask: u8, fg: Color, bg: Color) -> u64 {
+    samples
+        .iter()
+        .enumerate()
+        .map(|(index, &sample)| {
+            let candidate = if ((mask >> index) & 1) != 0 { fg } else { bg };
+            terminal_color_distance_sq(sample, candidate)
+        })
+        .sum()
+}
+
+fn terminal_color_distance_sq(a: Color, b: Color) -> u64 {
+    if a == b {
+        return 0;
+    }
+    match (a, b) {
+        (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) => {
+            color_distance_sq((ar, ag, ab), (br, bg, bb)) as u64
+        }
+        _ => 3 * u64::from(u8::MAX).pow(2),
+    }
+}
+
+fn quadrant_glyph(mask: u8) -> char {
+    const GLYPHS: [char; 16] = [
+        ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
+    ];
+    GLYPHS[usize::from(mask)]
+}
+
+fn sextant_glyph(mask: u8) -> char {
+    match mask {
+        0 => ' ',
+        21 => '▌',
+        42 => '▐',
+        63 => '█',
+        _ => {
+            let skipped = u32::from(mask > 21) + u32::from(mask > 42);
+            char::from_u32(0x1fb00 + u32::from(mask) - 1 - skipped)
+                .expect("sextant mask maps to Unicode")
+        }
+    }
+}
+
 impl Widget for &PixelCover {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let draw_width = area.width.min(self.width);
@@ -241,35 +451,10 @@ impl Widget for &PixelCover {
                 let Some(buffer_cell) = buf.cell_mut((destination_x + x, destination_y + y)) else {
                     continue;
                 };
-                match (
-                    cover_cell.upper == Color::Reset,
-                    cover_cell.lower == Color::Reset,
-                ) {
-                    (true, true) => {
-                        buffer_cell
-                            .set_symbol(" ")
-                            .set_fg(Color::Reset)
-                            .set_bg(Color::Reset);
-                    }
-                    (false, true) => {
-                        buffer_cell
-                            .set_symbol("▀")
-                            .set_fg(cover_cell.upper)
-                            .set_bg(Color::Reset);
-                    }
-                    (true, false) => {
-                        buffer_cell
-                            .set_symbol("▄")
-                            .set_fg(cover_cell.lower)
-                            .set_bg(Color::Reset);
-                    }
-                    (false, false) => {
-                        buffer_cell
-                            .set_symbol("▀")
-                            .set_fg(cover_cell.upper)
-                            .set_bg(cover_cell.lower);
-                    }
-                }
+                buffer_cell
+                    .set_char(cover_cell.glyph)
+                    .set_fg(cover_cell.fg)
+                    .set_bg(cover_cell.bg);
             }
         }
     }
@@ -280,21 +465,28 @@ fn fitted_dimensions(
     source_height: u32,
     target_width: u32,
     target_height: u32,
+    samples_x: u32,
+    samples_y: u32,
 ) -> (u32, u32) {
-    let source_width_64 = u64::from(source_width);
-    let source_height_64 = u64::from(source_height);
-    let target_width_64 = u64::from(target_width);
-    let target_height_64 = u64::from(target_height);
+    let source_width = u128::from(source_width);
+    let source_height = u128::from(source_height);
+    let target_width = u128::from(target_width);
+    let target_height = u128::from(target_height);
+    let horizontal_weight = u128::from(samples_x) * 2;
+    let vertical_weight = u128::from(samples_y);
 
-    if source_width_64 * target_height_64 >= source_height_64 * target_width_64 {
-        let height = ((source_height_64 * target_width_64 + source_width_64 / 2) / source_width_64)
-            .clamp(1, target_height_64);
-        (target_width, height as u32)
+    if source_width * horizontal_weight * target_height
+        >= source_height * vertical_weight * target_width
+    {
+        let denominator = source_width * horizontal_weight;
+        let numerator = source_height * vertical_weight * target_width;
+        let height = ((numerator + denominator / 2) / denominator).clamp(1, target_height);
+        (target_width as u32, height as u32)
     } else {
-        let width = ((source_width_64 * target_height_64 + source_height_64 / 2)
-            / source_height_64)
-            .clamp(1, target_width_64);
-        (width as u32, target_height)
+        let denominator = source_height * vertical_weight;
+        let numerator = source_width * horizontal_weight * target_height;
+        let width = ((numerator + denominator / 2) / denominator).clamp(1, target_width);
+        (width as u32, target_height as u32)
     }
 }
 
@@ -351,7 +543,10 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::widgets::Widget;
 
-    use super::{from_image_bytes, PixelCell, PixelCover, Rgb};
+    use super::{
+        fitted_dimensions, from_image_bytes, select_cell, sextant_glyph, CoverDetail, PixelCell,
+        PixelCover, Rgb,
+    };
 
     const BLACK: Rgb = (0, 0, 0);
     const WHITE: Rgb = (255, 255, 255);
@@ -361,18 +556,21 @@ mod tests {
         let bytes = png_bytes(2, 2, &[(255, 0, 0), (0, 255, 0), (0, 0, 255), WHITE]);
         let palette = [(255, 0, 0), (0, 255, 0), (0, 0, 255), WHITE];
 
-        let cover = from_image_bytes(&bytes, &palette, Color::Black, 2, 1, 1.0).unwrap();
+        let cover =
+            from_image_bytes(&bytes, &palette, Color::Black, 2, 1, 1.0, CoverDetail::Half).unwrap();
 
         assert_eq!(
             cover.cells,
             vec![
                 PixelCell {
-                    upper: Color::Rgb(255, 0, 0),
-                    lower: Color::Rgb(0, 0, 255),
+                    glyph: '▀',
+                    fg: Color::Rgb(255, 0, 0),
+                    bg: Color::Rgb(0, 0, 255),
                 },
                 PixelCell {
-                    upper: Color::Rgb(0, 255, 0),
-                    lower: Color::Rgb(255, 255, 255),
+                    glyph: '▀',
+                    fg: Color::Rgb(0, 255, 0),
+                    bg: Color::Rgb(255, 255, 255),
                 },
             ]
         );
@@ -383,14 +581,16 @@ mod tests {
         let bytes = png_bytes(4, 4, &[(128, 128, 128); 16]);
         let palette = [BLACK, WHITE];
 
-        let first = from_image_bytes(&bytes, &palette, Color::Black, 4, 2, 1.0).unwrap();
-        let second = from_image_bytes(&bytes, &palette, Color::Black, 4, 2, 1.0).unwrap();
+        let first =
+            from_image_bytes(&bytes, &palette, Color::Black, 4, 2, 1.0, CoverDetail::Half).unwrap();
+        let second =
+            from_image_bytes(&bytes, &palette, Color::Black, 4, 2, 1.0, CoverDetail::Half).unwrap();
 
         assert_eq!(first, second);
         assert_eq!((first.width, first.height), (4, 2));
         assert_eq!(first.cells.len(), 8);
         assert!(first.cells.iter().all(|cell| {
-            [cell.upper, cell.lower]
+            [cell.fg, cell.bg]
                 .into_iter()
                 .all(|color| matches!(color, Color::Rgb(0, 0, 0) | Color::Rgb(255, 255, 255)))
         }));
@@ -402,22 +602,33 @@ mod tests {
         let red = (255, 0, 0);
         let background = Color::Rgb(12, 34, 56);
 
-        let cover = from_image_bytes(&bytes, &[BLACK, red], background, 4, 2, 1.0).unwrap();
+        let cover = from_image_bytes(
+            &bytes,
+            &[BLACK, red],
+            background,
+            4,
+            2,
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
 
         assert_eq!(
             cover.cells,
             [
                 vec![
                     PixelCell {
-                        upper: background,
-                        lower: Color::Rgb(255, 0, 0),
+                        glyph: '▀',
+                        fg: background,
+                        bg: Color::Rgb(255, 0, 0),
                     };
                     4
                 ],
                 vec![
                     PixelCell {
-                        upper: Color::Rgb(255, 0, 0),
-                        lower: background,
+                        glyph: '▀',
+                        fg: Color::Rgb(255, 0, 0),
+                        bg: background,
                     };
                     4
                 ],
@@ -431,13 +642,23 @@ mod tests {
         let red = (255, 0, 0);
         let bytes = rgba_png_bytes(1, 2, &[(0, 0, 0, 0), (255, 0, 0, 255)]);
 
-        let cover = from_image_bytes(&bytes, &[BLACK, red], Color::Reset, 1, 1, 1.0).unwrap();
+        let cover = from_image_bytes(
+            &bytes,
+            &[BLACK, red],
+            Color::Reset,
+            1,
+            1,
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
 
         assert_eq!(
             cover.cells,
             vec![PixelCell {
-                upper: Color::Reset,
-                lower: Color::Rgb(255, 0, 0),
+                glyph: '▄',
+                fg: Color::Rgb(255, 0, 0),
+                bg: Color::Reset,
             }]
         );
     }
@@ -447,10 +668,18 @@ mod tests {
         let red = (255, 0, 0);
         let bytes = rgba_png_bytes(2, 1, &[(255, 0, 0, 255), (0, 0, 0, 0)]);
 
-        let cover =
-            from_image_bytes(&bytes, &[BLACK, (128, 0, 0), red], Color::Reset, 1, 1, 1.0).unwrap();
+        let cover = from_image_bytes(
+            &bytes,
+            &[BLACK, (128, 0, 0), red],
+            Color::Reset,
+            1,
+            1,
+            1.0,
+            CoverDetail::Half,
+        )
+        .unwrap();
 
-        assert_eq!(cover.cells[0].upper, Color::Rgb(255, 0, 0));
+        assert_eq!(cover.cells[0].fg, Color::Rgb(255, 0, 0));
     }
 
     #[test]
@@ -459,10 +688,116 @@ mod tests {
         let palette = [BLACK, WHITE];
 
         for scale in [0.5, 1.0, 2.0] {
-            let cover = from_image_bytes(&bytes, &palette, Color::Black, 7, 3, scale).unwrap();
+            let cover = from_image_bytes(
+                &bytes,
+                &palette,
+                Color::Black,
+                7,
+                3,
+                scale,
+                CoverDetail::Half,
+            )
+            .unwrap();
             assert_eq!((cover.width, cover.height), (7, 3));
             assert_eq!(cover.cells.len(), 21);
         }
+    }
+
+    #[test]
+    fn every_detail_fills_the_same_square_physical_canvas() {
+        for detail in [CoverDetail::Half, CoverDetail::Quad, CoverDetail::Sextant] {
+            let (samples_x, samples_y) = detail.sample_size();
+            let target = (26 * samples_x, 13 * samples_y);
+
+            assert_eq!(
+                fitted_dimensions(100, 100, target.0, target.1, samples_x, samples_y),
+                target,
+                "{detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn quad_selects_the_exact_quadrant_and_color_pair() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let samples = [red, blue, blue, blue, Color::Reset, Color::Reset];
+
+        let cell = select_cell(&samples, CoverDetail::Quad, &[red, blue]);
+
+        assert_eq!(
+            cell,
+            PixelCell {
+                glyph: '▘',
+                fg: red,
+                bg: blue,
+            }
+        );
+    }
+
+    #[test]
+    fn sextant_selects_the_exact_sextant_and_color_pair() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let samples = [red, blue, blue, blue, blue, blue];
+
+        let cell = select_cell(&samples, CoverDetail::Sextant, &[red, blue]);
+
+        assert_eq!(
+            cell,
+            PixelCell {
+                glyph: '🬀',
+                fg: red,
+                bg: blue,
+            }
+        );
+    }
+
+    #[test]
+    fn quad_keeps_transparency_in_the_background_color() {
+        let red = Color::Rgb(255, 0, 0);
+        let samples = [Color::Reset, red, red, red, Color::Reset, Color::Reset];
+
+        let cell = select_cell(&samples, CoverDetail::Quad, &[red, Color::Reset]);
+
+        assert_eq!(
+            cell,
+            PixelCell {
+                glyph: '▟',
+                fg: red,
+                bg: Color::Reset,
+            }
+        );
+    }
+
+    #[test]
+    fn sextant_keeps_transparency_in_the_background_color() {
+        let red = Color::Rgb(255, 0, 0);
+        let samples = [Color::Reset, red, red, red, red, red];
+
+        let cell = select_cell(&samples, CoverDetail::Sextant, &[red, Color::Reset]);
+
+        assert_eq!(cell.fg, red);
+        assert_eq!(cell.bg, Color::Reset);
+        assert_eq!(cell.glyph, sextant_glyph(62));
+    }
+
+    #[test]
+    fn sextant_uses_legacy_blocks_for_full_columns() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let samples = [red, blue, red, blue, red, blue];
+
+        let cell = select_cell(&samples, CoverDetail::Sextant, &[red, blue]);
+
+        assert_eq!(
+            cell,
+            PixelCell {
+                glyph: '▌',
+                fg: red,
+                bg: blue,
+            }
+        );
     }
 
     #[test]
@@ -472,12 +807,14 @@ mod tests {
             height: 1,
             cells: vec![
                 PixelCell {
-                    upper: Color::Rgb(1, 2, 3),
-                    lower: Color::Rgb(4, 5, 6),
+                    glyph: '▀',
+                    fg: Color::Rgb(1, 2, 3),
+                    bg: Color::Rgb(4, 5, 6),
                 },
                 PixelCell {
-                    upper: Color::Rgb(7, 8, 9),
-                    lower: Color::Rgb(10, 11, 12),
+                    glyph: '▀',
+                    fg: Color::Rgb(7, 8, 9),
+                    bg: Color::Rgb(10, 11, 12),
                 },
             ],
         };
@@ -504,16 +841,19 @@ mod tests {
             height: 1,
             cells: vec![
                 PixelCell {
-                    upper: Color::Reset,
-                    lower: Color::Reset,
+                    glyph: ' ',
+                    fg: Color::Reset,
+                    bg: Color::Reset,
                 },
                 PixelCell {
-                    upper: red,
-                    lower: Color::Reset,
+                    glyph: '▀',
+                    fg: red,
+                    bg: Color::Reset,
                 },
                 PixelCell {
-                    upper: Color::Reset,
-                    lower: red,
+                    glyph: '▄',
+                    fg: red,
+                    bg: Color::Reset,
                 },
             ],
         };
@@ -541,12 +881,14 @@ mod tests {
             height: 1,
             cells: vec![
                 PixelCell {
-                    upper: Color::Rgb(1, 2, 3),
-                    lower: Color::Rgb(4, 5, 6),
+                    glyph: '▀',
+                    fg: Color::Rgb(1, 2, 3),
+                    bg: Color::Rgb(4, 5, 6),
                 },
                 PixelCell {
-                    upper: Color::Rgb(7, 8, 9),
-                    lower: Color::Rgb(10, 11, 12),
+                    glyph: '▀',
+                    fg: Color::Rgb(7, 8, 9),
+                    bg: Color::Rgb(10, 11, 12),
                 },
             ],
         };

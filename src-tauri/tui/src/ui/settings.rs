@@ -83,18 +83,37 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         let label = i18n::t(field.label());
         let label_width = display_width(label);
         let value = state.setting_value(field);
-        let value_width = display_width(&value) as u16;
+        let icon_preview = (field == SettingField::Icons).then(|| {
+            let icons = crate::icons::for_style(state.config.icons);
+            format!("{} {} ", icons.heart, icons.heart)
+        });
+        let value_width = (display_width(&value)
+            + icon_preview.as_deref().map(display_width).unwrap_or(0))
+            as u16;
         let available = row.width as usize;
         let content_width = label_width + usize::from(value_width) + 8;
         let pad = available.saturating_sub(content_width);
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::styled(if selected { " › " } else { "   " }, row_style),
             Span::styled(label, row_style),
             Span::styled(" ".repeat(pad), row_style),
             Span::styled("‹ ", row_style),
-            Span::styled(value, row_style),
-            Span::styled(" › ", row_style),
-        ]);
+        ];
+        if icon_preview.is_some() {
+            let icons = crate::icons::for_style(state.config.icons);
+            let preview_base = if selected {
+                Style::new().bg(theme.sel).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            spans.push(Span::styled(icons.heart, preview_base.fg(theme.faint)));
+            spans.push(Span::styled(" ", preview_base));
+            spans.push(Span::styled(icons.heart, preview_base.fg(theme.accent2)));
+            spans.push(Span::styled(" ", preview_base));
+        }
+        spans.push(Span::styled(value, row_style));
+        spans.push(Span::styled(" › ", row_style));
+        let line = Line::from(spans);
         frame.render_widget(Paragraph::new(line), row);
         hits.settings_rows.push((row, index));
         if selected && available >= content_width {
@@ -226,5 +245,33 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("Nerd Font"));
         assert!(rendered.contains("brew install font-symbols-only-nerd-font"));
+    }
+
+    #[test]
+    fn icon_setting_previews_unliked_and_liked_with_the_same_glyph() {
+        let index = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::Icons)
+            .unwrap();
+        let (buffer, hits) = rendered_settings(80, 24, index);
+        let row = hits
+            .settings_rows
+            .iter()
+            .find_map(|(area, field)| (*field == index).then_some(*area))
+            .unwrap();
+        let hearts = (row.x..row.right())
+            .filter_map(|x| {
+                let cell = &buffer[(x, row.y)];
+                (cell.symbol() == "♥").then_some(cell.fg)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            hearts,
+            [
+                crate::theme::Theme::db16().faint,
+                crate::theme::Theme::db16().accent2
+            ]
+        );
     }
 }

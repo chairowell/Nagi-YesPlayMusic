@@ -487,9 +487,7 @@ impl AppState {
                             let load = CoverLoad {
                                 request,
                                 style: CoverStyle {
-                                    palette: self.theme.palette,
-                                    background: self.theme.bg,
-                                    detail_scale: self.pixel_detail_scale,
+                                    pixel: self.pixel_style(),
                                     original: self.uses_original_cover(CoverSurface::Selection),
                                 },
                             };
@@ -502,9 +500,7 @@ impl AppState {
                         self.style_revision,
                         neighbors,
                         CoverStyle {
-                            palette: self.theme.palette,
-                            background: self.theme.bg,
-                            detail_scale: self.pixel_detail_scale,
+                            pixel: self.pixel_style(),
                             original: self.uses_original_cover(CoverSurface::Selection),
                         },
                     );
@@ -527,10 +523,8 @@ impl AppState {
                 spawn_render_idle(
                     fx,
                     bytes,
-                    self.theme.palette,
-                    self.theme.bg,
                     self.desired_idle_cells(),
-                    self.pixel_detail_scale,
+                    self.pixel_style(),
                     self.style_revision,
                 );
             }
@@ -569,10 +563,8 @@ impl AppState {
                         spawn_render_idle(
                             fx,
                             bytes,
-                            self.theme.palette,
-                            self.theme.bg,
                             desired,
-                            self.pixel_detail_scale,
+                            self.pixel_style(),
                             self.style_revision,
                         );
                     }
