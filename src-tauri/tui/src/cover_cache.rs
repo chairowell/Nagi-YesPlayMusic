@@ -684,6 +684,13 @@ mod tests {
             pixel_key_with_revision(
                 7,
                 PixelKeyInputs {
+                    detail: CoverDetail::Octant,
+                    ..inputs
+                },
+            ),
+            pixel_key_with_revision(
+                7,
+                PixelKeyInputs {
                     background: Color::Rgb(0, 0, 0),
                     ..inputs
                 },

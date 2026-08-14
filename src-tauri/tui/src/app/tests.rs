@@ -1242,6 +1242,13 @@ async fn cover_detail_setting_rebuilds_pixel_art_immediately() {
     assert_eq!(state.config.cover_detail, pixel::CoverDetail::Quad);
     assert_eq!(state.style_revision, revision + 1);
     assert_ne!(state.selected_cover.placeholder, previous);
+
+    state.update(Action::AdjustSetting(1), &fx);
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.cover_detail, pixel::CoverDetail::Octant);
+
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.cover_detail, pixel::CoverDetail::Half);
 }
 
 #[tokio::test]

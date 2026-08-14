@@ -23,6 +23,7 @@ pub enum CoverDetail {
     Half,
     Quad,
     Sextant,
+    Octant,
 }
 
 impl CoverDetail {
@@ -31,6 +32,7 @@ impl CoverDetail {
             Self::Half => "half",
             Self::Quad => "quad",
             Self::Sextant => "sextant",
+            Self::Octant => "octant",
         }
     }
 
@@ -39,6 +41,7 @@ impl CoverDetail {
             Self::Half => (1, 2),
             Self::Quad => (2, 2),
             Self::Sextant => (2, 3),
+            Self::Octant => (2, 4),
         }
     }
 }
@@ -278,8 +281,8 @@ fn cell_samples(
     sample_width: u32,
     sample_height: u32,
     mut color_at: impl FnMut(u32, u32) -> Color,
-) -> [Color; 6] {
-    let mut samples = [Color::Reset; 6];
+) -> [Color; 8] {
+    let mut samples = [Color::Reset; 8];
     for y in 0..sample_height {
         for x in 0..sample_width {
             samples[(y * sample_width + x) as usize] = color_at(x, y);
@@ -302,11 +305,12 @@ fn color_candidates(palette: &[Rgb], background: Color) -> Vec<Color> {
     candidates
 }
 
-fn select_cell(samples: &[Color; 6], detail: CoverDetail, candidates: &[Color]) -> PixelCell {
+fn select_cell(samples: &[Color; 8], detail: CoverDetail, candidates: &[Color]) -> PixelCell {
     match detail {
         CoverDetail::Half => half_cell(samples[0], samples[1]),
         CoverDetail::Quad => select_pattern_cell(&samples[..4], 16, candidates, quadrant_glyph),
         CoverDetail::Sextant => select_pattern_cell(&samples[..6], 64, candidates, sextant_glyph),
+        CoverDetail::Octant => select_pattern_cell(&samples[..8], 256, candidates, octant_glyph),
     }
 }
 
@@ -337,7 +341,7 @@ fn half_cell(upper: Color, lower: Color) -> PixelCell {
 
 fn select_pattern_cell(
     samples: &[Color],
-    mask_count: u8,
+    mask_count: u16,
     candidates: &[Color],
     glyph_for_mask: fn(u8) -> char,
 ) -> PixelCell {
@@ -350,13 +354,14 @@ fn select_pattern_cell(
     let mut best_error = u64::MAX;
 
     for mask in 0..mask_count {
+        let mask = mask as u8;
         let fg = best_partition_color(samples, mask, true, candidates);
         let bg = best_partition_color(samples, mask, false, candidates);
         let error = pattern_error(samples, mask, fg, bg);
         if error < best_error {
             best_error = error;
             let (mask, fg, bg) = if fg == Color::Reset && bg != Color::Reset {
-                (mask ^ (mask_count - 1), bg, fg)
+                (mask ^ (mask_count - 1) as u8, bg, fg)
             } else {
                 (mask, fg, bg)
             };
@@ -434,6 +439,43 @@ fn sextant_glyph(mask: u8) -> char {
             char::from_u32(0x1fb00 + u32::from(mask) - 1 - skipped)
                 .expect("sextant mask maps to Unicode")
         }
+    }
+}
+
+fn octant_glyph(mask: u8) -> char {
+    const LEGACY_GLYPHS: [(u8, char); 26] = [
+        (0, ' '),
+        (1, '\u{1cea8}'),
+        (2, '\u{1ceab}'),
+        (3, '\u{1fb82}'),
+        (5, '▘'),
+        (10, '▝'),
+        (15, '▀'),
+        (20, '\u{1fbe6}'),
+        (40, '\u{1fbe7}'),
+        (63, '\u{1fb85}'),
+        (64, '\u{1cea3}'),
+        (80, '▖'),
+        (85, '▌'),
+        (90, '▞'),
+        (95, '▛'),
+        (128, '\u{1cea0}'),
+        (160, '▗'),
+        (165, '▚'),
+        (170, '▐'),
+        (175, '▜'),
+        (192, '▂'),
+        (240, '▄'),
+        (245, '▙'),
+        (250, '▟'),
+        (252, '▆'),
+        (255, '█'),
+    ];
+
+    match LEGACY_GLYPHS.binary_search_by_key(&mask, |(legacy_mask, _)| *legacy_mask) {
+        Ok(index) => LEGACY_GLYPHS[index].1,
+        Err(skipped) => char::from_u32(0x1cd00 + u32::from(mask) - skipped as u32)
+            .expect("octant mask maps to Unicode"),
     }
 }
 
@@ -544,8 +586,8 @@ mod tests {
     use ratatui::widgets::Widget;
 
     use super::{
-        fitted_dimensions, from_image_bytes, select_cell, sextant_glyph, CoverDetail, PixelCell,
-        PixelCover, Rgb,
+        fitted_dimensions, from_image_bytes, octant_glyph, select_cell, sextant_glyph, CoverDetail,
+        PixelCell, PixelCover, Rgb,
     };
 
     const BLACK: Rgb = (0, 0, 0);
@@ -705,7 +747,12 @@ mod tests {
 
     #[test]
     fn every_detail_fills_the_same_square_physical_canvas() {
-        for detail in [CoverDetail::Half, CoverDetail::Quad, CoverDetail::Sextant] {
+        for detail in [
+            CoverDetail::Half,
+            CoverDetail::Quad,
+            CoverDetail::Sextant,
+            CoverDetail::Octant,
+        ] {
             let (samples_x, samples_y) = detail.sample_size();
             let target = (26 * samples_x, 13 * samples_y);
 
@@ -721,7 +768,16 @@ mod tests {
     fn quad_selects_the_exact_quadrant_and_color_pair() {
         let red = Color::Rgb(255, 0, 0);
         let blue = Color::Rgb(0, 0, 255);
-        let samples = [red, blue, blue, blue, Color::Reset, Color::Reset];
+        let samples = [
+            red,
+            blue,
+            blue,
+            blue,
+            Color::Reset,
+            Color::Reset,
+            Color::Reset,
+            Color::Reset,
+        ];
 
         let cell = select_cell(&samples, CoverDetail::Quad, &[red, blue]);
 
@@ -739,7 +795,16 @@ mod tests {
     fn sextant_selects_the_exact_sextant_and_color_pair() {
         let red = Color::Rgb(255, 0, 0);
         let blue = Color::Rgb(0, 0, 255);
-        let samples = [red, blue, blue, blue, blue, blue];
+        let samples = [
+            red,
+            blue,
+            blue,
+            blue,
+            blue,
+            blue,
+            Color::Reset,
+            Color::Reset,
+        ];
 
         let cell = select_cell(&samples, CoverDetail::Sextant, &[red, blue]);
 
@@ -754,9 +819,81 @@ mod tests {
     }
 
     #[test]
+    fn octant_selects_the_exact_octant_and_color_pair() {
+        let red = Color::Rgb(255, 0, 0);
+        let blue = Color::Rgb(0, 0, 255);
+        let samples = [blue, blue, red, blue, blue, blue, blue, blue];
+
+        let cell = select_cell(&samples, CoverDetail::Octant, &[red, blue]);
+
+        assert_eq!(
+            cell,
+            PixelCell {
+                glyph: '\u{1cd00}',
+                fg: red,
+                bg: blue,
+            }
+        );
+    }
+
+    #[test]
+    fn octant_maps_unicode_16_and_legacy_masks_exactly() {
+        let legacy = [
+            (0, ' '),
+            (1, '\u{1cea8}'),
+            (2, '\u{1ceab}'),
+            (3, '\u{1fb82}'),
+            (5, '▘'),
+            (10, '▝'),
+            (15, '▀'),
+            (20, '\u{1fbe6}'),
+            (40, '\u{1fbe7}'),
+            (63, '\u{1fb85}'),
+            (64, '\u{1cea3}'),
+            (80, '▖'),
+            (85, '▌'),
+            (90, '▞'),
+            (95, '▛'),
+            (128, '\u{1cea0}'),
+            (160, '▗'),
+            (165, '▚'),
+            (170, '▐'),
+            (175, '▜'),
+            (192, '▂'),
+            (240, '▄'),
+            (245, '▙'),
+            (250, '▟'),
+            (252, '▆'),
+            (255, '█'),
+        ];
+        for (mask, glyph) in legacy {
+            assert_eq!(octant_glyph(mask), glyph, "mask {mask}");
+        }
+
+        let mut codepoint = 0x1cd00;
+        for mask in 0..=u8::MAX {
+            if legacy.iter().any(|(legacy_mask, _)| *legacy_mask == mask) {
+                continue;
+            }
+            assert_eq!(octant_glyph(mask) as u32, codepoint, "mask {mask}");
+            codepoint += 1;
+        }
+        assert_eq!(codepoint, 0x1cde6);
+    }
+
+    #[test]
     fn quad_keeps_transparency_in_the_background_color() {
         let red = Color::Rgb(255, 0, 0);
-        let samples = [Color::Reset, red, red, red, Color::Reset, Color::Reset];
+        let samples = [
+            Color::Reset,
+            red,
+            red,
+            red,
+            Color::Reset,
+            Color::Reset,
+            Color::Reset,
+            Color::Reset,
+        ];
 
         let cell = select_cell(&samples, CoverDetail::Quad, &[red, Color::Reset]);
 
@@ -773,7 +910,16 @@ mod tests {
     #[test]
     fn sextant_keeps_transparency_in_the_background_color() {
         let red = Color::Rgb(255, 0, 0);
-        let samples = [Color::Reset, red, red, red, red, red];
+        let samples = [
+            Color::Reset,
+            red,
+            red,
+            red,
+            red,
+            red,
+            Color::Reset,
+            Color::Reset,
+        ];
 
         let cell = select_cell(&samples, CoverDetail::Sextant, &[red, Color::Reset]);
 
@@ -783,10 +929,22 @@ mod tests {
     }
 
     #[test]
+    fn octant_keeps_transparency_in_the_background_color() {
+        let red = Color::Rgb(255, 0, 0);
+        let samples = [Color::Reset, red, red, red, red, red, red, red];
+
+        let cell = select_cell(&samples, CoverDetail::Octant, &[red, Color::Reset]);
+
+        assert_eq!(cell.fg, red);
+        assert_eq!(cell.bg, Color::Reset);
+        assert_eq!(cell.glyph, octant_glyph(254));
+    }
+
+    #[test]
     fn sextant_uses_legacy_blocks_for_full_columns() {
         let red = Color::Rgb(255, 0, 0);
         let blue = Color::Rgb(0, 0, 255);
-        let samples = [red, blue, red, blue, red, blue];
+        let samples = [red, blue, red, blue, red, blue, Color::Reset, Color::Reset];
 
         let cell = select_cell(&samples, CoverDetail::Sextant, &[red, blue]);
 

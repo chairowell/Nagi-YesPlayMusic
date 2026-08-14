@@ -59,6 +59,8 @@ pub enum Key {
     Off,
     SettingsHint,
     NerdFontHint,
+    OctantFontRequired,
+    OctantFontHint,
     SettingsSaved,
     SettingsSaveFailed,
     Save,
@@ -366,6 +368,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NerdFontHint => {
                 "终端字体需支持 Nerd Font\nmacOS：brew install font-symbols-only-nerd-font"
             }
+            Key::OctantFontRequired => "需字体支持",
+            Key::OctantFontHint => {
+                "octant 需 Unicode 16 字体支持；不支持时会显示方框\n显示方框时请切回 sextant"
+            }
             Key::SettingsSaved => "设置已保存",
             Key::SettingsSaveFailed => "设置保存失败",
             Key::Save => "保存",
@@ -492,6 +498,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NerdFontHint => {
                 "Your terminal font must support Nerd Font\nmacOS: brew install font-symbols-only-nerd-font"
             }
+            Key::OctantFontRequired => "font support required",
+            Key::OctantFontHint => {
+                "octant needs a Unicode 16 font; unsupported glyphs show □\nIf □ appears, switch back to sextant"
+            }
             Key::SettingsSaved => "Settings saved",
             Key::SettingsSaveFailed => "Could not save settings",
             Key::Save => "Save",
@@ -617,6 +627,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingsHint => "j/k 選択 · h/l プレビュー · Enter 保存 · Esc キャンセル",
             Key::NerdFontHint => {
                 "端末のフォントはNerd Font対応が必要です\nmacOS: brew install font-symbols-only-nerd-font"
+            }
+            Key::OctantFontRequired => "フォント対応必須",
+            Key::OctantFontHint => {
+                "octant は Unicode 16 対応フォントが必要です\n□ 表示時は sextant に戻してください"
             }
             Key::SettingsSaved => "設定を保存しました",
             Key::SettingsSaveFailed => "設定を保存できませんでした",
@@ -766,6 +780,27 @@ mod tests {
             (Lang::Ja, "カバー"),
         ] {
             assert_eq!(t_for(lang, Key::Cover), cover);
+        }
+    }
+
+    #[test]
+    fn octant_font_warning_is_localized_and_actionable() {
+        for (lang, required, fallback) in [
+            (Lang::Zh, "需字体支持", "显示方框时请切回 sextant"),
+            (
+                Lang::En,
+                "font support required",
+                "If □ appears, switch back to sextant",
+            ),
+            (
+                Lang::Ja,
+                "フォント対応必須",
+                "□ 表示時は sextant に戻してください",
+            ),
+        ] {
+            assert_eq!(t_for(lang, Key::OctantFontRequired), required);
+            assert!(t_for(lang, Key::OctantFontHint).contains("Unicode 16"));
+            assert!(t_for(lang, Key::OctantFontHint).contains(fallback));
         }
     }
 

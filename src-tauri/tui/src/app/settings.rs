@@ -140,8 +140,12 @@ impl AppState {
                 self.config.cover_mode = cycle(VALUES, &self.config.cover_mode, delta);
             }
             SettingField::CoverDetail => {
-                const VALUES: &[CoverDetail] =
-                    &[CoverDetail::Half, CoverDetail::Quad, CoverDetail::Sextant];
+                const VALUES: &[CoverDetail] = &[
+                    CoverDetail::Half,
+                    CoverDetail::Quad,
+                    CoverDetail::Sextant,
+                    CoverDetail::Octant,
+                ];
                 self.config.cover_detail = cycle(VALUES, &self.config.cover_detail, delta);
             }
             SettingField::Layout => {
@@ -231,6 +235,9 @@ impl AppState {
                 CoverMode::Original if self.original_cover.is_some() => "Original".to_owned(),
                 CoverMode::Original => "Original (restart)".to_owned(),
             },
+            SettingField::CoverDetail if self.config.cover_detail == CoverDetail::Octant => {
+                format!("octant · {}", i18n::t(Key::OctantFontRequired))
+            }
             SettingField::CoverDetail => self.config.cover_detail.as_str().to_owned(),
             SettingField::Layout => match self.config.layout.as_str() {
                 "stacked" => "Stacked",

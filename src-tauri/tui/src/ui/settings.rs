@@ -68,12 +68,14 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
         Constraint::Length(SETTINGS_ACTIONS_HEIGHT),
     ])
     .areas(inner);
-    let hint = if SettingField::ALL.get(state.settings.selected) == Some(&SettingField::Icons)
-        && state.config.icons == IconStyle::Nerd
-    {
-        Key::NerdFontHint
-    } else {
-        Key::SettingsHint
+    let hint = match SettingField::ALL.get(state.settings.selected) {
+        Some(SettingField::Icons) if state.config.icons == IconStyle::Nerd => Key::NerdFontHint,
+        Some(SettingField::CoverDetail)
+            if state.config.cover_detail == crate::pixel::CoverDetail::Octant =>
+        {
+            Key::OctantFontHint
+        }
+        _ => Key::SettingsHint,
     };
     frame.render_widget(
         Paragraph::new(i18n::t(hint)).style(Style::new().fg(theme.dim)),
@@ -441,6 +443,40 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("Nerd Font"));
         assert!(rendered.contains("brew install font-symbols-only-nerd-font"));
+    }
+
+    #[test]
+    fn selected_octant_marks_and_explains_font_support() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let config = Config {
+            cover_detail: crate::pixel::CoverDetail::Octant,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::CoverDetail)
+            .unwrap();
+        assert!(state
+            .setting_value(SettingField::CoverDetail)
+            .contains(i18n::t(Key::OctantFontRequired)));
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("octant"));
+        assert!(rendered.contains("Unicode 16"));
+        assert!(rendered.contains("sextant"));
     }
 
     #[test]

@@ -28,7 +28,7 @@ use yesplaymusic_core::cache::{
 
 use crate::action::{Action, CoverRenderRequest, CoverSurface, View};
 use crate::api::{self, Ncm, SongRow, Source};
-use crate::config::{self, Config, CoverMode};
+use crate::config::{self, Config, CoverMode, LoadedConfig};
 use crate::cover_cache::CoverCache;
 use crate::event;
 use crate::i18n::{self, Key};
@@ -2017,8 +2017,14 @@ fn shellexpand_home(path: &str) -> std::path::PathBuf {
     }
 }
 
-pub async fn run(config: Config) -> Result<()> {
+pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
     let mut terminal = ratatui::init();
+    if loaded.should_probe_terminal_background() {
+        let is_light = crate::terminal_background::probe()
+            .map(|appearance| matches!(appearance, crate::terminal_background::Appearance::Light));
+        loaded.apply_terminal_brightness(is_light);
+    }
+    let config = loaded.config;
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::EnableMouseCapture,
