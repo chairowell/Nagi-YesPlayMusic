@@ -179,6 +179,19 @@ export default {
     vinylVip: 'レコード VIP',
     cache: 'キャッシュ',
     automaticallyCacheSongs: '曲を自動でキャッシュ',
+    sharedCache: {
+      title: 'ターミナル版 ypm と曲キャッシュを共有',
+      detected:
+        'ターミナル版 ypm を検出しました。共有キャッシュを有効にできます。',
+      migrating: '既存の曲キャッシュを移行中（{completed}/{total}）',
+      migrated:
+        '移行完了：{imported}/{total} 曲を取り込みました。旧キャッシュは保持されています。',
+      failed:
+        '移行が中断されました（{completed}/{total}）。旧キャッシュは保持されています。',
+      enableFailed: '共有キャッシュを有効にできませんでした。',
+      migrationFailed:
+        '曲キャッシュの移行が未完了です。共有を一度無効にしてから再度お試しください。',
+    },
     clearSongsCache: 'キャッシュを削除',
     cacheCount: '{song} 曲をキャッシュ済み（{size}）',
     showLyricsTranslation: '歌詞の翻訳を表示',

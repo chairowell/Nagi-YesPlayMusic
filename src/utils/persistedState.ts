@@ -83,7 +83,10 @@ function decodeProxyConfig(value: unknown, fallback: ProxyConfig): ProxyConfig {
   };
 }
 
-function proxyPortValue(value: unknown, fallback: number | null): number | null {
+function proxyPortValue(
+  value: unknown,
+  fallback: number | null
+): number | null {
   if (value === null) return null;
   const normalized =
     typeof value === 'string' && /^(?:0|[1-9]\d*)$/.test(value)
@@ -220,6 +223,10 @@ export function decodeSettingsState(
     automaticallyCacheSongs: booleanValue(
       stored['automaticallyCacheSongs'],
       defaults.automaticallyCacheSongs
+    ),
+    shareCacheWithYpm: booleanValue(
+      stored['shareCacheWithYpm'],
+      defaults.shareCacheWithYpm
     ),
     cacheLimit: cacheLimitValue(stored['cacheLimit'], defaults.cacheLimit),
     enableReversedMode: booleanValue(

@@ -18,6 +18,7 @@ const settings = {
   showPlaylistsByAppleMusic: true,
   enableUnblockNeteaseMusic: true,
   automaticallyCacheSongs: true,
+  shareCacheWithYpm: false,
   cacheLimit: 8192,
   enableReversedMode: false,
   nyancatStyle: false,

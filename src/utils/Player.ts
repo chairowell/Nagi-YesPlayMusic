@@ -57,6 +57,14 @@ import {
 } from '@/utils/pcmSeekSource';
 import { createPreciseSeekUpgrader } from '@/utils/preciseSeekUpgrade';
 import { sendConfiguredDiscordPresence } from '@/services/desktopSettings';
+import {
+  createSharedAudioProxy,
+  deleteSharedCachedAudio,
+  findSharedCachedAudio,
+  importTrackIntoSharedCache,
+  isSharedAudioProxyURL,
+  prefetchSharedAudio,
+} from '@/services/sharedCache';
 import type { AudioUrlResponse } from '@/api/track';
 import type { Track } from '@/types/domain';
 import type { AudioSource, AudioSourceOrigin } from '@/utils/audioSource';
@@ -623,8 +631,23 @@ export default class Player {
     if (this._howler !== failedHowler) return;
     const failedTrack = this.currentTrack;
     if (failedSource.origin === 'cache') {
-      await discardFailedCache(deleteTrackSource, failedTrack.id, error =>
-        console.warn('[Player] 删除损坏缓存失败，继续尝试备用源', error)
+      await discardFailedCache(
+        async trackID => {
+          const tasks: Promise<unknown>[] = [deleteTrackSource(trackID)];
+          if (getAppStore().settings.shareCacheWithYpm) {
+            tasks.push(
+              deleteSharedCachedAudio(
+                Number(trackID),
+                getAppStore().settings.musicQuality
+              )
+            );
+          }
+          await Promise.all(tasks);
+          return true;
+        },
+        failedTrack.id,
+        error =>
+          console.warn('[Player] 删除损坏缓存失败，继续尝试备用源', error)
       );
     }
     if (failedSource.url.startsWith('blob:')) {
@@ -712,15 +735,21 @@ export default class Player {
 
     return source;
   }
-  _getAudioSourceFromCache(id: string): Promise<AudioSource | null> {
-    return getTrackSource(id).then(t => {
-      if (!t) return null;
-      return this._getAudioSourceBlobURL(t.source, 'cache');
-    });
+  async _getAudioSourceFromCache(id: string): Promise<AudioSource | null> {
+    const settings = getAppStore().settings;
+    if (settings.shareCacheWithYpm) {
+      const shared = await findSharedCachedAudio(
+        Number(id),
+        settings.musicQuality
+      );
+      if (shared) return shared;
+    }
+    const track = await getTrackSource(id);
+    return track ? this._getAudioSourceBlobURL(track.source, 'cache') : null;
   }
   _getAudioSourceFromNetease(track: Track): Promise<AudioSource | null> {
     if (isAccountLoggedIn()) {
-      return getMP3(track.id).then(result => {
+      return getMP3(track.id).then(async result => {
         const audio = findMatchingAudioResponse<AudioUrlResponse>(
           result.data,
           track.id
@@ -734,20 +763,42 @@ export default class Player {
         if (!audio.url) return null;
         if (audio.freeTrialInfo !== null) return null; // Skip preview-only tracks.
         const source = audio.url.replace(/^http:/, 'https:');
+        const settings = getAppStore().settings;
+        if (settings.shareCacheWithYpm) {
+          return createSharedAudioProxy({
+            track,
+            quality: settings.musicQuality,
+            source,
+            format: audio.type,
+            actualBitrate: audio.br ?? 128000,
+            cache: settings.automaticallyCacheSongs,
+            origin: 'netease',
+          });
+        }
         return createRemoteAudioSource(source, {
           origin: 'netease',
           format: audio.type,
-          cacheAfterLoad: getAppStore().settings.automaticallyCacheSongs
+          cacheAfterLoad: settings.automaticallyCacheSongs
             ? () => cacheTrackSource(track, source, audio.br ?? 128000)
             : null,
         });
       });
     } else {
+      const source = `https://music.163.com/song/media/outer/url?id=${track.id}`;
+      const settings = getAppStore().settings;
+      if (settings.shareCacheWithYpm) {
+        return createSharedAudioProxy({
+          track,
+          quality: settings.musicQuality,
+          source,
+          format: 'mp3',
+          actualBitrate: 128000,
+          cache: settings.automaticallyCacheSongs,
+          origin: 'netease',
+        });
+      }
       return Promise.resolve(
-        createRemoteAudioSource(
-          `https://music.163.com/song/media/outer/url?id=${track.id}`,
-          { origin: 'netease', format: 'mp3' }
-        )
+        createRemoteAudioSource(source, { origin: 'netease', format: 'mp3' })
       );
     }
   }
@@ -805,6 +856,20 @@ export default class Player {
     }
 
     if (retrieveSongInfo.source !== 'bilibili') {
+      const settings = getAppStore().settings;
+      if (settings.shareCacheWithYpm) {
+        return createSharedAudioProxy({
+          track,
+          quality: settings.musicQuality,
+          source: retrieveSongInfo.url,
+          format: 'mp3',
+          actualBitrate: 128000,
+          cache: settings.automaticallyCacheSongs,
+          origin: 'unm',
+          provider: retrieveSongInfo.source,
+          excludedProviders,
+        });
+      }
       return createRemoteAudioSource(retrieveSongInfo.url, {
         origin: 'unm',
         provider: retrieveSongInfo.source,
@@ -827,14 +892,24 @@ export default class Player {
     const source = this._getAudioSourceBlobURL(buffer, 'unm');
     source.provider = retrieveSongInfo.source;
     source.excludedProviders = excludedProviders;
-    if (getAppStore().settings.automaticallyCacheSongs) {
-      source.cacheAfterLoad = () =>
-        cacheTrackSource(
-          track,
-          `data:${source.mimeType};base64,${retrieveSongInfo.url}`,
-          128000,
-          'unm:bilibili'
-        );
+    const settings = getAppStore().settings;
+    if (settings.automaticallyCacheSongs) {
+      source.cacheAfterLoad = settings.shareCacheWithYpm
+        ? () =>
+            importTrackIntoSharedCache(
+              track,
+              buffer,
+              128000,
+              settings.musicQuality,
+              source.format
+            )
+        : () =>
+            cacheTrackSource(
+              track,
+              `data:${source.mimeType};base64,${retrieveSongInfo.url}`,
+              128000,
+              'unm:bilibili'
+            );
     }
     return source;
   }
@@ -919,7 +994,11 @@ export default class Player {
     // Recheck before audio download so stale queues cannot consume bandwidth.
     const source = await this._getAudioSourceFromNetease(track);
     if (!isCurrent()) return;
-    await source?.cacheAfterLoad?.();
+    if (source && isSharedAudioProxyURL(source.url)) {
+      await prefetchSharedAudio(source.url);
+    } else {
+      await source?.cacheAfterLoad?.();
+    }
   }
   /**
    * Warm upcoming artwork from locally cached track details. Remote detail requests

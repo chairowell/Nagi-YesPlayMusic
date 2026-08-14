@@ -231,6 +231,19 @@ export function hasTrackSource(id: number | string): Promise<boolean> {
     .then(count => count > 0);
 }
 
+export function listTrackSourceMigrationIds(): Promise<number[]> {
+  return db.trackSources
+    .toCollection()
+    .primaryKeys()
+    .then(keys => keys.filter((key): key is number => typeof key === 'number'));
+}
+
+export function readTrackSourceForMigration(
+  id: number
+): Promise<TrackSourceRecord | undefined> {
+  return db.trackSources.get(id);
+}
+
 export function cacheTrackDetail(
   track: Track,
   privileges?: TrackPrivilege

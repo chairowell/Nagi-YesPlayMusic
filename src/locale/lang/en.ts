@@ -179,6 +179,18 @@ export default {
     vinylVip: 'Vinyl VIP',
     cache: 'Cache',
     automaticallyCacheSongs: 'Automatically cache songs',
+    sharedCache: {
+      title: 'Share song cache with terminal ypm',
+      detected: 'Terminal ypm was detected. You can enable the shared cache.',
+      migrating: 'Migrating existing song cache ({completed}/{total})',
+      migrated:
+        'Migration complete: imported {imported}/{total}; the old cache was kept.',
+      failed:
+        'Migration stopped ({completed}/{total}); the old cache was kept.',
+      enableFailed: 'The shared cache could not be enabled.',
+      migrationFailed:
+        'Song cache migration is incomplete. Turn sharing off and on to retry.',
+    },
     clearSongsCache: 'Clear Songs Cache',
     cacheCount: 'Cached {song} songs ({size})',
     showLyricsTranslation: 'Show lyrics translation',

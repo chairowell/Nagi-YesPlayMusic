@@ -17,6 +17,7 @@ use crate::{
     proxy_relay::{self, UpstreamProxy},
     renderer::{self, ApiProxy},
     session::{self, RequestBoundary},
+    shared_cache::{self, SharedCacheState},
     unm::{self, UnmState},
 };
 
@@ -34,6 +35,8 @@ pub enum ServerError {
     ApiProxy(#[from] reqwest::Error),
     #[error("failed to initialize precise WAV storage: {0}")]
     PreciseWav(#[source] io::Error),
+    #[error("failed to initialize the shared audio cache client: {0}")]
+    SharedCacheClient(#[source] reqwest::Error),
     #[error("renderer directory is not a directory: {0}")]
     InvalidRendererDirectory(String),
     #[error("failed to bind {listener} on 127.0.0.1:{port}: {source}")]
@@ -126,6 +129,9 @@ async fn build_api_router(
     let client = Arc::new(ncm_api_rs::ApiClient::new(None));
     let mut router = ncm::router(NcmState::production(client))?
         .merge(unm::router(UnmState::new()))
+        .merge(shared_cache::router(
+            SharedCacheState::production().map_err(ServerError::SharedCacheClient)?,
+        ))
         .merge(player_api::update_router(player_state));
     if config.api_only {
         router = router.merge(health::router(health_state));
