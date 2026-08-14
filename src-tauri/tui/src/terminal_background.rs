@@ -1,9 +1,11 @@
 //! OSC 11 terminal background detection.
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::time::Duration;
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const OSC_11_QUERY: &[u8] = b"\x1b]11;?\x07";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const QUERY_TIMEOUT: Duration = Duration::from_millis(300);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,7 +43,7 @@ impl Rgb {
 }
 
 pub(crate) fn probe() -> Option<Appearance> {
-    platform::read_response(QUERY_TIMEOUT).map(Rgb::appearance)
+    platform::read_response().map(Rgb::appearance)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -107,7 +109,7 @@ mod platform {
     use std::os::fd::{AsRawFd, RawFd};
     use std::time::{Duration, Instant};
 
-    use super::{parse_response, Rgb, OSC_11_QUERY};
+    use super::{parse_response, Rgb, OSC_11_QUERY, QUERY_TIMEOUT};
 
     const POLLIN: c_short = 0x0001;
     const MAX_RESPONSE_BYTES: usize = 256;
@@ -129,7 +131,7 @@ mod platform {
         fn system_poll(descriptors: *mut PollFd, count: PollCount, timeout: c_int) -> c_int;
     }
 
-    pub(super) fn read_response(timeout: Duration) -> Option<Rgb> {
+    pub(super) fn read_response() -> Option<Rgb> {
         if !crossterm::terminal::is_raw_mode_enabled().ok()? {
             return None;
         }
@@ -142,7 +144,7 @@ mod platform {
         terminal.write_all(OSC_11_QUERY).ok()?;
         terminal.flush().ok()?;
 
-        let deadline = Instant::now().checked_add(timeout)?;
+        let deadline = Instant::now().checked_add(QUERY_TIMEOUT)?;
         let mut response = Vec::with_capacity(64);
         while response.len() < MAX_RESPONSE_BYTES {
             let remaining = deadline.checked_duration_since(Instant::now())?;
@@ -188,11 +190,10 @@ mod platform {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod platform {
-    use std::time::Duration;
-
     use super::Rgb;
 
-    pub(super) fn read_response(_timeout: Duration) -> Option<Rgb> {
+    pub(super) fn read_response() -> Option<Rgb> {
+        // Windows has no `/dev/tty`; unsupported platforms skip probing without reading input.
         None
     }
 }
@@ -200,6 +201,12 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[test]
+    fn unsupported_platform_probe_is_silent() {
+        assert_eq!(probe(), None);
+    }
 
     #[test]
     fn parses_four_digit_osc_11_with_bel_or_st() {
