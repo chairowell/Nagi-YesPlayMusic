@@ -104,6 +104,13 @@ pub struct SongRow {
     pub pic_url: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LyricsPayload {
+    pub lrc: String,
+    pub tlyric: Option<String>,
+    pub yrc: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum SearchChannel {
     #[default]
@@ -469,21 +476,16 @@ impl Ncm {
         ))
     }
 
-    /// Raw LRC text pair (original, translation) for a song.
-    pub async fn lyrics(&self, id: i64) -> Result<(String, Option<String>)> {
+    /// Raw line-, translation-, and word-synchronised lyrics for a song.
+    pub async fn lyrics(&self, id: i64) -> Result<LyricsPayload> {
         let query = self.query().param("id", &id.to_string());
         let response = self
             .client
-            .lyric(&query)
+            // `lyric_new` sends yv/ytv/yrv, the API's YRC request flags.
+            .lyric_new(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpLyrics, error)))?;
-        let body = &response.body;
-        let lrc = body["lrc"]["lyric"].as_str().unwrap_or_default().to_owned();
-        let tlyric = body["tlyric"]["lyric"]
-            .as_str()
-            .filter(|text| !text.trim().is_empty())
-            .map(str::to_owned);
-        Ok((lrc, tlyric))
+        parse_lyrics_payload(&response.body)
     }
 
     pub async fn search_channel(
@@ -707,6 +709,32 @@ impl Ncm {
             pic_url: row.pic_url,
         }
     }
+}
+
+fn parse_lyrics_payload(body: &Value) -> Result<LyricsPayload> {
+    require_success(body)?;
+    Ok(LyricsPayload {
+        lrc: lyric_text(body, "lrc")?.unwrap_or_default(),
+        tlyric: lyric_text(body, "tlyric")?,
+        yrc: lyric_text(body, "yrc")?,
+    })
+}
+
+fn lyric_text(body: &Value, field: &str) -> Result<Option<String>> {
+    let Value::Object(body) = body else {
+        return Err(invalid_payload("$"));
+    };
+    let section = match body.get(field) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Object(section)) => section,
+        Some(_) => return Err(invalid_payload(&format!("$.{field}"))),
+    };
+    let text = match section.get("lyric") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::String(text)) => text,
+        Some(_) => return Err(invalid_payload(&format!("$.{field}.lyric"))),
+    };
+    Ok((!text.trim().is_empty()).then(|| text.clone()))
 }
 
 async fn collect_playlist_pages<F, Fut>(mut fetch: F) -> Result<Vec<SongRow>>
@@ -1163,6 +1191,57 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    #[test]
+    fn lyric_payload_keeps_all_supported_timeline_kinds() {
+        let payload = parse_lyrics_payload(&serde_json::json!({
+            "code": 200,
+            "lrc": { "lyric": "[00:01]line" },
+            "tlyric": { "lyric": "[00:01]翻译" },
+            "yrc": { "lyric": "[1000,500](1000,500,0)line" }
+        }))
+        .unwrap();
+
+        assert_eq!(payload.lrc, "[00:01]line");
+        assert_eq!(payload.tlyric.as_deref(), Some("[00:01]翻译"));
+        assert_eq!(payload.yrc.as_deref(), Some("[1000,500](1000,500,0)line"));
+    }
+
+    #[test]
+    fn lyric_payload_accepts_missing_null_and_blank_optional_text() {
+        let payload = parse_lyrics_payload(&serde_json::json!({
+            "code": 200,
+            "lrc": { "lyric": null },
+            "tlyric": null
+        }))
+        .unwrap();
+
+        assert_eq!(payload, LyricsPayload::default());
+
+        let whitespace = parse_lyrics_payload(&serde_json::json!({
+            "code": 200,
+            "lrc": { "lyric": "  \n" },
+            "tlyric": {},
+            "yrc": null
+        }))
+        .unwrap();
+        assert_eq!(whitespace, LyricsPayload::default());
+    }
+
+    #[test]
+    fn lyric_payload_rejects_wrong_dynamic_types_and_unsuccessful_codes() {
+        let malformed = [
+            serde_json::json!({ "code": 200, "lrc": [] }),
+            serde_json::json!({ "code": 200, "tlyric": { "lyric": 42 } }),
+            serde_json::json!({ "code": 200, "yrc": ["not", "an", "object"] }),
+            serde_json::json!({ "code": 500, "lrc": { "lyric": "ignored" } }),
+            serde_json::json!({ "lrc": { "lyric": "missing code" } }),
+        ];
+
+        for body in malformed {
+            assert!(parse_lyrics_payload(&body).is_err());
+        }
+    }
 
     fn ncm(quality: AudioQuality) -> Ncm {
         let dir = tempfile::tempdir().unwrap();

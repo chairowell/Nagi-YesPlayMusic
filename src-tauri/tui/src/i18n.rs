@@ -105,6 +105,9 @@ pub enum Key {
     Open,
     HelpTitle,
     HelpAnyKey,
+    CommandPalette,
+    CommandPaletteHint,
+    CommandNoMatches,
     LabelLike,
     LabelHelp,
     Searching,
@@ -270,6 +273,46 @@ pub fn t_candidates_unavailable(keywords: &str) -> String {
     }
 }
 
+pub fn t_command_executed(command: &str) -> String {
+    match language() {
+        Lang::Zh => format!("已执行命令：{command}"),
+        Lang::En => format!("Command executed: {command}"),
+        Lang::Ja => format!("コマンドを実行しました：{command}"),
+    }
+}
+
+pub fn t_command_unknown(command: &str) -> String {
+    match language() {
+        Lang::Zh => format!("没有匹配的命令：{command}"),
+        Lang::En => format!("No matching command: {command}"),
+        Lang::Ja => format!("一致するコマンドがありません：{command}"),
+    }
+}
+
+pub fn t_command_missing_argument(command: &str, expected: &str) -> String {
+    match language() {
+        Lang::Zh => format!("{command} 缺少参数（需要 {expected}）"),
+        Lang::En => format!("{command} needs an argument ({expected})"),
+        Lang::Ja => format!("{command} に引数が必要です（{expected}）"),
+    }
+}
+
+pub fn t_command_unexpected_argument(command: &str) -> String {
+    match language() {
+        Lang::Zh => format!("{command} 不接受这些参数"),
+        Lang::En => format!("{command} does not accept those arguments"),
+        Lang::Ja => format!("{command} は引数を受け取りません"),
+    }
+}
+
+pub fn t_command_invalid_argument(command: &str, value: &str, expected: &str) -> String {
+    match language() {
+        Lang::Zh => format!("{command} 的参数“{value}”无效（需要 {expected}）"),
+        Lang::En => format!("Invalid argument “{value}” for {command} (expected {expected})"),
+        Lang::Ja => format!("{command} の引数「{value}」は無効です（{expected}）"),
+    }
+}
+
 fn language() -> Lang {
     LANGUAGE.get().copied().unwrap_or(Lang::Zh)
 }
@@ -359,6 +402,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Open => "打开",
             Key::HelpTitle => "快捷键",
             Key::HelpAnyKey => "按任意键关闭",
+            Key::CommandPalette => "命令面板",
+            Key::CommandPaletteHint => "↑/↓ 选择 · Enter 执行 · Esc 关闭",
+            Key::CommandNoMatches => "没有匹配的命令",
             Key::LabelLike => "收藏",
             Key::LabelHelp => "全部键位",
             Key::Searching => "搜索中…",
@@ -482,6 +528,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Open => "Open",
             Key::HelpTitle => "Keyboard",
             Key::HelpAnyKey => "Press any key to close",
+            Key::CommandPalette => "Command Palette",
+            Key::CommandPaletteHint => "↑/↓ select · Enter run · Esc close",
+            Key::CommandNoMatches => "No matching commands",
             Key::LabelLike => "Like",
             Key::LabelHelp => "All keys",
             Key::Searching => "Searching…",
@@ -605,6 +654,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Open => "開く",
             Key::HelpTitle => "キー操作",
             Key::HelpAnyKey => "任意のキーで閉じる",
+            Key::CommandPalette => "コマンドパレット",
+            Key::CommandPaletteHint => "↑/↓ 選択 · Enter 実行 · Esc 閉じる",
+            Key::CommandNoMatches => "一致するコマンドがありません",
             Key::LabelLike => "お気に入り",
             Key::LabelHelp => "すべてのキー",
             Key::Searching => "検索中…",

@@ -1,6 +1,7 @@
 //! Single state source: input becomes Action, update() is the only writer,
 //! ui::draw() only reads.
 
+pub(crate) mod command_palette;
 mod filter;
 mod reducer;
 mod search;
@@ -37,6 +38,7 @@ use crate::spectrum::SpectrumView;
 use crate::theme::Theme;
 use crate::ui;
 
+use self::command_palette::CommandPaletteState;
 use self::filter::ListFilter;
 use self::search::SearchState;
 use self::session::SessionState;
@@ -367,6 +369,7 @@ pub struct AppState {
     pub theme: Theme,
     pub config: Config,
     pub(crate) settings: settings::SettingsState,
+    pub(crate) command_palette: CommandPaletteState,
     pub library: Vec<SongRow>,
     pub selected: usize,
     marquee_frame: u64,
@@ -422,6 +425,9 @@ pub struct AppState {
     resume_on_play: Option<Duration>,
     seek_after_start: Option<Duration>,
     pub status: Option<String>,
+    pub(crate) command_feedback: Option<String>,
+    pub(crate) command_feedback_error: bool,
+    command_feedback_ticks: u8,
     pub generation: u64,
     style_revision: u64,
     terminal_size: (u16, u16),
@@ -446,6 +452,7 @@ impl AppState {
             theme,
             config: config.clone(),
             settings: settings::SettingsState::default(),
+            command_palette: CommandPaletteState::default(),
             // Demo rows for the logged-out state; replaced by 我喜欢的音乐
             // right after login (id 0 = resolve via search).
             library: vec![
@@ -534,6 +541,9 @@ impl AppState {
             resume_on_play: None,
             seek_after_start: None,
             status: None,
+            command_feedback: None,
+            command_feedback_error: false,
+            command_feedback_ticks: 0,
             generation: 0,
             style_revision: 0,
             terminal_size,
@@ -615,6 +625,7 @@ impl AppState {
         }
         if self.show_help
             || self.confirm_quit
+            || self.command_palette.open
             || self.filter.input
             || self.view == View::Library && self.sidebar_focus
             || self.view == View::Search && self.search.input
@@ -656,6 +667,31 @@ impl AppState {
         } else {
             self.marquee_target = target;
             self.marquee_frame = 0;
+        }
+    }
+
+    fn set_command_feedback(&mut self, message: String, is_error: bool) {
+        self.command_feedback = Some(message);
+        self.command_feedback_error = is_error;
+        self.command_feedback_ticks = 24;
+    }
+
+    fn clear_command_feedback(&mut self) {
+        self.command_feedback = None;
+        self.command_feedback_error = false;
+        self.command_feedback_ticks = 0;
+    }
+
+    fn advance_command_feedback(&mut self) {
+        if self.command_feedback_ticks == 0 {
+            self.command_feedback = None;
+            self.command_feedback_error = false;
+            return;
+        }
+        self.command_feedback_ticks -= 1;
+        if self.command_feedback_ticks == 0 {
+            self.command_feedback = None;
+            self.command_feedback_error = false;
         }
     }
 
@@ -1031,6 +1067,7 @@ impl AppState {
 
     fn selected_cover_candidate(&self) -> Option<(SelectionCoverKey, SongRow, Vec<SongRow>)> {
         if !self.selection_preview_visible()
+            || self.command_palette.open
             || self.filter.input
             || self.view == View::Library && self.sidebar_focus
             || self.view == View::Search
@@ -1549,10 +1586,16 @@ fn spawn_fetch_lyrics(fx: &Effects, generation: u64, song_id: i64) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        let Ok((lrc, tlyric)) = ncm.lyrics(song_id).await else {
+        let Ok(payload) = ncm.lyrics(song_id).await else {
             return; // missing lyrics are cosmetic
         };
-        let lines = crate::lyrics::parse_lrc(&lrc, tlyric.as_deref());
+        let word_lines = payload
+            .yrc
+            .as_deref()
+            .map(crate::yrc::parse_yrc)
+            .unwrap_or_default();
+        let lines =
+            crate::lyrics::parse_with_yrc(&payload.lrc, payload.tlyric.as_deref(), &word_lines);
         if !lines.is_empty() {
             let _ = actions.send(Action::LyricsLoaded { generation, lines });
         }
@@ -2104,7 +2147,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
                 let Some(response) = response else { break };
                 state.apply_selected_pending_resize(response);
             }
-            _ = ui_tick.tick(), if state.marquee_active() => {
+            _ = ui_tick.tick(), if state.marquee_active() || state.command_feedback.is_some() => {
                 state.update(Action::UiTick, &fx);
             }
             _ = spectrum_ticks.tick(), if state.config.spectrum_enabled || state.view == View::Settings => {
@@ -2131,7 +2174,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
 fn apply(state: &mut AppState, action: Action, fx: &Effects, hits: &ui::Hits) {
     match action {
         Action::Mouse(mouse) => {
-            if state.show_help {
+            if state.command_palette.open || state.show_help {
                 state.update(Action::Mouse(mouse), fx);
             } else {
                 let selected = if state.view == View::Search && state.search.input

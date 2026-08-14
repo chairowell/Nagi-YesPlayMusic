@@ -15,6 +15,7 @@ mod spectrum;
 mod store;
 mod theme;
 mod ui;
+mod yrc;
 
 use anyhow::Result;
 use clap::Parser;

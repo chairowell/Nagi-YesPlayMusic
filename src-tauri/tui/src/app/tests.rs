@@ -1366,6 +1366,15 @@ async fn quit_dialog_keeps_processing_async_state_updates() {
                 time: Duration::from_secs(1),
                 text: "new lyric".into(),
                 translation: None,
+                word_timing: Some(crate::yrc::YrcLine {
+                    start: Duration::from_secs(1),
+                    duration: Duration::from_millis(500),
+                    words: vec![crate::yrc::YrcWord {
+                        text: "new lyric".into(),
+                        start: Duration::from_secs(1),
+                        duration: Duration::from_millis(500),
+                    }],
+                }),
             }],
         },
         &fx,
@@ -1373,6 +1382,41 @@ async fn quit_dialog_keeps_processing_async_state_updates() {
 
     assert!(state.confirm_quit);
     assert_eq!(state.lyrics[0].text, "new lyric");
+    assert_eq!(
+        state.lyrics[0].word_timing.as_ref().map(|line| line.text()),
+        Some("new lyric".into())
+    );
+}
+
+#[tokio::test]
+async fn stale_lyrics_cannot_replace_the_current_tracks_word_timeline() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.generation = 2;
+
+    state.update(
+        Action::LyricsLoaded {
+            generation: 1,
+            lines: vec![crate::lyrics::LyricLine {
+                time: Duration::ZERO,
+                text: "stale".into(),
+                translation: None,
+                word_timing: Some(crate::yrc::YrcLine {
+                    start: Duration::ZERO,
+                    duration: Duration::from_secs(1),
+                    words: vec![crate::yrc::YrcWord {
+                        text: "stale".into(),
+                        start: Duration::ZERO,
+                        duration: Duration::from_secs(1),
+                    }],
+                }),
+            }],
+        },
+        &fx,
+    );
+
+    assert!(state.lyrics.is_empty());
 }
 
 #[tokio::test]
@@ -2164,4 +2208,163 @@ async fn a_known_track_uses_the_shared_cache_before_resolving_a_url() {
         state.now.as_ref().map(|now| now.title.as_str()),
         Some("Track 42")
     );
+}
+
+#[tokio::test]
+async fn command_palette_owns_mini_player_input_and_blocks_background_mouse_hits() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.terminal_size = (80, 6);
+    state.view = View::Queue;
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+    state.show_help = true;
+
+    state.update(raw_key(KeyCode::Char(':')), &fx);
+    assert!(state.command_palette.open);
+    assert!(!state.show_help);
+
+    state.update(raw_key(KeyCode::Char('n')), &fx);
+    assert_eq!(state.command_palette.query, "n");
+    assert_eq!(state.queue_pos, Some(0));
+
+    let mut hits = ui::Hits::default();
+    hits.rows.push((Rect::new(0, 1, 20, 1), 1));
+    apply(
+        &mut state,
+        Action::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        }),
+        &fx,
+        &hits,
+    );
+    assert_eq!(state.selected, 0);
+
+    state.update(raw_key(KeyCode::Esc), &fx);
+    assert!(!state.command_palette.open);
+}
+
+#[tokio::test]
+async fn colon_remains_text_inside_search_and_list_filter_inputs() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.view = View::Search;
+    state.search.input = true;
+    state.update(raw_key(KeyCode::Char(':')), &fx);
+    assert_eq!(state.search.query, ":");
+    assert!(!state.command_palette.open);
+
+    state.view = View::Library;
+    state.search.input = false;
+    state.filter.start();
+    state.update(raw_key(KeyCode::Char(':')), &fx);
+    assert_eq!(state.filter.query, ":");
+    assert!(!state.command_palette.open);
+}
+
+#[tokio::test]
+async fn command_theme_and_quality_survive_canceling_an_open_settings_preview() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.open_settings();
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("主题 pico8".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+    assert_eq!(state.config.theme, "pico8");
+    assert_eq!(state.theme, Theme::by_name("pico8"));
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("quality lossless".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+    assert_eq!(state.config.quality, AudioQuality::Lossless);
+    assert_eq!(fx.ncm.quality(), AudioQuality::Lossless);
+
+    state.update(Action::CancelSettings, &fx);
+    assert_eq!(state.config.theme, "pico8");
+    assert_eq!(state.config.quality, AudioQuality::Lossless);
+    let persisted = std::fs::read_to_string(&fx.config_path).unwrap();
+    let persisted: Config = toml::from_str(&persisted).unwrap();
+    assert_eq!(persisted.theme, "pico8");
+    assert_eq!(persisted.quality, AudioQuality::Lossless);
+}
+
+#[tokio::test]
+async fn command_feedback_expires_after_being_visible_for_ui_ticks() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("volume 37".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+    assert!(!state.command_palette.open);
+    assert!((state.volume - 0.37).abs() < f32::EPSILON);
+    assert!(state.command_feedback.is_some());
+
+    for _ in 0..23 {
+        state.update(Action::UiTick, &fx);
+    }
+    assert!(state.command_feedback.is_some());
+    state.update(Action::UiTick, &fx);
+    assert!(state.command_feedback.is_none());
+}
+
+#[tokio::test]
+async fn invalid_command_arguments_keep_the_palette_open_for_correction() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("volume 101".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+
+    assert!(state.command_palette.open);
+    assert_eq!(state.command_palette.query, "volume 101");
+    assert_eq!(state.volume, 1.0);
+    assert!(state
+        .command_feedback
+        .as_deref()
+        .is_some_and(|feedback| { feedback.contains("101") && feedback.contains("volume") }));
+    assert!(state.command_feedback_error);
+
+    state.update(raw_key(KeyCode::Backspace), &fx);
+    assert_eq!(state.command_palette.query, "volume 10");
+    assert!(state.command_feedback.is_none());
+    assert!(!state.command_feedback_error);
+
+    state.update(Action::ExecuteCommand, &fx);
+    assert!(!state.command_palette.open);
+    assert!(state.command_feedback.is_some());
+    assert!(!state.command_feedback_error);
+    state.update(Action::OpenCommandPalette, &fx);
+    assert!(state.command_feedback.is_none());
+}
+
+#[tokio::test]
+async fn spectrum_command_reports_a_persistence_failure_as_an_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    std::fs::create_dir(&fx.config_path).unwrap();
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("spectrum".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+
+    assert!(!state.command_palette.open);
+    assert!(state.command_feedback_error);
+    assert!(state
+        .command_feedback
+        .as_deref()
+        .is_some_and(|feedback| feedback.contains(crate::i18n::t(Key::SettingsSaveFailed))));
 }

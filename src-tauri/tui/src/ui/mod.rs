@@ -1,5 +1,6 @@
 //! Pure view layer: reads AppState, writes the frame. No side effects.
 
+mod command_palette;
 pub(crate) mod cover_preview;
 pub(crate) mod library;
 mod login;
@@ -179,40 +180,77 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
 
     if area.height < 8 {
         mini_player::draw(frame, state, area, hits);
-        return;
-    }
-
-    let content = centered_content(area);
-    if state.zen {
-        now_playing::draw(frame, state, content, hits);
     } else {
-        let [tabs_area, _, body, _, hints_area] = Layout::vertical([
-            Constraint::Length(HEADER_HEIGHT),
-            Constraint::Length(PANEL_GAP_Y),
-            Constraint::Min(0),
-            Constraint::Length(PANEL_GAP_Y),
-            Constraint::Length(FOOTER_HEIGHT),
-        ])
-        .areas(content);
+        let content = centered_content(area);
+        if state.zen {
+            now_playing::draw(frame, state, content, hits);
+        } else {
+            let [tabs_area, _, body, _, hints_area] = Layout::vertical([
+                Constraint::Length(HEADER_HEIGHT),
+                Constraint::Length(PANEL_GAP_Y),
+                Constraint::Min(0),
+                Constraint::Length(PANEL_GAP_Y),
+                Constraint::Length(FOOTER_HEIGHT),
+            ])
+            .areas(content);
 
-        draw_header(frame, state, tabs_area, hits);
-        match state.view {
-            View::NowPlaying => now_playing::draw(frame, state, body, hits),
-            View::Library => library::draw(frame, state, body, hits),
-            View::Search => search::draw(frame, state, body, hits),
-            View::Queue => queue::draw(frame, state, body, hits),
-            View::Login => login::draw(frame, state, body),
-            View::Settings => settings::draw(frame, state, body, hits),
+            draw_header(frame, state, tabs_area, hits);
+            match state.view {
+                View::NowPlaying => now_playing::draw(frame, state, body, hits),
+                View::Library => library::draw(frame, state, body, hits),
+                View::Search => search::draw(frame, state, body, hits),
+                View::Queue => queue::draw(frame, state, body, hits),
+                View::Login => login::draw(frame, state, body),
+                View::Settings => settings::draw(frame, state, body, hits),
+            }
+            draw_hints(frame, state, hints_area);
         }
-        draw_hints(frame, state, hints_area);
+
+        if state.show_help {
+            draw_help(frame, state, area);
+        }
+        if state.confirm_quit {
+            draw_quit_confirm(frame, state, area, hits);
+        }
     }
 
-    if state.show_help {
-        draw_help(frame, state, area);
+    if state.command_feedback.is_some() && (area.height < 8 || state.zen) {
+        let feedback_area = if area.height < 8 {
+            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1)
+        } else {
+            let content = centered_content(area);
+            Rect::new(
+                content.x,
+                content.bottom().saturating_sub(1),
+                content.width,
+                1,
+            )
+        };
+        draw_command_feedback(frame, state, feedback_area);
     }
-    if state.confirm_quit {
-        draw_quit_confirm(frame, state, area, hits);
+
+    if state.command_palette.open {
+        command_palette::dim_background(frame, state.theme.faint);
+        command_palette::draw(frame, state, area);
     }
+}
+
+fn draw_command_feedback(frame: &mut Frame, state: &AppState, area: Rect) {
+    let Some(feedback) = &state.command_feedback else {
+        return;
+    };
+    frame.render_widget(
+        Paragraph::new(text::pad_display(feedback, usize::from(area.width))).style(
+            Style::new()
+                .fg(if state.command_feedback_error {
+                    state.theme.accent2
+                } else {
+                    state.theme.accent
+                })
+                .bg(state.theme.bg),
+        ),
+        area,
+    );
 }
 
 fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -415,10 +453,15 @@ fn draw_hints(frame: &mut Frame, state: &AppState, area: Rect) {
             .saturating_sub(badges_width)
             .saturating_sub(FOOTER_STATUS_GAP)
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(footer_hint_spans(state, hints_width))),
-        Rect::new(area.x, area.y, hints_width, area.height),
-    );
+    let status = Rect::new(area.x, area.y, hints_width, area.height);
+    if state.command_feedback.is_some() {
+        draw_command_feedback(frame, state, status);
+    } else {
+        frame.render_widget(
+            Paragraph::new(Line::from(footer_hint_spans(state, hints_width))),
+            status,
+        );
+    }
     if badges_width > 0 {
         frame.render_widget(
             Paragraph::new(badges),

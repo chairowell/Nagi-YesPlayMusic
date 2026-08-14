@@ -151,6 +151,7 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
         };
     }
     match key.code {
+        KeyCode::Char(':') => Some(Action::OpenCommandPalette),
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('1') => Some(Action::SwitchView(View::NowPlaying)),
         KeyCode::Char('2') => Some(Action::SwitchView(View::Library)),
@@ -202,11 +203,27 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
     }
 }
 
+/// The command palette owns the keyboard while open. Text-editing keys are
+/// handled by its state module; this maps modal navigation and execution.
+pub fn command_palette_key_action(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return (key.code == KeyCode::Char('c')).then_some(Action::CloseCommandPalette);
+    }
+    match key.code {
+        KeyCode::Esc => Some(Action::CloseCommandPalette),
+        KeyCode::Enter => Some(Action::ExecuteCommand),
+        KeyCode::Down => Some(Action::MoveCommandSelection(1)),
+        KeyCode::Up => Some(Action::MoveCommandSelection(-1)),
+        _ => None,
+    }
+}
+
 pub fn settings_key_action(key: KeyEvent) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
     }
     match key.code {
+        KeyCode::Char(':') => Some(Action::OpenCommandPalette),
         KeyCode::Esc | KeyCode::Char('q') => Some(Action::CancelSettings),
         KeyCode::Char('1') => Some(Action::SwitchView(View::NowPlaying)),
         KeyCode::Char('2') => Some(Action::SwitchView(View::Library)),
@@ -253,6 +270,10 @@ mod tests {
         ));
         assert!(matches!(map(KeyCode::Char('z')), Some(Action::ToggleZen)));
         assert!(matches!(
+            map(KeyCode::Char(':')),
+            Some(Action::OpenCommandPalette)
+        ));
+        assert!(matches!(
             map(KeyCode::Char('v')),
             Some(Action::ToggleSpectrum)
         ));
@@ -263,6 +284,22 @@ mod tests {
             map(KeyCode::Char(',')),
             Some(Action::SwitchView(View::Settings))
         ));
+    }
+
+    #[test]
+    fn command_palette_keys_are_modal() {
+        let map = |code| command_palette_key_action(KeyEvent::new(code, KeyModifiers::NONE));
+
+        assert!(matches!(
+            map(KeyCode::Esc),
+            Some(Action::CloseCommandPalette)
+        ));
+        assert!(matches!(map(KeyCode::Enter), Some(Action::ExecuteCommand)));
+        assert!(matches!(
+            map(KeyCode::Down),
+            Some(Action::MoveCommandSelection(1))
+        ));
+        assert!(map(KeyCode::Char('n')).is_none());
     }
 
     #[test]

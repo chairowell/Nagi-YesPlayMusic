@@ -212,7 +212,8 @@ impl Drop for PendingWork {
     }
 }
 
-const TICK: Duration = Duration::from_millis(250);
+// Word-synchronised lyrics need a responsive clock without busy-redrawing.
+const TICK: Duration = Duration::from_millis(50);
 
 struct Engine {
     _output: EngineOutput,
@@ -752,6 +753,11 @@ mod tests {
 
     const AUDIO_BODY: &[u8] = b"complete cache body";
     const WAV_BODY: &[u8] = b"RIFF,\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0@\x1f\0\0\x80>\0\0\x02\0\x10\0data\x08\0\0\0\0\0\0\0\0\0\0\0";
+
+    #[test]
+    fn position_updates_are_frequent_enough_for_word_synced_lyrics() {
+        assert!(super::TICK <= Duration::from_millis(100));
+    }
 
     fn cache_request(track_id: i64, expected_bytes: u64) -> CacheWriteRequest {
         CacheWriteRequest::new(
