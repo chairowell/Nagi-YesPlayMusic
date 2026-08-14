@@ -19,7 +19,6 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { rustSidecarBuildPlan } from './build-rust-sidecar.mjs';
 import {
-  RUST_SIDECAR_MARKER,
   assertRustSidecarMarker,
   readArm64MachOUuid,
 } from './lib/macBinaryProvenance.mjs';
@@ -65,14 +64,34 @@ const GPL_DEPENDENCY = Object.freeze({
   license: 'GPL-3.0-only',
 });
 const SIDECAR_PACKAGE = 'yesplaymusic-sidecar';
+const TUI_PACKAGE = 'yesplaymusic-tui';
+const CORE_PACKAGE = 'yesplaymusic-core';
+export const SIDECAR_TARGET_SPEC = Object.freeze({
+  package: SIDECAR_PACKAGE,
+  binaryName: 'yesplaymusic-sidecar',
+  archiveSlug: 'sidecar',
+  applicationDirs: Object.freeze(['core', 'sidecar']),
+});
+export const YPM_TARGET_SPEC = Object.freeze({
+  package: TUI_PACKAGE,
+  binaryName: 'ypm',
+  archiveSlug: 'ypm',
+  applicationDirs: Object.freeze(['core', 'tui']),
+});
 const WORKSPACE_APPLICATION_PACKAGES = Object.freeze([
+  CORE_PACKAGE,
   SIDECAR_PACKAGE,
-  'yesplaymusic-core',
+  TUI_PACKAGE,
 ]);
 const WORKSPACE_APPLICATION_PACKAGE_NAMES = new Set(
   WORKSPACE_APPLICATION_PACKAGES
 );
-const SIDECAR_BINARY_LICENSE = 'GPL-3.0-only';
+const BINARY_LICENSE = 'GPL-3.0-only';
+const PACKAGE_BY_APPLICATION_DIR = new Map([
+  ['core', CORE_PACKAGE],
+  ['sidecar', SIDECAR_PACKAGE],
+  ['tui', TUI_PACKAGE],
+]);
 
 function isWorkspaceApplicationPackage(candidate) {
   return WORKSPACE_APPLICATION_PACKAGE_NAMES.has(candidate.name);
@@ -85,11 +104,15 @@ function thirdPartyPackages(packages) {
 }
 
 export function sidecarSourceArchiveName(version) {
-  return `YesPlayMusic_${version}_sidecar-source.tar.gz`;
+  return complianceSourceArchiveName(SIDECAR_TARGET_SPEC, version);
 }
 
 export function sidecarSourceOfferName(version) {
   return `YesPlayMusic_${version}_SOURCE-OFFER.md`;
+}
+
+export function complianceSourceArchiveName(targetSpec, version) {
+  return `YesPlayMusic_${version}_${targetSpec.archiveSlug}-source.tar.gz`;
 }
 
 function sha256(content) {
@@ -100,21 +123,37 @@ function stableJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-async function builtSidecarProvenance(projectRoot) {
+async function readBuiltBinary(artifactPath, targetSpec) {
+  try {
+    return await readFile(artifactPath);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new Error(
+        `${targetSpec.binaryName} release binary is missing: ${artifactPath}`
+      );
+    }
+    throw error;
+  }
+}
+
+async function builtBinaryProvenance(projectRoot, targetSpec) {
   const plan = rustSidecarBuildPlan();
-  const artifactPath = path.join(
-    projectRoot,
-    'src-tauri',
-    'binaries',
-    plan.outputName
-  );
-  const bytes = await readFile(artifactPath);
-  assertRustSidecarMarker(bytes);
+  const isSidecar = targetSpec.package === SIDECAR_PACKAGE;
+  const fileName = isSidecar
+    ? plan.outputName
+    : plan.targetTriple.includes('windows')
+    ? `${targetSpec.binaryName}.exe`
+    : targetSpec.binaryName;
+  const artifactPath = isSidecar
+    ? path.join(projectRoot, 'src-tauri', 'binaries', fileName)
+    : path.join(projectRoot, 'src-tauri', 'target', 'release', fileName);
+  const bytes = await readBuiltBinary(artifactPath, targetSpec);
+  const rustMarker = isSidecar ? assertRustSidecarMarker(bytes) : null;
   return {
     targetTriple: plan.targetTriple,
-    fileName: plan.outputName,
+    fileName,
     sha256: sha256(bytes),
-    rustMarker: RUST_SIDECAR_MARKER,
+    rustMarker,
     machOUuid:
       plan.targetTriple === 'aarch64-apple-darwin'
         ? readArm64MachOUuid(bytes)
@@ -214,11 +253,28 @@ async function assertSafeOutput(outputDirectory, projectRoot) {
   }
 }
 
-async function runCargoMetadata(projectRoot, allFeatures = false) {
+function targetApplicationDirectory(targetSpec) {
+  const directory = targetSpec.applicationDirs.find(
+    candidate =>
+      PACKAGE_BY_APPLICATION_DIR.get(candidate) === targetSpec.package
+  );
+  if (!directory) {
+    throw new Error(
+      `${targetSpec.package} has no matching directory in targetSpec.applicationDirs`
+    );
+  }
+  return directory;
+}
+
+async function runCargoMetadata(
+  projectRoot,
+  targetSpec,
+  allFeatures = false
+) {
   const manifestPath = path.join(
     projectRoot,
     'src-tauri',
-    'sidecar',
+    targetApplicationDirectory(targetSpec),
     'Cargo.toml'
   );
   const arguments_ = [
@@ -238,16 +294,16 @@ async function runCargoMetadata(projectRoot, allFeatures = false) {
   return JSON.parse(stdout);
 }
 
-function reachablePackages(metadata) {
+function reachablePackages(metadata, targetSpec) {
   const root = metadata.packages.find(
-    candidate => candidate.name === SIDECAR_PACKAGE
+    candidate => candidate.name === targetSpec.package
   );
   if (!root) {
-    throw new Error(`${SIDECAR_PACKAGE} is missing from cargo metadata`);
+    throw new Error(`${targetSpec.package} is missing from cargo metadata`);
   }
-  if (root.license !== SIDECAR_BINARY_LICENSE) {
+  if (root.license !== BINARY_LICENSE) {
     throw new Error(
-      `${SIDECAR_PACKAGE} must declare ${SIDECAR_BINARY_LICENSE}; found ${
+      `${targetSpec.package} must declare ${BINARY_LICENSE}; found ${
         root.license ?? 'no license'
       }`
     );
@@ -335,7 +391,7 @@ function validateCopyleftClosure(packages) {
   }
 
   const expectedCopyleft = new Set([
-    ...WORKSPACE_APPLICATION_PACKAGES,
+    ...packages.filter(isWorkspaceApplicationPackage).map(({ name }) => name),
     GPL_DEPENDENCY.name,
     ...EXPECTED_UNM_CRATES,
   ]);
@@ -417,10 +473,16 @@ function dependencyCoordinates(packages) {
     .sort();
 }
 
-function assertExactDependencyResolution(expectedPackages, actualMetadata) {
+function assertExactDependencyResolution(
+  expectedPackages,
+  actualMetadata,
+  targetSpec
+) {
   const expected = dependencyCoordinates(expectedPackages);
-  const actualPackages = reachablePackages(actualMetadata);
-  for (const packageName of WORKSPACE_APPLICATION_PACKAGES) {
+  const actualPackages = reachablePackages(actualMetadata, targetSpec);
+  for (const packageName of expectedPackages
+    .filter(isWorkspaceApplicationPackage)
+    .map(({ name }) => name)) {
     const expectedApplicationPackage = expectedPackages.find(
       candidate => candidate.name === packageName
     );
@@ -566,7 +628,13 @@ function markdownCell(value) {
     .replaceAll('\n', ' ');
 }
 
-function thirdPartyNotice(records) {
+function targetDisplayName(targetSpec) {
+  return targetSpec.package === SIDECAR_PACKAGE
+    ? 'Rust Sidecar'
+    : '`ypm` terminal player';
+}
+
+function thirdPartyNotice(targetSpec, records) {
   const rows = records.map(record => {
     const source = record.repository
       ? `[source](${record.repository})`
@@ -582,14 +650,19 @@ function thirdPartyNotice(records) {
     )} | ${source} | ${files} |`;
   });
 
-  return `# YesPlayMusic Rust Sidecar third-party notices
+  const displayName = targetDisplayName(targetSpec);
+  const processBoundary =
+    targetSpec.package === SIDECAR_PACKAGE
+      ? 'The Tauri host is a separate process and is not part of this statically linked executable.'
+      : '`ypm` is distributed as a standalone terminal executable.';
+
+  return `# YesPlayMusic ${displayName} third-party notices
 
 This inventory is generated from the exact non-development dependency closure
-used by the Rust Sidecar release graph in \`Cargo.lock\`.
-The Rust Sidecar binary contains \`random-string 1.1.0\`, which is
-\`GPL-3.0-only\`; the combined Sidecar executable is therefore distributed
-under GPL-3.0-only. The Tauri host is a separate process and is not part of
-this statically linked executable.
+used by the ${displayName} release graph in \`Cargo.lock\`.
+The ${displayName} binary contains \`random-string 1.1.0\`, which is
+\`GPL-3.0-only\`; the combined executable is therefore distributed under
+GPL-3.0-only. ${processBoundary}
 
 The twelve UnblockNeteaseMusic crates listed below are published as
 \`LGPL-3.0-or-later\`. The companion complete-source archive contains the
@@ -603,20 +676,25 @@ ${rows.join('\n')}
 `;
 }
 
-function standaloneWorkspaceManifest(releaseWorkspaceManifest) {
+function standaloneWorkspaceManifest(
+  releaseWorkspaceManifest,
+  applicationDirs
+) {
   const releaseProfile = releaseWorkspaceManifest.match(
     /^\[profile\.release\]\r?\n(?:^(?!\[).*?(?:\r?\n|$))*/m
   )?.[0];
   if (!releaseProfile) {
     throw new Error('Release workspace manifest has no [profile.release]');
   }
-  return `[workspace]\nmembers = ["core", "sidecar"]\nresolver = "2"\n\n${releaseProfile.trim()}\n`;
+  const members = applicationDirs.map(directory => `"${directory}"`).join(', ');
+  return `[workspace]\nmembers = [${members}]\nresolver = "2"\n\n${releaseProfile.trim()}\n`;
 }
 
-function sourceOffer({ packageVersion, sourceArchiveName }) {
+function sourceOffer({ targetSpec, packageVersion, sourceArchiveName }) {
+  const displayName = targetDisplayName(targetSpec);
   return `# Complete Corresponding Source
 
-The Rust Sidecar in YesPlayMusic ${packageVersion} is distributed under
+The ${displayName} in YesPlayMusic ${packageVersion} is distributed under
 GPL-3.0-only. Its complete machine-readable Corresponding Source is the
 companion release asset:
 
@@ -635,61 +713,16 @@ is not legal advice.
 `;
 }
 
-function rebuildReadme({ packageVersion, rustVersion, dependencyCount }) {
-  return `# YesPlayMusic Rust Sidecar source and relinking kit
-
-This directory accompanies YesPlayMusic ${packageVersion}. It contains the
-preferred source needed to modify and rebuild/relink the Sidecar executable.
-
-## What is included
-
-- \`source/vendor/\`: all ${dependencyCount} exact registry dependency sources
-  reachable from the release Sidecar after excluding development-only edges.
-- \`source/application/\`: the exact YesPlayMusic Sidecar and shared core
-  source, route manifest, original release workspace manifest/lock, and a
-  standalone workspace whose resolved dependency coordinates are checked
-  against the release graph.
-- \`.cargo/config.toml\`: replaces crates.io with \`source/vendor/\` and forces
-  Cargo offline, so rebuilding cannot silently fetch missing source.
-- \`THIRD-PARTY-NOTICES.md\` and \`third-party-license-files/\`: the complete
-  locked dependency inventory and license/notice files shipped by those crates.
-- \`GPL-3.0.txt\` and \`LGPL-3.0.txt\`: canonical license terms.
-
-The UNM crates declare LGPL-3.0-or-later. \`unm_engine_kuwo\` links
-\`random-string 1.1.0\`, which declares GPL-3.0-only, so the resulting
-Sidecar executable is distributed under GPL-3.0-only. YesPlayMusic modified
-the integration in 2026; the bundled published crate directories themselves
-are copied without source edits.
-
-## Verify the unmodified kit
-
-On macOS/Linux run \`./verify-sources.sh\`. On Windows PowerShell run
-\`.\\verify-sources.ps1\`. Run this before editing because intentional changes
-will naturally change the recorded checksums.
-
-## Build a modified Sidecar
-
-Install rustup from <https://rustup.rs/>. The included \`rust-toolchain.toml\`
-selects Rust ${rustVersion}, derived from the Sidecar manifest's minimum Rust
-version. The rebuild scripts pass \`--offline --locked\`; no dependency source
-is downloaded during the build.
-
-- macOS/Linux: \`./rebuild.sh\`
-- Windows PowerShell: \`.\\rebuild.ps1\`
-- Cross target: pass Cargo flags, for example
-  \`./rebuild.sh --target x86_64-unknown-linux-gnu\`.
-
-The executable is written below
-\`source/application/src-tauri/target/<profile>/\`. Modify the application
-crates below \`source/application/src-tauri/\` or a registry crate below
-\`source/vendor/\`, rerun the script, and Cargo relinks the Sidecar against
-that modified source.
-
-## Install or test the replacement
-
-Quit YesPlayMusic first. Keep the executable name and executable permission.
-The Sidecar protocol is documented by its bundled source: Tauri passes ports
-and the parent PID as arguments and sends a per-launch health token on stdin.
+function installInstructions(targetSpec) {
+  if (targetSpec.package !== SIDECAR_PACKAGE) {
+    return `The rebuilt executable is named \`${targetSpec.binaryName}\` (or
+\`${targetSpec.binaryName}.exe\` on Windows). Run it directly from Cargo's
+release directory, or copy it to a directory on \`PATH\`. Preserve executable
+permissions on macOS and Linux.`;
+  }
+  return `The Sidecar protocol is documented by its bundled source: Tauri passes
+ports and the parent PID as arguments and sends a per-launch health token on
+stdin.
 
 - macOS: replace \`YesPlayMusic.app/Contents/MacOS/yesplaymusic-sidecar\`, then
   ad-hoc sign the modified app with
@@ -701,12 +734,97 @@ and the parent PID as arguments and sends a per-launch health token on stdin.
   privileges.
 - Linux AppImage: run \`Your.AppImage --appimage-extract\`, replace
   \`squashfs-root/usr/bin/yesplaymusic-sidecar\`, then run
-  \`squashfs-root/AppRun\` or repack with \`appimagetool\`.
+  \`squashfs-root/AppRun\` or repack with \`appimagetool\`.`;
+}
 
-No publisher private signing key is required to build or run a locally
-modified Sidecar on these general-purpose operating systems. Published update
-signatures do not cover user-built replacements; keep automatic updates off
-for that local test copy.
+function rebuildReadme({
+  targetSpec,
+  packageVersion,
+  rustVersion,
+  dependencyCount,
+}) {
+  const displayName = targetDisplayName(targetSpec);
+  const applicationDescription =
+    targetSpec.package === SIDECAR_PACKAGE
+      ? 'the exact YesPlayMusic Sidecar and shared core source, route manifest'
+      : 'the exact YesPlayMusic ypm TUI and shared core source, embedded logo';
+  const replacementPreamble =
+    targetSpec.package === SIDECAR_PACKAGE
+      ? 'Quit YesPlayMusic first. Keep the executable name and executable permission.'
+      : 'Quit any running `ypm` process first. Keep the executable name and executable permission.';
+  const signingNotes =
+    targetSpec.package === SIDECAR_PACKAGE
+      ? `No publisher private signing key is required to build or run a locally
+modified ${displayName} on these general-purpose operating systems. Published
+update signatures do not cover user-built replacements; keep automatic updates
+off for that local test copy.`
+      : `No publisher private signing key is required to build or run a locally
+modified ${displayName}. Published release checksums and signatures do not cover
+the user-built replacement.`;
+  const linuxBuildPrerequisites =
+    targetSpec.package === TUI_PACKAGE
+      ? `On Debian/Ubuntu Linux, install the native build dependencies first:
+
+\`sudo apt-get install pkg-config libasound2-dev\`
+
+`
+      : '';
+  return `# YesPlayMusic ${displayName} source and relinking kit
+
+This directory accompanies YesPlayMusic ${packageVersion}. It contains the
+preferred source needed to modify and rebuild/relink the ${displayName}
+executable.
+
+## What is included
+
+- \`source/vendor/\`: all ${dependencyCount} exact registry dependency sources
+  reachable from the release ${displayName} after excluding development-only
+  edges.
+- \`source/application/\`: ${applicationDescription}, original release
+  workspace manifest/lock, and a standalone workspace whose resolved
+  dependency coordinates are checked against the release graph.
+- \`.cargo/config.toml\`: replaces crates.io with \`source/vendor/\` and forces
+  Cargo offline, so rebuilding cannot silently fetch missing source.
+- \`THIRD-PARTY-NOTICES.md\` and \`third-party-license-files/\`: the complete
+  locked dependency inventory and license/notice files shipped by those crates.
+- \`GPL-3.0.txt\` and \`LGPL-3.0.txt\`: canonical license terms.
+
+The UNM crates declare LGPL-3.0-or-later. \`unm_engine_kuwo\` links
+\`random-string 1.1.0\`, which declares GPL-3.0-only, so the resulting
+${displayName} executable is distributed under GPL-3.0-only. YesPlayMusic modified
+the integration in 2026; the bundled published crate directories themselves
+are copied without source edits.
+
+## Verify the unmodified kit
+
+On macOS/Linux run \`./verify-sources.sh\`. On Windows PowerShell run
+\`.\\verify-sources.ps1\`. Run this before editing because intentional changes
+will naturally change the recorded checksums.
+
+## Build a modified ${displayName}
+
+Install rustup from <https://rustup.rs/>. The included \`rust-toolchain.toml\`
+selects Rust ${rustVersion}, derived from the ${displayName} manifest's minimum
+Rust version. The rebuild scripts pass \`--offline --locked\`; no dependency
+source is downloaded during the build.
+
+${linuxBuildPrerequisites}- macOS/Linux: \`./rebuild.sh\`
+- Windows PowerShell: \`.\\rebuild.ps1\`
+- Cross target: pass Cargo flags, for example
+  \`./rebuild.sh --target x86_64-unknown-linux-gnu\`.
+
+The executable is written below
+\`source/application/src-tauri/target/<profile>/\`. Modify the application
+crates below \`source/application/src-tauri/\` or a registry crate below
+\`source/vendor/\`, rerun the script, and Cargo relinks the ${displayName}
+against that modified source.
+
+## Install or test the replacement
+
+${replacementPreamble}
+${installInstructions(targetSpec)}
+
+${signingNotes}
 
 This kit is a compliance aid, not legal advice. Redistributors must preserve
 the license texts, notices, source, scripts, and any installation information
@@ -724,7 +842,8 @@ directory = "source/vendor"
 offline = true
 `;
 
-const VERIFY_SHELL = `#!/bin/sh
+function verifyShell(targetSpec) {
+  return `#!/bin/sh
 set -eu
 cd "$(dirname "$0")"
 if command -v sha256sum >/dev/null 2>&1; then
@@ -740,10 +859,12 @@ else
   echo "sha256sum or shasum is required" >&2
   exit 1
 fi
-echo "Sidecar complete source checksums verified."
+echo "${targetSpec.binaryName} complete source checksums verified."
 `;
+}
 
-const VERIFY_POWERSHELL = `$ErrorActionPreference = 'Stop'
+function verifyPowerShell(targetSpec) {
+  return `$ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 Get-Content SHA256SUMS | ForEach-Object {
   if ($_ -notmatch '^([a-f0-9]{64})  (.+)$') { throw "Invalid SHA256SUMS line: $_" }
@@ -762,25 +883,33 @@ Get-Content SHA256SUMS | ForEach-Object {
   }
   if ($actual -ne $expected) { throw "Checksum mismatch: $filePath" }
 }
-Write-Host 'Sidecar compliance source checksums verified.'
+Write-Host '${targetSpec.binaryName} compliance source checksums verified.'
 `;
+}
 
-const REBUILD_SHELL = `#!/bin/sh
+function rebuildShell(targetSpec) {
+  const applicationDirectory = targetApplicationDirectory(targetSpec);
+  return `#!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-cargo build --manifest-path source/application/src-tauri/sidecar/Cargo.toml --package yesplaymusic-sidecar --offline --locked --release "$@"
+cargo build --manifest-path source/application/src-tauri/${applicationDirectory}/Cargo.toml --package ${targetSpec.package} --offline --locked --release "$@"
 `;
+}
 
-const REBUILD_POWERSHELL = `$ErrorActionPreference = 'Stop'
+function rebuildPowerShell(targetSpec) {
+  const applicationDirectory = targetApplicationDirectory(targetSpec);
+  return `$ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-cargo build --manifest-path source/application/src-tauri/sidecar/Cargo.toml --package yesplaymusic-sidecar --offline --locked --release @args
+cargo build --manifest-path source/application/src-tauri/${applicationDirectory}/Cargo.toml --package ${targetSpec.package} --offline --locked --release @args
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 `;
+}
 
 async function verifyOfflineRebuild(
   sourceDirectory,
   expectedPackages,
-  targetTriple
+  targetTriple,
+  targetSpec
 ) {
   const cargoHome = await mkdtemp(
     path.join(os.tmpdir(), 'yesplaymusic-offline-cargo-')
@@ -793,7 +922,7 @@ async function verifyOfflineRebuild(
     'source',
     'application',
     'src-tauri',
-    'sidecar',
+    targetApplicationDirectory(targetSpec),
     'Cargo.toml'
   );
   const environment = {
@@ -837,7 +966,8 @@ async function verifyOfflineRebuild(
     );
     const resolvedPackages = assertExactDependencyResolution(
       expectedPackages,
-      JSON.parse(stdout)
+      JSON.parse(stdout),
+      targetSpec
     );
     await execFileAsync(
       'cargo',
@@ -846,7 +976,7 @@ async function verifyOfflineRebuild(
         '--manifest-path',
         manifestPath,
         '--package',
-        SIDECAR_PACKAGE,
+        targetSpec.package,
         '--offline',
         '--locked',
         '--release',
@@ -885,18 +1015,77 @@ async function writeChecksums(outputDirectory) {
   );
 }
 
-export async function buildSidecarCompliance({
-  projectRoot = defaultProjectRoot,
-  outputDirectory = defaultComplianceOutput,
-  completeSourceDirectory = outputDirectory === defaultComplianceOutput
-    ? defaultCompleteSourceOutput
-    : `${outputDirectory}-complete-source`,
-  metadata,
-  sourceMetadata,
-  binaryProvenance,
-  skipOfflineRebuild = false,
-  noticesOnly = false,
-} = {}) {
+function reachableApplicationDirectories(packages, targetSpec) {
+  const reachableNames = new Set(
+    packages.filter(isWorkspaceApplicationPackage).map(({ name }) => name)
+  );
+  const directories = targetSpec.applicationDirs.filter(directory =>
+    reachableNames.has(PACKAGE_BY_APPLICATION_DIR.get(directory))
+  );
+  const representedNames = new Set(
+    directories.map(directory => PACKAGE_BY_APPLICATION_DIR.get(directory))
+  );
+  const missing = [...reachableNames].filter(
+    packageName => !representedNames.has(packageName)
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `targetSpec.applicationDirs does not cover reachable packages: ${missing.join(
+        ', '
+      )}`
+    );
+  }
+  return directories;
+}
+
+async function copyApplicationSupportFiles(
+  projectRoot,
+  applicationDirectory,
+  targetSpec
+) {
+  if (targetSpec.package === SIDECAR_PACKAGE) {
+    await mkdir(path.join(applicationDirectory, 'src'), { recursive: true });
+    await cp(
+      path.join(projectRoot, 'src', 'sidecar-route-manifest.json'),
+      path.join(applicationDirectory, 'src', 'sidecar-route-manifest.json')
+    );
+    return;
+  }
+  await mkdir(path.join(applicationDirectory, 'images'), { recursive: true });
+  await cp(
+    path.join(projectRoot, 'images', 'logo.png'),
+    path.join(applicationDirectory, 'images', 'logo.png')
+  );
+}
+
+export async function buildCompliance(targetSpec, options = {}) {
+  targetApplicationDirectory(targetSpec);
+  const defaultOutputDirectory = path.join(
+    defaultProjectRoot,
+    'src-tauri',
+    'generated',
+    `${targetSpec.archiveSlug}-compliance`
+  );
+  const defaultSourceDirectory = path.join(
+    defaultProjectRoot,
+    'src-tauri',
+    'generated',
+    `${targetSpec.archiveSlug}-complete-source`
+  );
+  const projectRoot = options.projectRoot ?? defaultProjectRoot;
+  const outputDirectory = options.outputDirectory ?? defaultOutputDirectory;
+  const completeSourceDirectory =
+    options.completeSourceDirectory ??
+    (outputDirectory === defaultOutputDirectory
+      ? defaultSourceDirectory
+      : `${outputDirectory}-complete-source`);
+  const {
+    metadata,
+    sourceMetadata,
+    binaryProvenance,
+    skipOfflineRebuild = false,
+    noticesOnly = false,
+  } = options;
   await assertSafeOutput(outputDirectory, projectRoot);
   if (!noticesOnly) {
     await assertSafeOutput(completeSourceDirectory, projectRoot);
@@ -906,26 +1095,33 @@ export async function buildSidecarCompliance({
       throw new Error('Compliance and complete-source outputs must differ');
     }
   }
-  const cargoMetadata = metadata ?? (await runCargoMetadata(projectRoot));
-  const workspacePackages = reachablePackages(cargoMetadata);
+  const cargoMetadata =
+    metadata ?? (await runCargoMetadata(projectRoot, targetSpec));
+  const workspacePackages = reachablePackages(cargoMetadata, targetSpec);
   const sourcePackages = reachablePackages(
     sourceMetadata ??
-      (metadata ? cargoMetadata : await runCargoMetadata(projectRoot, true))
+      (metadata
+        ? cargoMetadata
+        : await runCargoMetadata(projectRoot, targetSpec, true)),
+    targetSpec
   );
   const { gplDependency, unmPackages } =
     validateCopyleftClosure(workspacePackages);
   const rootPackage = workspacePackages.find(
-    candidate => candidate.name === SIDECAR_PACKAGE
+    candidate => candidate.name === targetSpec.package
   );
   const rustVersion = rootPackage?.rust_version;
   if (!rootPackage || !rustVersion) {
-    throw new Error(`${SIDECAR_PACKAGE} must declare rust-version`);
+    throw new Error(`${targetSpec.package} must declare rust-version`);
   }
   const dependencyPackages = thirdPartyPackages(workspacePackages);
   let distributionPackages = workspacePackages;
   const provenance =
-    binaryProvenance ?? (await builtSidecarProvenance(projectRoot));
-  const sourceArchiveName = sidecarSourceArchiveName(rootPackage.version);
+    binaryProvenance ?? (await builtBinaryProvenance(projectRoot, targetSpec));
+  const sourceArchiveName = complianceSourceArchiveName(
+    targetSpec,
+    rootPackage.version
+  );
 
   const complianceParent = path.dirname(outputDirectory);
   const sourceParent = path.dirname(completeSourceDirectory);
@@ -934,11 +1130,13 @@ export async function buildSidecarCompliance({
     noticesOnly ? Promise.resolve() : mkdir(sourceParent, { recursive: true }),
   ]);
   const complianceStaging = await mkdtemp(
-    path.join(complianceParent, '.sidecar-compliance-')
+    path.join(complianceParent, `.${targetSpec.archiveSlug}-compliance-`)
   );
   const sourceStaging = noticesOnly
     ? null
-    : await mkdtemp(path.join(sourceParent, '.sidecar-complete-source-'));
+    : await mkdtemp(
+        path.join(sourceParent, `.${targetSpec.archiveSlug}-complete-source-`)
+      );
   const workingDirectory = sourceStaging ?? complianceStaging;
 
   try {
@@ -976,75 +1174,70 @@ export async function buildSidecarCompliance({
     if (sourceStaging) {
       const sourceDirectory = path.join(sourceStaging, 'source');
       const applicationDirectory = path.join(sourceDirectory, 'application');
-      const bundledSidecarDirectory = path.join(
-        applicationDirectory,
-        'src-tauri',
-        'sidecar'
+      const applicationDirs = reachableApplicationDirectories(
+        workspacePackages,
+        targetSpec
       );
-      const bundledCoreDirectory = path.join(
-        applicationDirectory,
-        'src-tauri',
-        'core'
+      const bundledDirectories = new Map(
+        applicationDirs.map(directory => [
+          directory,
+          path.join(applicationDirectory, 'src-tauri', directory),
+        ])
       );
       const vendorDirectory = path.join(sourceDirectory, 'vendor');
       await Promise.all([
-        mkdir(bundledSidecarDirectory, { recursive: true }),
-        mkdir(bundledCoreDirectory, { recursive: true }),
-        mkdir(path.join(applicationDirectory, 'src'), { recursive: true }),
+        ...[...bundledDirectories.values()].map(directory =>
+          mkdir(directory, { recursive: true })
+        ),
         mkdir(path.join(sourceStaging, '.cargo'), { recursive: true }),
       ]);
 
       await Promise.all([
-        copyTree(
-          path.join(projectRoot, 'src-tauri', 'sidecar', 'src'),
-          path.join(bundledSidecarDirectory, 'src')
+        ...applicationDirs.map(directory =>
+          copyTree(
+            path.join(projectRoot, 'src-tauri', directory, 'src'),
+            path.join(bundledDirectories.get(directory), 'src')
+          )
         ),
-        copyTree(
-          path.join(projectRoot, 'src-tauri', 'core', 'src'),
-          path.join(bundledCoreDirectory, 'src')
-        ),
-        cp(
-          path.join(projectRoot, 'src', 'sidecar-route-manifest.json'),
-          path.join(applicationDirectory, 'src', 'sidecar-route-manifest.json')
+        copyApplicationSupportFiles(
+          projectRoot,
+          applicationDirectory,
+          targetSpec
         ),
       ]);
 
-      const [sidecarManifest, coreManifest, releaseWorkspaceManifest] =
+      const [applicationManifests, releaseWorkspaceManifest] =
         await Promise.all([
-          readFile(
-            path.join(projectRoot, 'src-tauri', 'sidecar', 'Cargo.toml'),
-            'utf8'
-          ),
-          readFile(
-            path.join(projectRoot, 'src-tauri', 'core', 'Cargo.toml'),
-            'utf8'
+          Promise.all(
+            applicationDirs.map(async directory => [
+              directory,
+              await readFile(
+                path.join(projectRoot, 'src-tauri', directory, 'Cargo.toml'),
+                'utf8'
+              ),
+            ])
           ),
           readFile(path.join(projectRoot, 'src-tauri', 'Cargo.toml'), 'utf8'),
         ]);
       await Promise.all([
-        writeFile(
-          path.join(bundledSidecarDirectory, 'Cargo.toml'),
-          sidecarManifest,
-          'utf8'
-        ),
-        writeFile(
-          path.join(bundledSidecarDirectory, 'Cargo.toml.release'),
-          sidecarManifest,
-          'utf8'
-        ),
-        writeFile(
-          path.join(bundledCoreDirectory, 'Cargo.toml'),
-          coreManifest,
-          'utf8'
-        ),
-        writeFile(
-          path.join(bundledCoreDirectory, 'Cargo.toml.release'),
-          coreManifest,
-          'utf8'
-        ),
+        ...applicationManifests.flatMap(([directory, manifest]) => [
+          writeFile(
+            path.join(bundledDirectories.get(directory), 'Cargo.toml'),
+            manifest,
+            'utf8'
+          ),
+          writeFile(
+            path.join(bundledDirectories.get(directory), 'Cargo.toml.release'),
+            manifest,
+            'utf8'
+          ),
+        ]),
         writeFile(
           path.join(applicationDirectory, 'src-tauri', 'Cargo.toml'),
-          standaloneWorkspaceManifest(releaseWorkspaceManifest),
+          standaloneWorkspaceManifest(
+            releaseWorkspaceManifest,
+            applicationDirs
+          ),
           'utf8'
         ),
         writeFile(
@@ -1082,7 +1275,8 @@ export async function buildSidecarCompliance({
         distributionPackages = await verifyOfflineRebuild(
           sourceStaging,
           workspacePackages,
-          provenance.targetTriple
+          provenance.targetTriple,
+          targetSpec
         );
         const resolvedCoordinates = new Set(
           dependencyCoordinates(distributionPackages)
@@ -1126,7 +1320,7 @@ export async function buildSidecarCompliance({
     ]);
     const manifest = {
       schemaVersion: 2,
-      sidecar: {
+      [targetSpec.archiveSlug]: {
         name: rootPackage.name,
         version: rootPackage.version,
         license: rootPackage.license,
@@ -1149,12 +1343,13 @@ export async function buildSidecarCompliance({
     await Promise.all([
       writeFile(
         path.join(workingDirectory, 'THIRD-PARTY-NOTICES.md'),
-        thirdPartyNotice(notices),
+        thirdPartyNotice(targetSpec, notices),
         'utf8'
       ),
       writeFile(
         path.join(workingDirectory, 'SOURCE-OFFER.md'),
         sourceOffer({
+          targetSpec,
           packageVersion: rootPackage.version,
           sourceArchiveName,
         }),
@@ -1167,12 +1362,12 @@ export async function buildSidecarCompliance({
       ),
       writeFile(
         path.join(workingDirectory, 'verify-sources.sh'),
-        VERIFY_SHELL,
+        verifyShell(targetSpec),
         'utf8'
       ),
       writeFile(
         path.join(workingDirectory, 'verify-sources.ps1'),
-        VERIFY_POWERSHELL,
+        verifyPowerShell(targetSpec),
         'utf8'
       ),
     ]);
@@ -1183,6 +1378,7 @@ export async function buildSidecarCompliance({
         writeFile(
           path.join(sourceStaging, 'README-RELINKING.md'),
           rebuildReadme({
+            targetSpec,
             packageVersion: rootPackage.version,
             rustVersion,
             dependencyCount: distributionDependencies.length,
@@ -1198,12 +1394,12 @@ export async function buildSidecarCompliance({
         ),
         writeFile(
           path.join(sourceStaging, 'rebuild.sh'),
-          REBUILD_SHELL,
+          rebuildShell(targetSpec),
           'utf8'
         ),
         writeFile(
           path.join(sourceStaging, 'rebuild.ps1'),
-          REBUILD_POWERSHELL,
+          rebuildPowerShell(targetSpec),
           'utf8'
         ),
       ]);
@@ -1258,6 +1454,10 @@ export async function buildSidecarCompliance({
     dependencyCount: thirdPartyPackages(distributionPackages).length,
     copyleftSourceCount: EXPECTED_UNM_CRATES.length + 1,
   };
+}
+
+export function buildSidecarCompliance(options = {}) {
+  return buildCompliance(SIDECAR_TARGET_SPEC, options);
 }
 
 async function main() {

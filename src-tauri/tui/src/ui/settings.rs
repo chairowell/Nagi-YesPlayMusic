@@ -1,0 +1,318 @@
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Paragraph};
+use ratatui::Frame;
+
+use crate::app::settings::SettingField;
+use crate::app::AppState;
+use crate::config::IconStyle;
+use crate::i18n::{self, Key};
+
+use super::{text::display_width, Hits};
+
+pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
+    let theme = state.theme;
+    let show_preview =
+        SettingField::ALL.get(state.settings.selected) == Some(&SettingField::SpectrumStyle);
+    let preview_height = if show_preview { 7 } else { 0 };
+    let width = 62_u16.min(area.width);
+    let height = (SettingField::ALL.len() as u16 + 8 + preview_height).min(area.height);
+    let panel = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    let block = Block::bordered()
+        .title(format!(" {} ", i18n::t(Key::Settings)))
+        .style(Style::new().bg(theme.bg))
+        .border_style(Style::new().fg(theme.accent));
+    let inner = block.inner(panel);
+    frame.render_widget(block, panel);
+    if inner.is_empty() {
+        return;
+    }
+
+    let [hint_area, rows_area, preview_area, status_area, buttons_area] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(SettingField::ALL.len() as u16),
+        Constraint::Length(preview_height),
+        Constraint::Length(1),
+        Constraint::Length(2),
+    ])
+    .areas(inner);
+    let hint = if SettingField::ALL.get(state.settings.selected) == Some(&SettingField::Icons)
+        && state.config.icons == IconStyle::Nerd
+    {
+        Key::NerdFontHint
+    } else {
+        Key::SettingsHint
+    };
+    frame.render_widget(
+        Paragraph::new(i18n::t(hint)).style(Style::new().fg(theme.dim)),
+        hint_area,
+    );
+
+    let visible_rows = usize::from(rows_area.height).min(SettingField::ALL.len());
+    let max_offset = SettingField::ALL.len().saturating_sub(visible_rows);
+    let offset = state
+        .settings
+        .selected
+        .saturating_add(1)
+        .saturating_sub(visible_rows)
+        .min(max_offset);
+    for (visible_index, (index, field)) in SettingField::ALL
+        .iter()
+        .copied()
+        .enumerate()
+        .skip(offset)
+        .take(visible_rows)
+        .enumerate()
+    {
+        let row = Rect {
+            y: rows_area.y + visible_index as u16,
+            height: 1,
+            ..rows_area
+        };
+        let selected = index == state.settings.selected;
+        let row_style = if selected {
+            Style::new()
+                .fg(theme.selection_fg())
+                .bg(theme.sel)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(theme.fg)
+        };
+        let label = i18n::t(field.label());
+        let label_width = display_width(label);
+        let value = state.setting_value(field);
+        let icon_preview = (field == SettingField::Icons).then(|| {
+            let icons = crate::icons::for_style(state.config.icons);
+            format!("{} {} ", icons.heart, icons.heart)
+        });
+        let value_width = (display_width(&value)
+            + icon_preview.as_deref().map(display_width).unwrap_or(0))
+            as u16;
+        let available = row.width as usize;
+        let content_width = label_width + usize::from(value_width) + 8;
+        let pad = available.saturating_sub(content_width);
+        let mut spans = vec![
+            Span::styled(if selected { " › " } else { "   " }, row_style),
+            Span::styled(label, row_style),
+            Span::styled(" ".repeat(pad), row_style),
+            Span::styled("‹ ", row_style),
+        ];
+        if icon_preview.is_some() {
+            let icons = crate::icons::for_style(state.config.icons);
+            let preview_base = if selected {
+                Style::new().bg(theme.sel).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            spans.push(Span::styled(icons.heart, preview_base.fg(theme.faint)));
+            spans.push(Span::styled(" ", preview_base));
+            spans.push(Span::styled(icons.heart, preview_base.fg(theme.accent2)));
+            spans.push(Span::styled(" ", preview_base));
+        }
+        spans.push(Span::styled(value, row_style));
+        spans.push(Span::styled(" › ", row_style));
+        let line = Line::from(spans);
+        frame.render_widget(Paragraph::new(line), row);
+        hits.settings_rows.push((row, index));
+        if selected && available >= content_width {
+            let next = Rect::new(row.right().saturating_sub(2), row.y, 2, 1);
+            let previous_x = next.x.saturating_sub(value_width.saturating_add(3));
+            hits.settings_adjust
+                .push((Rect::new(previous_x, row.y, 2, 1), -1));
+            hits.settings_adjust.push((next, 1));
+        }
+    }
+
+    if show_preview && preview_area.height >= 3 {
+        let preview = Block::bordered()
+            .title(format!(" {} ", i18n::t(Key::SpectrumPreview)))
+            .border_style(Style::new().fg(theme.faint));
+        let preview_inner = preview.inner(preview_area);
+        frame.render_widget(preview, preview_area);
+        state.spectrum.render(
+            state.config.spectrum_style,
+            state.config.spectrum_glow,
+            preview_inner,
+            frame.buffer_mut(),
+            &theme,
+        );
+    }
+
+    if let Some(status) = &state.status {
+        frame.render_widget(
+            Paragraph::new(status.as_str()).style(Style::new().fg(theme.accent2)),
+            status_area,
+        );
+    }
+
+    let save = format!("[ Enter · {} ]", i18n::t(Key::Save));
+    let cancel = format!("[ Esc · {} ]", i18n::t(Key::Cancel));
+    let gap = 3_u16;
+    let save_width = display_width(&save) as u16;
+    let cancel_width = display_width(&cancel) as u16;
+    let total = save_width.saturating_add(gap).saturating_add(cancel_width);
+    let start = buttons_area.x + buttons_area.width.saturating_sub(total) / 2;
+    let save_rect = Rect::new(start, buttons_area.y, save_width.min(buttons_area.width), 1);
+    let cancel_rect = Rect::new(
+        save_rect.right().saturating_add(gap),
+        buttons_area.y,
+        cancel_width.min(buttons_area.right().saturating_sub(save_rect.right() + gap)),
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(save).style(Style::new().fg(theme.selection_fg()).bg(theme.accent)),
+        save_rect,
+    );
+    frame.render_widget(
+        Paragraph::new(cancel).style(Style::new().fg(theme.fg)),
+        cancel_rect,
+    );
+    hits.settings_save.push(save_rect);
+    hits.settings_cancel.push(cancel_rect);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    use super::*;
+    use crate::config::Config;
+    use crate::spectrum::SampleBuffer;
+
+    fn rendered_settings(
+        width: u16,
+        height: u16,
+        selected: usize,
+    ) -> (ratatui::buffer::Buffer, Hits) {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new(&Config::default());
+        state.settings.selected = selected;
+        let mut hits = Hits::default();
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+        (terminal.backend().buffer().clone(), hits)
+    }
+
+    #[test]
+    fn arrow_hits_cover_the_drawn_glyphs() {
+        let (buffer, hits) = rendered_settings(80, 24, 0);
+        let (previous, _) = hits
+            .settings_adjust
+            .iter()
+            .find(|(_, delta)| *delta < 0)
+            .unwrap();
+        let (next, _) = hits
+            .settings_adjust
+            .iter()
+            .find(|(_, delta)| *delta > 0)
+            .unwrap();
+
+        assert_eq!(buffer[(previous.x, previous.y)].symbol(), "‹");
+        assert_eq!(buffer[(next.x, next.y)].symbol(), "›");
+    }
+
+    #[test]
+    fn a_short_terminal_scrolls_the_selected_setting_into_view() {
+        let (_buffer, hits) = rendered_settings(60, 12, SettingField::ALL.len() - 1);
+
+        assert!(hits
+            .settings_rows
+            .iter()
+            .any(|(_, index)| *index == SettingField::ALL.len() - 1));
+    }
+
+    #[test]
+    fn a_clipped_row_does_not_register_invisible_arrow_hits() {
+        let (_buffer, hits) = rendered_settings(16, 24, 0);
+
+        assert!(hits.settings_adjust.is_empty());
+    }
+
+    #[test]
+    fn selected_nerd_icons_show_the_terminal_font_hint() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let config = Config {
+            icons: IconStyle::Nerd,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::Icons)
+            .unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Nerd Font"));
+        assert!(rendered.contains("brew install font-symbols-only-nerd-font"));
+    }
+
+    #[test]
+    fn icon_setting_previews_unliked_and_liked_with_the_same_glyph() {
+        let index = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::Icons)
+            .unwrap();
+        let (buffer, hits) = rendered_settings(80, 24, index);
+        let row = hits
+            .settings_rows
+            .iter()
+            .find_map(|(area, field)| (*field == index).then_some(*area))
+            .unwrap();
+        let hearts = (row.x..row.right())
+            .filter_map(|x| {
+                let cell = &buffer[(x, row.y)];
+                (cell.symbol() == "♥").then_some(cell.fg)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            hearts,
+            [
+                crate::theme::Theme::db16().faint,
+                crate::theme::Theme::db16().accent2
+            ]
+        );
+    }
+
+    #[test]
+    fn spectrum_style_row_embeds_an_animated_preview() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new(&Config::default());
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::SpectrumStyle)
+            .unwrap();
+        state.spectrum.tick(&SampleBuffer::default(), false);
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        assert!(terminal.backend().buffer().content().iter().any(|cell| {
+            matches!(cell.symbol(), "▁" | "▂" | "▃" | "▄" | "▅" | "▆" | "▇" | "█")
+        }));
+    }
+}

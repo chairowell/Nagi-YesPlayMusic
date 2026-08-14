@@ -271,104 +271,89 @@ test('缺少 Apple 发版密钥时在构建前立即失败', () => {
 });
 
 test('tag 和所有应用版本字段必须完全一致', () => {
+  const matchingVersions = {
+    packageVersion: '0.6.0',
+    tauriVersion: '0.6.0',
+    cargoVersion: '0.6.0',
+    coreVersion: '0.6.0',
+    sidecarVersion: '0.6.0',
+    tuiVersion: '0.6.0',
+    lockCargoVersion: '0.6.0',
+    lockCoreVersion: '0.6.0',
+    lockSidecarVersion: '0.6.0',
+    lockTuiVersion: '0.6.0',
+  };
+
   expect(
     validateTauriVersions({
-      packageVersion: '0.6.0',
-      tauriVersion: '0.6.0',
-      cargoVersion: '0.6.0',
-      coreVersion: '0.6.0',
-      sidecarVersion: '0.6.0',
-      lockCargoVersion: '0.6.0',
-      lockCoreVersion: '0.6.0',
-      lockSidecarVersion: '0.6.0',
+      ...matchingVersions,
       tag: 'v0.6.0',
     })
   ).toBe('0.6.0');
   expect(() =>
     validateTauriVersions({
-      packageVersion: '0.6.0',
+      ...matchingVersions,
       tauriVersion: '0.5.0',
-      cargoVersion: '0.6.0',
-      coreVersion: '0.6.0',
-      sidecarVersion: '0.6.0',
-      lockCargoVersion: '0.6.0',
-      lockCoreVersion: '0.6.0',
-      lockSidecarVersion: '0.6.0',
       tag: 'v0.6.0',
     })
   ).toThrow('版本号不一致');
   expect(() =>
     validateTauriVersions({
-      packageVersion: '0.6.0',
-      tauriVersion: '0.6.0',
-      cargoVersion: '0.6.0',
-      coreVersion: '0.6.0',
+      ...matchingVersions,
       sidecarVersion: '0.5.0',
-      lockCargoVersion: '0.6.0',
-      lockCoreVersion: '0.6.0',
-      lockSidecarVersion: '0.6.0',
       tag: 'v0.6.0',
     })
   ).toThrow('sidecar=0.5.0');
   expect(() =>
     validateTauriVersions({
-      packageVersion: '0.6.0',
-      tauriVersion: '0.6.0',
-      cargoVersion: '0.6.0',
-      coreVersion: '0.6.0',
-      sidecarVersion: '0.6.0',
+      ...matchingVersions,
+      tuiVersion: '0.5.0',
+      tag: 'v0.6.0',
+    })
+  ).toThrow('tui=0.5.0');
+  expect(() =>
+    validateTauriVersions({
+      ...matchingVersions,
       lockCargoVersion: '0.5.0',
-      lockCoreVersion: '0.6.0',
-      lockSidecarVersion: '0.6.0',
       tag: 'v0.6.0',
     })
   ).toThrow('lock-cargo=0.5.0');
   expect(() =>
     validateTauriVersions({
-      packageVersion: '0.6.0',
-      tauriVersion: '0.6.0',
-      cargoVersion: '0.6.0',
-      coreVersion: '0.6.0',
-      sidecarVersion: '0.6.0',
-      lockCargoVersion: '0.6.0',
-      lockCoreVersion: '0.6.0',
+      ...matchingVersions,
       lockSidecarVersion: '0.5.0',
       tag: 'v0.6.0',
     })
   ).toThrow('lock-sidecar=0.5.0');
   expect(() =>
     validateTauriVersions({
-      packageVersion: '0.6.0',
-      tauriVersion: '0.6.0',
-      cargoVersion: '0.6.0',
+      ...matchingVersions,
+      lockTuiVersion: '0.5.0',
+      tag: 'v0.6.0',
+    })
+  ).toThrow('lock-tui=0.5.0');
+  expect(() =>
+    validateTauriVersions({
+      ...matchingVersions,
       coreVersion: '0.5.0',
-      sidecarVersion: '0.6.0',
-      lockCargoVersion: '0.6.0',
-      lockCoreVersion: '0.6.0',
-      lockSidecarVersion: '0.6.0',
       tag: 'v0.6.0',
     })
   ).toThrow('core=0.5.0');
   expect(() =>
     validateTauriVersions({
-      packageVersion: '0.6.0',
-      tauriVersion: '0.6.0',
-      cargoVersion: '0.6.0',
-      coreVersion: '0.6.0',
-      sidecarVersion: '0.6.0',
-      lockCargoVersion: '0.6.0',
+      ...matchingVersions,
       lockCoreVersion: '0.5.0',
-      lockSidecarVersion: '0.6.0',
       tag: 'v0.6.0',
     })
   ).toThrow('lock-core=0.5.0');
 });
 
-test('Cargo.lock 中三个 workspace package 都必须唯一存在', () => {
+test('Cargo.lock 中四个 workspace package 都必须唯一存在', () => {
   for (const packageName of [
     'yesplaymusic-tauri',
     'yesplaymusic-core',
     'yesplaymusic-sidecar',
+    'yesplaymusic-tui',
   ]) {
     const block = `[[package]]\nname = "${packageName}"\nversion = "0.8.0-canary.1"\n`;
     expect(readUniqueCargoLockPackageVersion(block, packageName)).toBe(

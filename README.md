@@ -61,7 +61,7 @@ macOS Tauri 重构版，不再跟随上游发版。原项目的界面和主要�
 
 ![菜单栏歌词](images/menubar.png)
 
-**Anon 进度条。** 在原有的彩虹猫之外多加了一种进度条皮肤，设置里可以切换，两者互斥。
+**Anon 进度条。** 在原有的彩虹猫之外多加了一种进度条皮肤，桌面版设置里可以切换，两者互斥。
 
 **修了一个切歌的老问题。** 网络慢的时候快速切歌，前一首的歌词响应可能晚于后一首到达，
 把新歌的歌词覆盖成上一首的。现在请求前会记住是哪首歌，回来发现已经切歌就直接丢弃。
@@ -90,9 +90,66 @@ macOS 会拦一道。放行方法二选一：
 
 自己从源码构建的话没有这个问题，本地产物不带隔离属性。
 
-从 tag 构建的包会在启动时静默检查更新，也可以在设置页手动检查、下载和安装。stable 只
+从 tag 构建的包会在启动时静默检查更新，也可以在桌面版设置页手动检查、下载和安装。stable 只
 接收 stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 验签，这与
 Apple Developer ID 无关。普通本地构建没有发布公钥，因此自动更新保持未配置状态。
+
+## ypm 终端版
+
+同一 Release 会提供 `ypm-macos-aarch64`、`ypm-linux-x64` 和 `ypm-windows-x64.exe`。
+macOS / Linux 下载后先赋予执行权限，再直接启动：
+
+```bash
+chmod +x ypm-macos-aarch64 # Linux 对应 ypm-linux-x64
+./ypm-macos-aarch64
+```
+
+Linux x64 产物以 Ubuntu 22.04（glibc 2.35）为兼容基线，运行时需要 `libasound2`。
+Windows x64 建议使用 Windows Terminal。三平台也可以用 Rust 1.91 从源码构建：
+
+```bash
+cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui
+```
+
+首次启动会生成 `~/.config/ypm/config.toml`。内置主题有 `db16`、`pico8`、`gameboy`、
+`everforest`、`tokyo-night`、`tokyo-night-storm`、`one-dark` 和 `transparent`；
+其中 `transparent` 继承终端自己的前景色与背景色。
+
+按 `5` 或 `,` 打开设置页；`j/k` 选项、`h/l` 或左右键调整，主题会即时预览。
+`Enter` 原子保存到配置文件，`Esc` 取消并恢复原值。语言和封面模式在下次启动后生效。
+
+要使用 Nerd Font 图标，可在设置页把「图标」切到 `nerd`：
+
+- macOS：`brew install font-symbols-only-nerd-font`
+- Linux：安装任一 Nerd Font 后，fontconfig 会自动 fallback
+- Windows Terminal：建议直接把终端字体换成 Nerd Font 变体
+
+配置文件仍可直接编辑，适合设置自定义主题、开屏图片和缓存上限：
+
+```toml
+quality = "exhigh"       # 128 | 192 | 320/exhigh | lossless | hires
+cover_mode = "original" # 终端不支持原图协议时自动回退到 pixel
+pixel_scale = 1.0        # pixel 模式采样细节；不会放大封面占用区域
+# cache_limit_mib = 8192 # 仅显式设置时更新 ypm 进程共享的缓存上限
+```
+
+不设置 `cache_limit_mib` 时，ypm 会沿用缓存数据库的现有值；新数据库默认为 8 GiB。
+
+自定义主题放在 `~/.config/ypm/themes/<name>.toml`，然后在配置中写 `theme = "<name>"`。
+色板需要 2–64 个 RGB 十六进制颜色，`roles` 的值是色板下标：
+
+```toml
+palette = ["#1a1b26", "#565f89", "#c0caf5", "#7aa2f7", "#bb9af7"]
+
+[roles]
+bg = 0
+fg = 2
+dim = 1
+faint = 1
+accent = 3
+accent2 = 4
+sel = 3
+```
 
 ## 自己构建
 

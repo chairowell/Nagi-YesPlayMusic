@@ -32,9 +32,9 @@ CI（`.github/workflows/build.yaml`）只验证每次 push 的**最后一个 com
 
 ## 发版
 
-版本号要同时改五处：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、
-`src-tauri/core/Cargo.toml`、`src-tauri/sidecar/Cargo.toml`（Cargo.lock 里的三个
-workspace package 跟着更新）。
+版本号要同时改六处：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、
+`src-tauri/core/Cargo.toml`、`src-tauri/sidecar/Cargo.toml`、`src-tauri/tui/Cargo.toml`（Cargo.lock
+里的四个 workspace package 跟着更新）。
 `bun run verify:tauri:version` 会校验所有位置与 tag 一致，CI 里也会跑。
 
 推 `v*` tag 触发 `.github/workflows/build.yaml`：三平台构建（配置 Apple 签名时包含公证）→

@@ -22,6 +22,7 @@ jobs:
     outputs:
       docs-only: ${{ steps.classify.outputs.docs-only }}
       rust: ${{ steps.classify.outputs.rust }}
+      tui-only: ${{ steps.classify.outputs.tui-only }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,7 +71,7 @@ jobs:
   build-tauri-arm64:
     name: Tauri Apple Silicon
     needs: changes
-    if: needs.changes.outputs.docs-only != 'true'
+    if: needs.changes.outputs.docs-only != 'true' && needs.changes.outputs.tui-only != 'true'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -263,7 +264,7 @@ jobs:
   build-tauri-windows-x64:
     name: Tauri Windows x64
     needs: changes
-    if: needs.changes.outputs.docs-only != 'true'
+    if: needs.changes.outputs.docs-only != 'true' && needs.changes.outputs.tui-only != 'true'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -421,7 +422,7 @@ jobs:
   build-tauri-linux-x64:
     name: Tauri Ubuntu x64
     needs: changes
-    if: needs.changes.outputs.docs-only != 'true'
+    if: needs.changes.outputs.docs-only != 'true' && needs.changes.outputs.tui-only != 'true'
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -586,6 +587,113 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-ypm:
+    name: ypm ${{ matrix.label }}
+    needs: changes
+    if: needs.changes.outputs.docs-only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macos-aarch64
+            target: aarch64-apple-darwin
+            source: ypm
+            dest: ypm-macos-aarch64
+          - os: ubuntu-22.04
+            label: linux-x64
+            target: x86_64-unknown-linux-gnu
+            source: ypm
+            dest: ypm-linux-x64
+          - os: windows-latest
+            label: windows-x64
+            target: x86_64-pc-windows-msvc
+            source: ypm.exe
+            dest: ypm-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@1.91.0
+        with:
+          components: clippy,rustfmt
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install audio build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils libasound2-dev pkg-config
+
+      - name: Test ypm and core
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui -p yesplaymusic-core --all-features
+
+      - name: Clippy ypm
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --all-targets -- -D warnings
+
+      - name: Check ypm formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui -- --check
+
+      - name: Build ypm
+        run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --target ${{ matrix.target }}
+
+      - name: Smoke ypm runtime
+        shell: bash
+        run: '"src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" --version'
+
+      - name: Verify Linux GLIBC 2.35 baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          YPM_BINARY="src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}"
+          YPM_MAX_GLIBC="$({ readelf --version-info "$YPM_BINARY" || exit 1; } \
+            | sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -Vu \
+            | tail -n 1)"
+          test -n "$YPM_MAX_GLIBC"
+          echo "Highest required GLIBC: $YPM_MAX_GLIBC"
+          dpkg --compare-versions "$YPM_MAX_GLIBC" le 2.35
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p dist-ypm
+          cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" "dist-ypm/${{ matrix.dest }}"
+
+      # GPL complete-corresponding-source kit rides the Linux leg on tags;
+      # provenance reads target/release/, so mirror the target-dir binary.
+      - uses: oven-sh/setup-bun@v2
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
+        with:
+          bun-version: 1.3.12
+
+      - name: Install dependencies
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build ypm complete-source kit
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p src-tauri/target/release
+          cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" src-tauri/target/release/ypm
+          bun run build:ypm:compliance
+          VERSION="${GITHUB_REF_NAME#v}"
+          tar -czf "dist-ypm/YesPlayMusic_${VERSION}_ypm-source.tar.gz" -C src-tauri/generated ypm-complete-source
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ypm-${{ matrix.target }}
+          path: dist-ypm/
+          if-no-files-found: error
+
   draft-release:
     name: Draft GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -593,6 +701,7 @@ jobs:
       - build-tauri-arm64
       - build-tauri-windows-x64
       - build-tauri-linux-x64
+      - build-ypm
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -618,6 +727,12 @@ jobs:
         with:
           name: YesPlayMusic-linux-x64-${{ github.sha }}
           path: release/linux
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ypm-*
+          path: release/ypm
+          merge-multiple: true
 
       - name: Install updater artifact inspection tools
         run: |
