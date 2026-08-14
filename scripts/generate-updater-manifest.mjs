@@ -40,7 +40,12 @@ export async function createUpdaterManifest({
     );
   }
   validateUpdaterPublicKey(publicKey);
-  const files = await walk(artifactsDir);
+  // TUI binaries (ypm-*) share the release directory but are not updater
+  // targets; ypm-windows-x64.exe would otherwise collide with the bare
+  // '.exe' suffix match below.
+  const files = (await walk(artifactsDir)).filter(
+    file => !path.basename(file).startsWith('ypm-')
+  );
   const platforms = {};
   for (const [target, suffix] of Object.entries(UPDATER_MANIFEST_SUFFIXES)) {
     const matches = files.filter(

@@ -357,6 +357,38 @@ test('latest.json maps every supported target to its signed release asset', asyn
   }
 });
 
+test('updater manifest ignores TUI binaries sharing the release directory', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yesplaymusic-updater-test-'));
+  try {
+    await writeSignedUpdaterFixtures(root);
+    // Mirrors the draft-release layout: ypm artifacts are downloaded next to
+    // the GUI bundles and ypm-windows-x64.exe must not collide with the
+    // windows-x86_64 '.exe' suffix match.
+    const ypmDirectory = path.join(root, 'ypm');
+    await mkdir(ypmDirectory, { recursive: true });
+    for (const name of [
+      'ypm-macos-aarch64',
+      'ypm-linux-x64',
+      'ypm-windows-x64.exe',
+    ]) {
+      await writeFile(path.join(ypmDirectory, name), 'tui-binary');
+    }
+
+    const manifest = await createUpdaterManifest({
+      artifactsDir: root,
+      version: '0.7.0',
+      publishedAt: '2026-08-10T00:00:00Z',
+      publicKey: updaterTestPublicKey,
+      artifactVersionReader: async () => '0.7.0',
+    });
+    expect(manifest.platforms['windows-x86_64']?.url).toEndWith(
+      '/v0.7.0/YesPlayMusic_0.7.0_x64-setup.exe'
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('macOS updater archive exposes the signed embedded app version', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yesplaymusic-version-test-'));
   try {
