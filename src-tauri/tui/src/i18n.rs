@@ -272,6 +272,22 @@ pub fn t_api_failed(operation: Key, error: impl fmt::Debug) -> String {
     }
 }
 
+/// A non-200 song/url answer is an account problem, not a copyright one.
+pub fn t_song_url_rejected(code: Option<i64>) -> String {
+    let code = code.map_or_else(|| "?".to_owned(), |code| code.to_string());
+    match language() {
+        Lang::Zh => format!(
+            "网易云拒绝了播放地址请求（code {code}）：登录可能已过期或被限流，重新登录后再试"
+        ),
+        Lang::En => {
+            format!("NetEase refused the playback URL request (code {code}): the sign-in may have expired or be rate limited; sign in again and retry")
+        }
+        Lang::Ja => {
+            format!("NetEase が再生 URL の取得を拒否しました（code {code}）：ログインの期限切れかレート制限の可能性があります。再ログインしてください")
+        }
+    }
+}
+
 pub fn t_unknown_qr_status(status: i64) -> String {
     match language() {
         Lang::Zh => format!("二维码状态码未知：{status}"),
@@ -949,6 +965,12 @@ mod tests {
         assert!(["主菜单", "main menu", "メインメニュー"]
             .iter()
             .any(|marker| interrupted.contains(marker)));
+    }
+
+    #[test]
+    fn song_url_refusal_always_carries_the_code_it_was_given() {
+        assert!(super::t_song_url_rejected(Some(-462)).contains("code -462"));
+        assert!(super::t_song_url_rejected(None).contains("code ?"));
     }
 
     #[test]

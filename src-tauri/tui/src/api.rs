@@ -3,7 +3,7 @@
 //! way the desktop client does (standard quality, no personal data).
 
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -20,6 +20,27 @@ use crate::i18n::{self, Key};
 
 const PLAYLIST_PAGE_SIZE: usize = 500;
 const UNM_RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Every outbound HTTP call this crate owns is bounded: a dead CDN or a
+/// captive portal must not hang a cover fetch forever.
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Shared, bounded HTTP client for the plain (non-NCM-signed) requests.
+/// Reusing one client also keeps the connection pool warm across covers.
+pub(crate) fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| build_http_client(HTTP_CONNECT_TIMEOUT, HTTP_REQUEST_TIMEOUT))
+}
+
+fn build_http_client(connect: Duration, total: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect)
+        .timeout(total)
+        .build()
+        // Builder failure means no TLS backend at all; an unbounded default
+        // client still beats refusing to show any cover.
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedMedia {
@@ -62,7 +83,13 @@ struct PlaybackSource {
 
 #[derive(Debug)]
 enum SongUrlFailure {
+    /// NCM answered `code: 200` with no playable URL — really no rights.
     Unavailable,
+    /// NCM refused the request itself (expired cookie, rate limit, risk
+    /// control). Distinct from `Unavailable` because UNM must not run: it
+    /// would hide a fixable sign-in problem behind "no copyright" and burn
+    /// one round trip per track.
+    Rejected(Option<i64>),
     Other(anyhow::Error),
 }
 
@@ -466,14 +493,7 @@ impl Ncm {
         let response = self.client.song_url(&query).await.map_err(|error| {
             SongUrlFailure::Other(anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))
         })?;
-        let data = &response.body["data"][0];
-        if data["url"].as_str().is_none_or(str::is_empty) {
-            return Err(SongUrlFailure::Unavailable);
-        }
-        Ok((
-            requested_quality,
-            parse_playback_source(data).map_err(SongUrlFailure::Other)?,
-        ))
+        Ok((requested_quality, classify_song_url(&response.body)?))
     }
 
     /// Raw line-, translation-, and word-synchronised lyrics for a song.
@@ -562,6 +582,7 @@ impl Ncm {
         let (requested_quality, source) =
             self.song_url(row.id).await.map_err(|error| match error {
                 SongUrlFailure::Unavailable => anyhow!(i18n::t(Key::ApiPlaybackUrlUnavailable)),
+                SongUrlFailure::Rejected(code) => anyhow!(i18n::t_song_url_rejected(code)),
                 SongUrlFailure::Other(error) => error,
             })?;
         Ok(self.resolved_track(row.clone(), requested_quality, source))
@@ -588,6 +609,9 @@ impl Ncm {
         match native {
             Ok(source) => Ok(self.resolved_track(row.clone(), requested_quality, source)),
             Err(SongUrlFailure::Other(error)) => Err(error),
+            // Auth/rate-limit refusals are not a copyright problem — say so
+            // instead of spending a UNM round trip on every track.
+            Err(SongUrlFailure::Rejected(code)) => Err(anyhow!(i18n::t_song_url_rejected(code))),
             Err(SongUrlFailure::Unavailable) => {
                 self.resolve_unm_track(row, requested_quality).await
             }
@@ -671,8 +695,14 @@ impl Ncm {
             let Some(id) = song["id"].as_i64() else {
                 continue;
             };
-            let Ok((requested_quality, source)) = self.song_url(id).await else {
-                continue;
+            let (requested_quality, source) = match self.song_url(id).await {
+                Ok(resolved) => resolved,
+                // A refusal is per-account, not per-track: the remaining
+                // candidates would all fail the same way.
+                Err(SongUrlFailure::Rejected(code)) => {
+                    return Err(anyhow!(i18n::t_song_url_rejected(code)))
+                }
+                Err(_) => continue,
             };
             let row = SongRow {
                 id,
@@ -1009,6 +1039,22 @@ fn invalid_payload(path: &str) -> anyhow::Error {
     anyhow!("invalid NCM response at {path}")
 }
 
+/// Separate "the account may not ask" from "the track has no rights".
+/// NCM answers `code: 200` with a null url for the second case and a
+/// non-200 code (301 signed out, -462 risk control, 400 rate limited…)
+/// for the first — reading only `data[0].url` conflates them.
+fn classify_song_url(body: &Value) -> std::result::Result<PlaybackSource, SongUrlFailure> {
+    let code = body.get("code").and_then(Value::as_i64);
+    if code != Some(200) {
+        return Err(SongUrlFailure::Rejected(code));
+    }
+    let data = &body["data"][0];
+    if data["url"].as_str().is_none_or(str::is_empty) {
+        return Err(SongUrlFailure::Unavailable);
+    }
+    parse_playback_source(data).map_err(SongUrlFailure::Other)
+}
+
 fn parse_playback_source(data: &Value) -> Result<PlaybackSource> {
     let url = data["url"]
         .as_str()
@@ -1162,7 +1208,9 @@ fn song_row_flex(song: &Value) -> SongRow {
 /// Small square cover JPEG from the NCM CDN (`?param=WxH` server-side crop).
 pub async fn fetch_cover(pic_url: &str, edge: u32) -> Result<Vec<u8>> {
     let url = format!("{pic_url}?param={edge}y{edge}");
-    let response = reqwest::get(&url)
+    let response = http_client()
+        .get(&url)
+        .send()
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpFetchCover, error)))?;
@@ -2126,6 +2174,105 @@ mod tests {
 
         let missing_url = serve_once("404 Not Found", b"missing").await;
         assert!(fetch_cover(&missing_url, 32).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn http_requests_give_up_instead_of_hanging_on_a_silent_server() {
+        // Accepts the connection, then never answers — the failure mode a
+        // bare `reqwest::get` waits out forever.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let stalled = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+            drop(stream);
+        });
+
+        let client = build_http_client(Duration::from_millis(200), Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        let error = client
+            .get(format!("http://{address}/cover"))
+            .send()
+            .await
+            .unwrap_err();
+
+        assert!(error.is_timeout(), "expected a timeout, got {error:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        stalled.abort();
+    }
+
+    #[test]
+    fn shared_http_client_carries_the_timeouts_covers_rely_on() {
+        assert_eq!(HTTP_CONNECT_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(HTTP_REQUEST_TIMEOUT, Duration::from_secs(30));
+        // Same instance every call: the pool has to survive across covers.
+        assert!(std::ptr::eq(http_client(), http_client()));
+    }
+
+    #[test]
+    fn song_url_separates_refusals_from_tracks_without_rights() {
+        let refused = classify_song_url(&serde_json::json!({
+            "code": 301,
+            "data": [{ "url": Value::Null }]
+        }));
+        assert!(matches!(refused, Err(SongUrlFailure::Rejected(Some(301)))));
+
+        let risk_control = classify_song_url(&serde_json::json!({ "code": -462 }));
+        assert!(matches!(
+            risk_control,
+            Err(SongUrlFailure::Rejected(Some(-462)))
+        ));
+
+        let codeless = classify_song_url(&serde_json::json!({ "data": [] }));
+        assert!(matches!(codeless, Err(SongUrlFailure::Rejected(None))));
+
+        let unavailable = classify_song_url(&serde_json::json!({
+            "code": 200,
+            "data": [{ "url": Value::Null }]
+        }));
+        assert!(matches!(unavailable, Err(SongUrlFailure::Unavailable)));
+
+        let playable = classify_song_url(&serde_json::json!({
+            "code": 200,
+            "data": [{
+                "url": "https://audio.example/track.mp3",
+                "type": "mp3",
+                "br": 320_000,
+                "size": 8_000_000,
+                "md5": Value::Null
+            }]
+        }))
+        .unwrap();
+        assert_eq!(playable.url, "https://audio.example/track.mp3");
+        assert_eq!(playable.actual_bitrate, 320_000);
+    }
+
+    #[tokio::test]
+    async fn refused_song_url_reports_sign_in_instead_of_burning_a_unm_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ncm = ncm_with_unm(
+            true,
+            FakeUnmOutcome::Found(UnmResolution {
+                provider: "kugou".into(),
+                url: "https://audio.example/recovered.mp3".into(),
+            }),
+            Duration::ZERO,
+            Duration::from_secs(1),
+            calls.clone(),
+        );
+
+        let error = ncm
+            .resolve_after_native(
+                &unavailable_row(),
+                AudioQuality::High320,
+                Err(SongUrlFailure::Rejected(Some(-462))),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert!(!error.is::<TrackUnavailable>());
+        assert!(error.to_string().contains("-462"));
     }
 
     async fn serve_once(status: &'static str, body: &'static [u8]) -> String {
