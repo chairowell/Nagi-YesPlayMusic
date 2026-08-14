@@ -60,7 +60,13 @@ interface SharedCacheImport {
   artist: string;
 }
 
-let settingsQueue = Promise.resolve();
+// Never rejects: every shared-cache entry point awaits it, so a rejected queue
+// would poison the whole feature until the user touched the settings page.
+let settingsQueue: Promise<void> = Promise.resolve();
+// Tracks whether the renderer's toggle actually reached the sidecar. The sidecar
+// keeps the switch in a process-local AtomicBool that defaults to false, so a
+// failed sync means every proxy request would answer 409.
+let sharedCacheHealthy = true;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -127,10 +133,44 @@ export function syncSharedCacheSetting(
   enabled: boolean,
   fetcher: Fetcher = fetch
 ): Promise<void> {
-  settingsQueue = settingsQueue
-    .catch(() => undefined)
-    .then(() => configureSharedCache(enabled, fetcher));
-  return settingsQueue;
+  const sync = settingsQueue.then(async () => {
+    try {
+      await configureSharedCache(enabled, fetcher);
+      sharedCacheHealthy = true;
+    } catch (error) {
+      sharedCacheHealthy = false;
+      throw error;
+    }
+  });
+  // Callers still see the rejection; the queue itself keeps a resolved promise.
+  settingsQueue = sync.catch(() => undefined);
+  return sync;
+}
+
+/**
+ * Resolves once the pending settings sync settled. False means the sidecar is
+ * not known to have the shared cache switched on, so callers must fall back to
+ * direct playback instead of the same-origin proxy.
+ */
+export async function isSharedCacheHealthy(): Promise<boolean> {
+  await settingsQueue;
+  return sharedCacheHealthy;
+}
+
+/** Records that a shared-cache request was refused, e.g. after a sidecar restart. */
+export function reportSharedCacheFailure(): void {
+  sharedCacheHealthy = false;
+}
+
+/**
+ * The single gate every audio-source resolver uses before handing playback a
+ * same-origin proxy URL. Falling back to the direct URL keeps playback alive
+ * when the sidecar never received (or lost) the enabled flag.
+ */
+export async function shouldUseSharedAudioProxy(
+  enabled: boolean
+): Promise<boolean> {
+  return enabled && (await isSharedCacheHealthy());
 }
 
 export async function findSharedCachedAudio(
@@ -139,9 +179,15 @@ export async function findSharedCachedAudio(
   fetcher: Fetcher = fetch
 ): Promise<AudioSource | null> {
   await settingsQueue;
+  if (!sharedCacheHealthy) return null;
   const url = sharedAudioPath(trackID, normalizeSharedCacheQuality(quality));
   const response = await fetcher(url, { method: 'HEAD' });
   if (response.status === 404) return null;
+  // 409 is the sidecar saying the shared cache is switched off on its side.
+  if (response.status === 409) {
+    reportSharedCacheFailure();
+    return null;
+  }
   if (!response.ok) throw responseError(response, 'shared cache lookup');
   const codec = normalizeCodec(response.headers.get('x-ypm-audio-codec'));
   return createRemoteAudioSource(url, {

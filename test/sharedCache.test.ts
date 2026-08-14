@@ -1,8 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createSharedAudioProxy,
+  findSharedCachedAudio,
   getSharedCacheStatus,
+  isSharedAudioProxyURL,
+  isSharedCacheHealthy,
   normalizeSharedCacheQuality,
+  prefetchSharedAudio,
+  reportSharedCacheFailure,
+  shouldUseSharedAudioProxy,
   syncSharedCacheSetting,
 } from '../src/services/sharedCache';
 
@@ -59,5 +65,67 @@ describe('GUI 共享歌曲缓存协议', () => {
     expect(url.searchParams.get('codec')).toBe('flac');
     expect(url.searchParams.get('actualBitrate')).toBe('999000');
     expect(url.searchParams.get('cache')).toBe('true');
+  });
+
+  test('同步失败不会毒化后续调用，只把共享缓存标记为不健康', async () => {
+    const failing = async (): Promise<Response> =>
+      new Response('boom', { status: 500 });
+    await expect(syncSharedCacheSetting(true, failing)).rejects.toThrow(
+      'shared cache configuration failed with HTTP 500'
+    );
+    expect(await isSharedCacheHealthy()).toBe(false);
+
+    // 队列本身必须保持 resolved：这些调用以前会同步抛出上一次的失败
+    let lookups = 0;
+    const lookup = async (): Promise<Response> => {
+      lookups += 1;
+      return new Response(null, { status: 200 });
+    };
+    expect(await findSharedCachedAudio(1868238759, 'flac', lookup)).toBeNull();
+    expect(lookups).toBe(0);
+    await prefetchSharedAudio(
+      '/api/native/shared-cache/audio/1868238759',
+      async () => new Response('audio')
+    );
+  });
+
+  test('不健康时音源解析回退直连，重新同步成功后恢复代理', async () => {
+    const ok = async (): Promise<Response> => Response.json({ enabled: true });
+    await syncSharedCacheSetting(true, ok);
+    expect(await shouldUseSharedAudioProxy(true)).toBe(true);
+
+    const proxied = await createSharedAudioProxy({
+      track: { id: 1868238759, name: 'Track' },
+      quality: 'flac',
+      source: 'https://audio.example/song.flac',
+      format: 'flac',
+      actualBitrate: 999000,
+      cache: true,
+      origin: 'netease',
+    });
+    expect(isSharedAudioProxyURL(proxied.url)).toBe(true);
+
+    // Player 的重试链路探测到代理 URL 加载失败后调用这一句
+    reportSharedCacheFailure();
+    expect(await shouldUseSharedAudioProxy(true)).toBe(false);
+
+    await syncSharedCacheSetting(true, ok);
+    expect(await shouldUseSharedAudioProxy(true)).toBe(true);
+  });
+
+  test('代理返回 409 说明 Sidecar 侧开关已关，立即降级为直连', async () => {
+    await syncSharedCacheSetting(
+      true,
+      async () => new Response(null, { status: 204 })
+    );
+    expect(await shouldUseSharedAudioProxy(true)).toBe(true);
+
+    const conflict = async (): Promise<Response> =>
+      new Response(null, { status: 409 });
+    expect(
+      await findSharedCachedAudio(1868238759, 'flac', conflict)
+    ).toBeNull();
+    expect(await isSharedCacheHealthy()).toBe(false);
+    expect(await shouldUseSharedAudioProxy(true)).toBe(false);
   });
 });

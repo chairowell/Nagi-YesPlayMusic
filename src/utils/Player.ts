@@ -64,6 +64,8 @@ import {
   importTrackIntoSharedCache,
   isSharedAudioProxyURL,
   prefetchSharedAudio,
+  reportSharedCacheFailure,
+  shouldUseSharedAudioProxy,
 } from '@/services/sharedCache';
 import type { AudioUrlResponse } from '@/api/track';
 import type { Track } from '@/types/domain';
@@ -630,6 +632,11 @@ export default class Player {
   }: RetryAudioSourceOptions): Promise<void> {
     if (this._howler !== failedHowler) return;
     const failedTrack = this.currentTrack;
+    // A dead proxy URL must not be re-resolved into the same dead proxy URL,
+    // otherwise every fallback fails too and the whole playlist skips forever.
+    if (isSharedAudioProxyURL(failedSource.url)) {
+      reportSharedCacheFailure();
+    }
     if (failedSource.origin === 'cache') {
       await discardFailedCache(
         async trackID => {
@@ -747,7 +754,7 @@ export default class Player {
     const track = await getTrackSource(id);
     return track ? this._getAudioSourceBlobURL(track.source, 'cache') : null;
   }
-  _getAudioSourceFromNetease(track: Track): Promise<AudioSource | null> {
+  async _getAudioSourceFromNetease(track: Track): Promise<AudioSource | null> {
     if (isAccountLoggedIn()) {
       return getMP3(track.id).then(async result => {
         const audio = findMatchingAudioResponse<AudioUrlResponse>(
@@ -764,7 +771,7 @@ export default class Player {
         if (audio.freeTrialInfo !== null) return null; // Skip preview-only tracks.
         const source = audio.url.replace(/^http:/, 'https:');
         const settings = getAppStore().settings;
-        if (settings.shareCacheWithYpm) {
+        if (await shouldUseSharedAudioProxy(settings.shareCacheWithYpm)) {
           return createSharedAudioProxy({
             track,
             quality: settings.musicQuality,
@@ -786,7 +793,7 @@ export default class Player {
     } else {
       const source = `https://music.163.com/song/media/outer/url?id=${track.id}`;
       const settings = getAppStore().settings;
-      if (settings.shareCacheWithYpm) {
+      if (await shouldUseSharedAudioProxy(settings.shareCacheWithYpm)) {
         return createSharedAudioProxy({
           track,
           quality: settings.musicQuality,
@@ -797,9 +804,10 @@ export default class Player {
           origin: 'netease',
         });
       }
-      return Promise.resolve(
-        createRemoteAudioSource(source, { origin: 'netease', format: 'mp3' })
-      );
+      return createRemoteAudioSource(source, {
+        origin: 'netease',
+        format: 'mp3',
+      });
     }
   }
   async _getAudioSourceFromUnblockMusic(
@@ -857,7 +865,7 @@ export default class Player {
 
     if (retrieveSongInfo.source !== 'bilibili') {
       const settings = getAppStore().settings;
-      if (settings.shareCacheWithYpm) {
+      if (await shouldUseSharedAudioProxy(settings.shareCacheWithYpm)) {
         return createSharedAudioProxy({
           track,
           quality: settings.musicQuality,
@@ -893,8 +901,11 @@ export default class Player {
     source.provider = retrieveSongInfo.source;
     source.excludedProviders = excludedProviders;
     const settings = getAppStore().settings;
+    const useSharedCache = await shouldUseSharedAudioProxy(
+      settings.shareCacheWithYpm
+    );
     if (settings.automaticallyCacheSongs) {
-      source.cacheAfterLoad = settings.shareCacheWithYpm
+      source.cacheAfterLoad = useSharedCache
         ? () =>
             importTrackIntoSharedCache(
               track,
