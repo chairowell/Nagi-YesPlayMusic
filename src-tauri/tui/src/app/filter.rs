@@ -100,6 +100,7 @@ mod tests {
             id: 1,
             title: "Night Cruising".into(),
             artist: "Fishmans".into(),
+            album: "Long Season".into(),
             duration_ms: 180_000,
             pic_url: None,
         }

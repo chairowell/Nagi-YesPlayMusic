@@ -53,7 +53,7 @@ pub struct Effects {
 }
 
 const COVER_SOURCE_EDGE: u32 = 500;
-pub(crate) const PREVIEW_CELLS: (u16, u16) = (26, 13);
+pub(crate) const PREVIEW_CELLS: (u16, u16) = (22, 11);
 const HOT_PIXEL_COVER_LIMIT: usize = 64;
 
 struct OriginalCover {
@@ -453,6 +453,7 @@ impl AppState {
                     id: 0,
                     title: "反方向的钟".into(),
                     artist: String::new(),
+                    album: String::new(),
                     duration_ms: 0,
                     pic_url: None,
                 },
@@ -460,6 +461,7 @@ impl AppState {
                     id: 0,
                     title: "海阔天空".into(),
                     artist: "Beyond".into(),
+                    album: String::new(),
                     duration_ms: 0,
                     pic_url: None,
                 },
@@ -581,7 +583,7 @@ impl AppState {
         }
     }
 
-    fn visible_row(&self, index: usize) -> Option<(usize, SongRow)> {
+    pub(crate) fn visible_row(&self, index: usize) -> Option<(usize, SongRow)> {
         let rows = match self.view {
             View::Library => &self.library,
             View::Queue => &self.queue,
@@ -616,15 +618,17 @@ impl AppState {
         {
             return None;
         }
-        let (title_width, artist_width) = match self.view {
-            View::Library | View::Queue => (24, 14),
-            View::Search => (26, 16),
-            _ => return None,
-        };
         let (underlying, row) = self.visible_row(self.selected)?;
-        if ui::text::display_width(&row.title) <= title_width
-            && ui::text::display_width(&row.artist) <= artist_width
-        {
+        let shell_width =
+            ui::centered_content(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)).width;
+        let preview_visible = self.selection_preview_visible();
+        let needs_marquee = match self.view {
+            View::Library => ui::library::marquee_needed(&row, shell_width, preview_visible),
+            View::Search => ui::search::marquee_needed(&row, shell_width, preview_visible),
+            View::Queue => ui::queue::marquee_needed(&row, shell_width),
+            _ => false,
+        };
+        if !needs_marquee {
             return None;
         }
         Some(MarqueeTarget {
@@ -757,6 +761,17 @@ impl AppState {
         self.active_row = playback
             .current
             .map(crate::store::StoredSong::into_song_row);
+        if let (Some(active), Some(queued)) = (
+            self.active_row.as_mut(),
+            self.queue_pos.and_then(|index| self.queue.get(index)),
+        ) {
+            if active.id == queued.id
+                && active.title.trim().is_empty()
+                && !queued.title.trim().is_empty()
+            {
+                active.title.clone_from(&queued.title);
+            }
+        }
         if let Some(row) = &self.active_row {
             self.current_track_id = (row.id > 0).then_some(row.id);
             self.duration =
@@ -764,7 +779,7 @@ impl AppState {
             self.now = Some(NowPlaying {
                 title: row.title.clone(),
                 artist: row.artist.clone(),
-                album: String::new(),
+                album: row.album.clone(),
             });
             self.resume_on_play = Some(self.position);
         } else {
@@ -991,9 +1006,18 @@ impl AppState {
 
     fn selection_preview_visible(&self) -> bool {
         let (cols, rows) = self.terminal_size;
+        let body_height = rows.saturating_sub(
+            crate::ui::HEADER_HEIGHT + crate::ui::FOOTER_HEIGHT + crate::ui::PANEL_GAP_Y * 2,
+        );
         match self.view {
-            View::Library => cols >= 96 && rows.saturating_sub(2) >= PREVIEW_CELLS.1,
-            View::Search => cols >= 81 && rows.saturating_sub(4) >= PREVIEW_CELLS.1,
+            View::Library => {
+                cols >= crate::ui::library::PREVIEW_MIN_TERMINAL_WIDTH
+                    && body_height >= crate::ui::cover_preview::HEIGHT
+            }
+            View::Search => {
+                cols >= crate::ui::search::PREVIEW_MIN_TERMINAL_WIDTH
+                    && body_height >= crate::ui::cover_preview::HEIGHT
+            }
             _ => false,
         }
     }
@@ -1101,7 +1125,7 @@ impl AppState {
         self.now = Some(NowPlaying {
             title: track.title.clone(),
             artist: track.artist.clone(),
-            album: String::new(),
+            album: track.album.clone(),
         });
         self.duration =
             (track.duration_ms > 0).then(|| Duration::from_millis(track.duration_ms as u64));
@@ -1148,7 +1172,7 @@ impl AppState {
         self.now = Some(NowPlaying {
             title: row.title.clone(),
             artist: row.artist.clone(),
-            album: String::new(),
+            album: row.album.clone(),
         });
         self.duration =
             (row.duration_ms > 0).then(|| Duration::from_millis(row.duration_ms as u64));
@@ -1209,7 +1233,7 @@ impl AppState {
         self.now = Some(NowPlaying {
             title: row.title.clone(),
             artist: row.artist.clone(),
-            album: String::new(),
+            album: row.album.clone(),
         });
         self.lyrics.clear();
         self.position = Duration::ZERO;
@@ -1380,6 +1404,7 @@ fn song_row_from_resolved(track: &api::ResolvedTrack) -> SongRow {
         id: track.id,
         title: track.title.clone(),
         artist: track.artist.clone(),
+        album: track.album.clone(),
         duration_ms: track.duration_ms,
         pic_url: track.pic_url.clone(),
     }
@@ -2077,6 +2102,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
                 state.spectrum.tick(
                     fx.player.samples(),
                     state.now.is_some() && !state.paused,
+                    state.view == View::Settings,
                 );
             }
         }

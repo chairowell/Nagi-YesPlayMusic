@@ -169,6 +169,7 @@ mod tests {
             id,
             title: format!("Track {id}"),
             artist: "Artist".into(),
+            album: "Album".into(),
             duration_ms: 180_000,
             pic_url: None,
         }

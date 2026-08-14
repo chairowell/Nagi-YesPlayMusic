@@ -16,6 +16,8 @@ use crate::theme::Theme;
 pub const CAPTURE_SAMPLES: usize = 4096;
 pub const FFT_SAMPLES: usize = 1024;
 pub const SPECTRUM_BINS: usize = 66;
+/// Paused audio below this level no longer leaves rounded half-cells visible.
+const SILENCE_THRESHOLD: f32 = 0.01;
 
 /// Single-producer sample ring. The audio thread only performs atomic stores.
 pub struct SampleBuffer {
@@ -244,6 +246,7 @@ pub struct SpectrumView {
     style: Box<dyn SpectrumStyle>,
     glow: GhostBuffer,
     ticks: u64,
+    settled: bool,
 }
 
 impl SpectrumView {
@@ -256,18 +259,28 @@ impl SpectrumView {
             style: style_for(kind),
             glow: GhostBuffer::default(),
             ticks: 0,
+            settled: true,
         }
     }
 
-    pub fn tick(&mut self, capture: &SampleBuffer, playing: bool) {
+    pub fn tick(&mut self, capture: &SampleBuffer, playing: bool, preview: bool) {
         self.ticks = self.ticks.wrapping_add(1);
         let real = capture.latest(FFT_SAMPLES);
         self.samples = if playing && !real.is_empty() {
             real
-        } else {
+        } else if playing || preview {
             simulated_samples(self.ticks)
+        } else {
+            vec![0.0; FFT_SAMPLES]
         };
         self.bins = *self.analyzer.process(&self.samples);
+        let settled =
+            !playing && !preview && self.bins.iter().all(|value| *value < SILENCE_THRESHOLD);
+        if settled && !self.settled {
+            self.style = style_for(self.kind);
+            self.glow.clear();
+        }
+        self.settled = settled;
     }
 
     pub fn render(
@@ -287,6 +300,10 @@ impl SpectrumView {
             self.glow.clear();
         }
         clear_area(buf, area, theme.bg);
+        if self.settled {
+            self.glow.clear();
+            return;
+        }
         self.style
             .render(&self.bins, &self.samples, area, buf, theme);
         if glow {
@@ -1222,6 +1239,29 @@ mod tests {
         assert!(attacked > 0.0);
         assert!((attacked_again - attacked * 1.6).abs() < 0.0001);
         assert!((decayed - attacked_again * 0.91).abs() < 0.0001);
+    }
+
+    #[test]
+    fn paused_spectrum_decays_until_the_entire_area_is_empty() {
+        let capture = SampleBuffer::default();
+        for index in 0..FFT_SAMPLES {
+            capture.push((2.0 * PI * 16.0 * index as f32 / FFT_SAMPLES as f32).sin());
+        }
+        let theme = Theme::db16();
+        let area = Rect::new(0, 0, 24, 8);
+        let mut buffer = Buffer::empty(area);
+        let mut view = SpectrumView::new(SpectrumKind::Mirror);
+
+        view.tick(&capture, true, false);
+        view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
+        assert!(buffer.content().iter().any(|cell| cell.symbol() != " "));
+
+        capture.clear();
+        for _ in 0..200 {
+            view.tick(&capture, false, false);
+        }
+        view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
+        assert!(buffer.content().iter().all(|cell| cell.symbol() == " "));
     }
 
     #[test]

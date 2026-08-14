@@ -15,6 +15,8 @@ pub struct StoredSong {
     pub id: i64,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub album: String,
     pub duration_ms: i64,
     pub pic_url: Option<String>,
 }
@@ -25,6 +27,7 @@ impl From<&SongRow> for StoredSong {
             id: row.id,
             title: row.title.clone(),
             artist: row.artist.clone(),
+            album: row.album.clone(),
             duration_ms: row.duration_ms,
             pic_url: row.pic_url.clone(),
         }
@@ -37,6 +40,7 @@ impl StoredSong {
             id: self.id,
             title: self.title,
             artist: self.artist,
+            album: self.album,
             duration_ms: self.duration_ms,
             pic_url: self.pic_url,
         }
@@ -181,6 +185,7 @@ mod tests {
             id: 42,
             title: "晚风经过月台".into(),
             artist: "遠い灯".into(),
+            album: "夜色".into(),
             duration_ms: 218_000,
             pic_url: Some("https://example.test/cover.jpg".into()),
         };
@@ -196,6 +201,7 @@ mod tests {
         assert_eq!(restored.id, source.id);
         assert_eq!(restored.title, source.title);
         assert_eq!(restored.artist, source.artist);
+        assert_eq!(restored.album, source.album);
         assert_eq!(restored.duration_ms, source.duration_ms);
         assert_eq!(restored.pic_url, source.pic_url);
     }
@@ -224,6 +230,23 @@ mod tests {
         let store = LibraryStore::new(root);
 
         assert_eq!(store.load(11, "cloud"), None);
+    }
+
+    #[test]
+    fn version_one_rows_without_album_remain_readable() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("library");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("12-liked.json"),
+            br#"{"version":1,"saved_at_unix":1,"rows":[{"id":42,"title":"Track","artist":"Artist","duration_ms":180000,"pic_url":null}]}"#,
+        )
+        .unwrap();
+
+        let rows = LibraryStore::new(root).load(12, "liked").unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].album.is_empty());
     }
 
     #[test]
@@ -306,6 +329,7 @@ mod tests {
             id,
             title: format!("Track {id}"),
             artist: "Artist".into(),
+            album: "Album".into(),
             duration_ms: 180_000,
             pic_url: None,
         }

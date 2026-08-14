@@ -8,16 +8,25 @@ use ratatui::Frame;
 
 use crate::app::AppState;
 use crate::i18n::{self, Key};
-use crate::ui::text::{display_width, pad_or_marquee};
+use crate::ui::text::{display_width, needs_marquee, pad_or_marquee};
 use crate::ui::{format_duration, Hits};
 
 const VOLUME_CELLS: usize = 5;
+const PLAY_ICON: &str = "▶";
+const PAUSE_ICON: &str = "⏸";
+
+#[derive(Clone, Copy)]
+struct MiniLayout {
+    title_width: usize,
+    volume_cells: usize,
+}
 
 pub(crate) fn marquee_needed(state: &AppState, width: u16) -> bool {
     let Some(now) = &state.now else {
         return false;
     };
-    display_width(&format!("{} — {}", now.title, now.artist)) > title_width(state, width)
+    let title = format!("{} — {}", now.title, now.artist);
+    needs_marquee(&title, mini_layout(state, width, &title).title_width)
 }
 
 pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
@@ -31,11 +40,7 @@ pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut H
 
     let theme = &state.theme;
     let icons = crate::icons::for_style(state.config.icons);
-    let play_icon = if state.paused {
-        icons.play
-    } else {
-        icons.pause
-    };
+    let play_icon = if state.paused { PLAY_ICON } else { PAUSE_ICON };
     let title = state
         .now
         .as_ref()
@@ -51,8 +56,9 @@ pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut H
         .current_track_id
         .is_some_and(|id| state.liked.contains(&id));
 
-    // The title owns the flexible centre so controls never drift off-screen.
-    let title_width = title_width(state, area.width);
+    // Preserve readable metadata before spending spare columns on the meter.
+    let layout = mini_layout(state, area.width, &title);
+    let title_width = layout.title_width;
     let title_text = pad_or_marquee(&title, title_width, true, state.marquee_frame());
     let play_x = area.x;
     let heart_x =
@@ -60,18 +66,23 @@ pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut H
     let volume_x =
         heart_x + display_width(icons.heart) as u16 + 2 + display_width(icons.volume) as u16 + 1;
 
-    hits.play.push((
+    push_hit(
+        &mut hits.play,
+        area,
         Rect::new(play_x, area.y, display_width(play_icon) as u16, 1),
-        (),
-    ));
-    hits.heart.push((
+    );
+    push_hit(
+        &mut hits.heart,
+        area,
         Rect::new(heart_x, area.y, display_width(icons.heart) as u16, 1),
-        (),
-    ));
-    hits.volume
-        .push((Rect::new(volume_x, area.y, VOLUME_CELLS as u16, 1), ()));
+    );
+    push_hit(
+        &mut hits.volume,
+        area,
+        Rect::new(volume_x, area.y, layout.volume_cells as u16, 1),
+    );
 
-    let filled = (state.volume.clamp(0.0, 1.0) * VOLUME_CELLS as f32).round() as usize;
+    let filled = (state.volume.clamp(0.0, 1.0) * layout.volume_cells as f32).round() as usize;
     let line = Line::from(vec![
         Span::styled(play_icon, Style::new().fg(theme.fg)),
         Span::raw(" "),
@@ -90,11 +101,17 @@ pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut H
         Span::styled(
             icons
                 .volume_empty
-                .repeat(VOLUME_CELLS.saturating_sub(filled)),
+                .repeat(layout.volume_cells.saturating_sub(filled)),
             Style::new().fg(theme.faint),
         ),
     ]);
     frame.render_widget(Paragraph::new(line), area);
+}
+
+fn push_hit(target: &mut Vec<(Rect, ())>, area: Rect, hit: Rect) {
+    if hit.width > 0 && hit.x >= area.x && hit.right() <= area.right() {
+        target.push((hit, ()));
+    }
 }
 
 fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
@@ -130,16 +147,22 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
     );
 }
 
-fn title_width(state: &AppState, width: u16) -> usize {
+fn mini_layout(state: &AppState, width: u16, title: &str) -> MiniLayout {
     let icons = crate::icons::for_style(state.config.icons);
-    let fixed_width = display_width(icons.play)
-        .max(display_width(icons.pause))
+    let fixed_without_meter = display_width(PLAY_ICON)
+        .max(display_width(PAUSE_ICON))
         + 11 // mm:ss/mm:ss
         + display_width(icons.heart)
         + display_width(icons.volume)
-        + VOLUME_CELLS
-        + 8;
-    (width as usize).saturating_sub(fixed_width)
+        + 6; // Spaces between the six rendered segments.
+    let flexible = usize::from(width).saturating_sub(fixed_without_meter);
+    let volume_cells = flexible
+        .saturating_sub(display_width(title))
+        .min(VOLUME_CELLS);
+    MiniLayout {
+        title_width: flexible.saturating_sub(volume_cells),
+        volume_cells,
+    }
 }
 
 #[cfg(test)]
@@ -151,7 +174,7 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::Terminal;
 
-    use super::{draw, marquee_needed};
+    use super::{draw, marquee_needed, mini_layout};
     use crate::action::Action;
     use crate::app::{AppState, NowPlaying};
     use crate::config::Config;
@@ -207,7 +230,38 @@ mod tests {
             event::mouse_action(click(hits.heart[0].0), &hits, 0),
             Some(Action::ToggleLike)
         ));
-        assert!(marquee_needed(&state, 80));
+    }
+
+    #[test]
+    fn fitting_title_uses_every_real_available_column() {
+        let mut state = AppState::new(&Config::default());
+        state.now = Some(NowPlaying {
+            title: "雨爱".into(),
+            artist: "杨丞琳".into(),
+            album: String::new(),
+        });
+
+        assert_eq!(mini_layout(&state, 33, "雨爱 — 杨丞琳").title_width, 13);
+        assert!(!marquee_needed(&state, 33));
+        assert!(marquee_needed(&state, 32));
+
+        let backend = TestBackend::new(33, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+        terminal
+            .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
+            .unwrap();
+        let first = (0..33)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        let compact = first
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        assert!(
+            compact.contains("雨爱—杨丞琳"),
+            "title moved or clipped: {first:?}"
+        );
     }
 
     #[test]
@@ -229,5 +283,36 @@ mod tests {
         assert_eq!(hits.confirm.len(), 2);
         assert!(hits.confirm[0].1);
         assert!(!hits.confirm[1].1);
+    }
+
+    #[test]
+    fn compact_player_hits_stay_inside_extremely_narrow_terminals() {
+        let mut state = AppState::new(&Config::default());
+        state.now = Some(NowPlaying {
+            title: "Title".into(),
+            artist: "Artist".into(),
+            album: String::new(),
+        });
+
+        for width in 1..32 {
+            let backend = TestBackend::new(width, 6);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut hits = Hits::default();
+            terminal
+                .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
+                .unwrap();
+
+            let area = Rect::new(0, 0, width, 6);
+            for hit in hits
+                .play
+                .iter()
+                .chain(&hits.heart)
+                .chain(&hits.volume)
+                .map(|(hit, ())| *hit)
+            {
+                assert!(hit.right() <= area.right(), "{width}: {hit:?}");
+                assert!(hit.bottom() <= area.bottom(), "{width}: {hit:?}");
+            }
+        }
     }
 }

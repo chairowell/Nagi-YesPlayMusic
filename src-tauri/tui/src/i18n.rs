@@ -34,6 +34,7 @@ pub enum Key {
     NetworkRetrying,
     SessionExpired,
     NowPlaying,
+    Cover,
     Library,
     Search,
     Queue,
@@ -87,7 +88,7 @@ pub enum Key {
     SpectrumPreview,
     LoginTitle,
     LoginInstruction,
-    NotLoggedInMenu,
+    SignedOut,
     LikedSongs,
     DailyRecommendations,
     PersonalFm,
@@ -108,11 +109,11 @@ pub enum Key {
     Unliked,
     LikeFailed,
     ColumnArtist,
+    ColumnAlbum,
     ColumnDuration,
     EmptyQueue,
     Relogin,
     ScanLogin,
-    NotLoggedInSync,
     OpQrKey,
     ApiQrKeyMissing,
     OpQrCheck,
@@ -143,8 +144,8 @@ pub fn t(key: Key) -> &'static str {
     t_for(language(), key)
 }
 
-pub fn t_songs_ready(n: usize) -> String {
-    songs_ready_for(language(), n)
+pub fn t_track_count(n: usize) -> String {
+    track_count_for(language(), n)
 }
 
 pub fn t_welcome(name: &str) -> String {
@@ -156,11 +157,7 @@ pub fn t_welcome(name: &str) -> String {
 }
 
 pub fn t_liked_songs_count(n: usize) -> String {
-    match language() {
-        Lang::Zh => format!("我喜欢的音乐 · {n} 首"),
-        Lang::En => format!("Liked Songs · {n} tracks"),
-        Lang::Ja => format!("お気に入り · {n}曲"),
-    }
+    format!("{} · {}", t(Key::LikedSongs), t_track_count(n))
 }
 
 pub fn t_playing(kind: &str) -> String {
@@ -259,11 +256,11 @@ fn language() -> Lang {
     LANGUAGE.get().copied().unwrap_or(Lang::Zh)
 }
 
-fn songs_ready_for(lang: Lang, n: usize) -> String {
+fn track_count_for(lang: Lang, n: usize) -> String {
     match lang {
-        Lang::Zh => format!("{n} 首已就绪"),
-        Lang::En => format!("{n} tracks ready"),
-        Lang::Ja => format!("{n}曲を同期済み"),
+        Lang::Zh => format!("{n} 首"),
+        Lang::En => format!("{n} tracks"),
+        Lang::Ja => format!("{n}曲"),
     }
 }
 
@@ -281,6 +278,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NetworkRetrying => "网络抖动，重试中…",
             Key::SessionExpired => "登录态已失效，请从主菜单重新扫码",
             Key::NowPlaying => "正在播放",
+            Key::Cover => "封面",
             Key::Library => "曲库",
             Key::Search => "搜索",
             Key::Queue => "队列",
@@ -350,7 +348,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "请用网易云音乐 App 里的「扫一扫」（系统相机扫会提示无效）"
             }
-            Key::NotLoggedInMenu => "未登录 · 从主菜单扫码",
+            Key::SignedOut => "未登录",
             Key::LikedSongs => "我喜欢的音乐",
             Key::DailyRecommendations => "每日推荐",
             Key::PersonalFm => "私人FM",
@@ -359,11 +357,11 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::EmptyLibrary => "这里还是空的",
             Key::ColumnTitle => "歌名",
             Key::ColumnArtist => "歌手",
+            Key::ColumnAlbum => "专辑",
             Key::ColumnDuration => "时长",
             Key::EmptyQueue => "队列是空的——去曲库按 Enter，整列表就会成为播放队列",
             Key::Relogin => "重新扫码登录",
             Key::ScanLogin => "扫码登录",
-            Key::NotLoggedInSync => "未登录 · 扫码后同步你的音乐",
             Key::OpQrKey => "请求二维码密钥",
             Key::ApiQrKeyMissing => "二维码密钥响应缺少 unikey",
             Key::OpQrCheck => "检查二维码状态",
@@ -397,6 +395,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NetworkRetrying => "Network hiccup—retrying…",
             Key::SessionExpired => "Session expired; scan again from the main menu",
             Key::NowPlaying => "Now Playing",
+            Key::Cover => "Cover",
             Key::Library => "Library",
             Key::Search => "Search",
             Key::Queue => "Queue",
@@ -466,7 +465,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "Use Scan in the NetEase Cloud Music app (the camera app will not work)"
             }
-            Key::NotLoggedInMenu => "Signed out · scan from the main menu",
+            Key::SignedOut => "Signed out",
             Key::LikedSongs => "Liked Songs",
             Key::DailyRecommendations => "Daily Picks",
             Key::PersonalFm => "Personal FM",
@@ -475,11 +474,11 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::EmptyLibrary => "Nothing here yet",
             Key::ColumnTitle => "Title",
             Key::ColumnArtist => "Artist",
+            Key::ColumnAlbum => "Album",
             Key::ColumnDuration => "Time",
             Key::EmptyQueue => "Queue is empty—press Enter in Library to queue the list",
             Key::Relogin => "Scan again",
             Key::ScanLogin => "Sign in with QR",
-            Key::NotLoggedInSync => "Signed out · scan to sync your music",
             Key::OpQrKey => "request a QR code key",
             Key::ApiQrKeyMissing => "QR code response is missing unikey",
             Key::OpQrCheck => "check QR code status",
@@ -513,6 +512,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NetworkRetrying => "通信が不安定です。再試行中…",
             Key::SessionExpired => "ログイン期限切れです。メインメニューから再スキャンしてください",
             Key::NowPlaying => "再生中",
+            Key::Cover => "カバー",
             Key::Library => "ライブラリ",
             Key::Search => "検索",
             Key::Queue => "キュー",
@@ -582,7 +582,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "NetEase Cloud Musicアプリのスキャン機能を使用してください（カメラアプリは使用不可）"
             }
-            Key::NotLoggedInMenu => "未ログイン · メインメニューからスキャン",
+            Key::SignedOut => "未ログイン",
             Key::LikedSongs => "お気に入り",
             Key::DailyRecommendations => "デイリーレコメンド",
             Key::PersonalFm => "パーソナルFM",
@@ -591,11 +591,11 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::EmptyLibrary => "まだ何もありません",
             Key::ColumnTitle => "曲名",
             Key::ColumnArtist => "アーティスト",
+            Key::ColumnAlbum => "アルバム",
             Key::ColumnDuration => "時間",
             Key::EmptyQueue => "キューは空です。ライブラリでEnterを押すと一覧を追加できます",
             Key::Relogin => "もう一度スキャン",
             Key::ScanLogin => "QRコードでログイン",
-            Key::NotLoggedInSync => "未ログイン · スキャンして音楽を同期",
             Key::OpQrKey => "QRコードキーの取得",
             Key::ApiQrKeyMissing => "QRコードの応答にunikeyがありません",
             Key::OpQrCheck => "QRコード状態の確認",
@@ -622,7 +622,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{init, songs_ready_for, t, t_for, t_login_interrupted, t_songs_ready, Key, Lang};
+    use super::{init, t, t_for, t_login_interrupted, track_count_for, Key, Lang};
 
     #[test]
     fn comparable_keys_are_complete_and_distinct_in_all_languages() {
@@ -633,6 +633,9 @@ mod tests {
             Key::Seek,
             Key::LabelLike,
             Key::LabelHelp,
+            Key::SignedOut,
+            Key::ColumnAlbum,
+            Key::Cover,
         ] {
             let translations = [
                 t_for(Lang::Zh, key),
@@ -647,6 +650,30 @@ mod tests {
     }
 
     #[test]
+    fn compact_account_and_album_labels_match_each_language() {
+        for (lang, signed_out, album) in [
+            (Lang::Zh, "未登录", "专辑"),
+            (Lang::En, "Signed out", "Album"),
+            (Lang::Ja, "未ログイン", "アルバム"),
+        ] {
+            assert_eq!(t_for(lang, Key::SignedOut), signed_out);
+            assert_eq!(t_for(lang, Key::ColumnAlbum), album);
+            assert!(!t_for(lang, Key::SignedOut).contains('·'));
+        }
+    }
+
+    #[test]
+    fn cover_panel_title_matches_each_language() {
+        for (lang, cover) in [
+            (Lang::Zh, "封面"),
+            (Lang::En, "Cover"),
+            (Lang::Ja, "カバー"),
+        ] {
+            assert_eq!(t_for(lang, Key::Cover), cover);
+        }
+    }
+
+    #[test]
     fn language_config_falls_back_to_chinese() {
         assert_eq!(Lang::from_config("zh"), Lang::Zh);
         assert_eq!(Lang::from_config("en"), Lang::En);
@@ -656,9 +683,9 @@ mod tests {
 
     #[test]
     fn parameterized_song_counts_follow_each_language() {
-        assert_eq!(songs_ready_for(Lang::Zh, 12), "12 首已就绪");
-        assert_eq!(songs_ready_for(Lang::En, 12), "12 tracks ready");
-        assert_eq!(songs_ready_for(Lang::Ja, 12), "12曲を同期済み");
+        assert_eq!(track_count_for(Lang::Zh, 12), "12 首");
+        assert_eq!(track_count_for(Lang::En, 12), "12 tracks");
+        assert_eq!(track_count_for(Lang::Ja, 12), "12曲");
     }
 
     #[test]
@@ -669,7 +696,6 @@ mod tests {
             (Lang::Ja, "メインメニュー"),
         ] {
             for message in [
-                t_for(lang, Key::NotLoggedInMenu).to_owned(),
                 t_for(lang, Key::QrExpired).to_owned(),
                 t_for(lang, Key::SessionExpired).to_owned(),
             ] {
@@ -686,6 +712,6 @@ mod tests {
     fn global_init_drives_public_translation_functions() {
         init(Lang::En);
         assert_eq!(t(Key::Quit), "Quit");
-        assert_eq!(t_songs_ready(3), "3 tracks ready");
+        assert_eq!(super::t_track_count(3), "3 tracks");
     }
 }

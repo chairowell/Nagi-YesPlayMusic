@@ -8,6 +8,10 @@ use serde::Deserialize;
 
 type Rgb = (u8, u8, u8);
 
+/// Selected rows lift twelve percent from the foreground without becoming a chip.
+const SELECTION_FOREGROUND_PERCENT: u16 = 12;
+const COLOR_PERCENT_SCALE: u16 = 100;
+
 pub const BUILTIN_NAMES: &[&str] = &[
     "db16",
     "pico8",
@@ -253,6 +257,20 @@ impl Theme {
             Color::Black
         } else {
             self.bg
+        }
+    }
+
+    /// Low-contrast row selection: 88% background plus 12% foreground.
+    pub const fn selection_bg(&self) -> Color {
+        match (self.bg, self.fg) {
+            (Color::Rgb(bg_r, bg_g, bg_b), Color::Rgb(fg_r, fg_g, fg_b)) => Color::Rgb(
+                selection_channel(bg_r, fg_r),
+                selection_channel(bg_g, fg_g),
+                selection_channel(bg_b, fg_b),
+            ),
+            // Reset hides the terminal's real RGB values, so a deterministic faint role
+            // is the closest portable lift for the transparent theme.
+            _ => self.faint,
         }
     }
 
@@ -568,6 +586,13 @@ fn rgb((red, green, blue): Rgb) -> Color {
     Color::Rgb(red, green, blue)
 }
 
+const fn selection_channel(background: u8, foreground: u8) -> u8 {
+    let foreground_weight = foreground as u16 * SELECTION_FOREGROUND_PERCENT;
+    let background_weight =
+        background as u16 * (COLOR_PERCENT_SCALE - SELECTION_FOREGROUND_PERCENT);
+    ((background_weight + foreground_weight + COLOR_PERCENT_SCALE / 2) / COLOR_PERCENT_SCALE) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -727,8 +752,17 @@ mod tests {
         assert_eq!(transparent.bg, Color::Reset);
         assert_eq!(transparent.fg, Color::Reset);
         assert_eq!(transparent.selection_fg(), Color::Black);
+        assert_eq!(transparent.selection_bg(), transparent.faint);
         assert_ne!(transparent.accent, Color::Reset);
         assert_eq!(transparent.palette, DB16);
+    }
+
+    #[test]
+    fn selection_background_is_a_twelve_percent_foreground_lift() {
+        let theme = Theme::db16();
+
+        assert_eq!(theme.selection_bg(), Color::Rgb(44, 39, 50));
+        assert_ne!(theme.selection_bg(), theme.sel);
     }
 
     #[test]

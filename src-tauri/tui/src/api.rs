@@ -39,6 +39,7 @@ pub struct ResolvedTrack {
     pub id: i64,
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub media: ResolvedMedia,
     pub kind: String,
     pub cache_key: CacheKey,
@@ -98,6 +99,7 @@ pub struct SongRow {
     pub id: i64,
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub duration_ms: i64,
     pub pic_url: Option<String>,
 }
@@ -524,6 +526,7 @@ impl Ncm {
             id: row.id,
             title: row.title.clone(),
             artist: row.artist.clone(),
+            album: row.album.clone(),
             media,
             kind: codec.extension().to_owned(),
             cache_key: CacheKey::new(row.id, requested_quality),
@@ -555,6 +558,7 @@ impl Ncm {
                 id,
                 title: song["name"].as_str().unwrap_or(title).to_owned(),
                 artist: song["ar"][0]["name"].as_str().unwrap_or(artist).to_owned(),
+                album: song["al"]["name"].as_str().unwrap_or("").to_owned(),
                 duration_ms: song["dt"].as_i64().unwrap_or(0),
                 pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
             };
@@ -573,6 +577,7 @@ impl Ncm {
             id: row.id,
             title: row.title,
             artist: row.artist,
+            album: row.album,
             kind: source.codec.extension().to_owned(),
             cache_key: CacheKey::new(row.id, requested_quality),
             codec: source.codec,
@@ -765,6 +770,7 @@ fn song_row(song: &Value) -> SongRow {
         id: song["id"].as_i64().unwrap_or(0),
         title: song["name"].as_str().unwrap_or("?").to_owned(),
         artist: song["ar"][0]["name"].as_str().unwrap_or("?").to_owned(),
+        album: song["al"]["name"].as_str().unwrap_or("").to_owned(),
         duration_ms: song["dt"].as_i64().unwrap_or(0),
         pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
     }
@@ -778,6 +784,11 @@ fn song_row_flex(song: &Value) -> SongRow {
         .or_else(|| song["artists"][0]["name"].as_str())
         .unwrap_or("?")
         .to_owned();
+    let album = song["al"]["name"]
+        .as_str()
+        .or_else(|| song["album"]["name"].as_str())
+        .unwrap_or("")
+        .to_owned();
     let pic_url = song["al"]["picUrl"]
         .as_str()
         .or_else(|| song["album"]["picUrl"].as_str())
@@ -790,6 +801,7 @@ fn song_row_flex(song: &Value) -> SongRow {
         id: song["id"].as_i64().unwrap_or(0),
         title: song["name"].as_str().unwrap_or("?").to_owned(),
         artist,
+        album,
         duration_ms,
         pic_url,
     }
@@ -887,6 +899,7 @@ mod tests {
             id: 42,
             title: "Unavailable".into(),
             artist: "Artist".into(),
+            album: "Album".into(),
             duration_ms: 180_000,
             pic_url: None,
         }
@@ -1053,6 +1066,7 @@ mod tests {
                 id: id as i64,
                 title: format!("Track {id}"),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 duration_ms: 180_000,
                 pic_url: None,
             })
@@ -1180,6 +1194,27 @@ mod tests {
     }
 
     #[test]
+    fn song_rows_preserve_album_names_from_both_payload_shapes() {
+        let standard = song_row(&serde_json::json!({
+            "id": 1,
+            "name": "Track",
+            "ar": [{ "name": "Artist" }],
+            "al": { "name": "Standard Album", "picUrl": null },
+            "dt": 180_000
+        }));
+        let flexible = song_row_flex(&serde_json::json!({
+            "id": 2,
+            "name": "Cloud Track",
+            "artists": [{ "name": "Cloud Artist" }],
+            "album": { "name": "Flexible Album", "picUrl": null },
+            "duration": 210_000
+        }));
+
+        assert_eq!(standard.album, "Standard Album");
+        assert_eq!(flexible.album, "Flexible Album");
+    }
+
+    #[test]
     fn playback_response_preserves_actual_cache_metadata() {
         let source = parse_playback_source(&serde_json::json!({
             "url": "https://example.test/audio.flac",
@@ -1213,6 +1248,7 @@ mod tests {
                 id: 42,
                 title: "Track".into(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 duration_ms: 180_000,
                 pic_url: None,
             },
@@ -1230,6 +1266,7 @@ mod tests {
         assert_eq!(track.codec, AudioCodec::Mp3);
         assert_eq!(track.kind, "mp3");
         assert_eq!(track.actual_bitrate, 320_000);
+        assert_eq!(track.album, "Album");
         assert_eq!(track.expected_bytes, Some(7_654_321));
         assert_eq!(track.expected_md5, Some([0x11; 16]));
     }

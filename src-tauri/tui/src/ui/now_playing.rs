@@ -79,7 +79,7 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
         .height
         .min(area.height.saturating_sub(menu_height + 4));
 
-    let [_, art_area, _, menu_area, _, footer_area, _] = Layout::vertical([
+    let [_, art_area, _, menu_area, _, _, _] = Layout::vertical([
         Constraint::Fill(2),
         Constraint::Length(art_height),
         Constraint::Length(1),
@@ -109,29 +109,11 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
                 format!(" {label}{}", " ".repeat(pad)),
                 Style::new().fg(theme.fg),
             ),
-            Span::styled((*key).to_owned(), Style::new().fg(theme.accent)),
+            Span::styled((*key).to_owned(), Style::new().fg(theme.fg).bg(theme.faint)),
             Span::raw(" "),
         ]);
         frame.render_widget(Paragraph::new(line), row);
     }
-
-    let footer = match (&state.session.nickname, state.library.len()) {
-        (Some(nickname), n) if state.library_synced => {
-            format!("♪ {nickname} · {}", i18n::t_songs_ready(n))
-        }
-        (Some(nickname), _) => {
-            format!("♪ {nickname} · {}", i18n::t(Key::SyncingLibrary))
-        }
-        (None, _) => i18n::t(Key::NotLoggedInSync).into(),
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            footer,
-            Style::new().fg(theme.faint),
-        )))
-        .centered(),
-        footer_area,
-    );
 }
 
 fn menu_entries(state: &AppState) -> Vec<(String, &'static str, MenuEntry)> {
@@ -196,7 +178,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
     if let Some(now) = &state.now {
         lines.push(Line::from(Span::styled(
             format!("{indent}{}", now.title),
-            Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
             format!("{indent}{} ", now.artist),
@@ -205,7 +187,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
         if !now.album.is_empty() {
             lines.push(Line::from(Span::styled(
                 format!("{indent}{}", now.album),
-                Style::new().fg(theme.faint),
+                Style::new().fg(theme.dim),
             )));
         }
         if !state.lyrics.is_empty() {
@@ -219,7 +201,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
                 format!("{indent}{status}"),
-                Style::new().fg(theme.accent2),
+                Style::new().fg(theme.dim),
             )));
         }
     }
@@ -377,7 +359,7 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         ]
     } else {
         vec![
-            Span::styled("━".repeat(head), Style::new().fg(theme.fg)),
+            Span::styled("━".repeat(head), Style::new().fg(theme.accent)),
             Span::styled("●", Style::new().fg(theme.accent)),
             Span::styled(
                 "─".repeat(bar_width.saturating_sub(head + 1)),
@@ -398,12 +380,12 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         Span::raw(" "),
         Span::styled(play_icon, Style::new().fg(theme.fg)),
         Span::raw(" ".repeat(play_slot_width.saturating_sub(display_width(play_icon)) + 1)),
-        Span::styled(elapsed, Style::new().fg(theme.dim)),
+        Span::styled(elapsed, Style::new().fg(theme.faint)),
         Span::raw(" "),
     ];
     spans.extend(bar_spans);
     spans.push(Span::raw(" "));
-    spans.push(Span::styled(total, Style::new().fg(theme.dim)));
+    spans.push(Span::styled(total, Style::new().fg(theme.faint)));
     // Clickable heart: its cell position is the rendered width so far + 2.
     let heart_x = spans
         .iter()
@@ -571,6 +553,9 @@ mod tests {
         });
         state.current_track_id = Some(42);
         state.liked.insert(42);
+        state.position = Duration::from_secs(30);
+        state.duration = Some(Duration::from_secs(120));
+        state.status = Some("Resolving".into());
         let backend = TestBackend::new(80, 8);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -583,13 +568,53 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(2, 0)].fg, state.theme.accent);
+        assert_eq!(buffer[(2, 0)].fg, state.theme.fg);
         assert!(buffer[(2, 0)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(2, 1)].fg, state.theme.dim);
-        assert_eq!(buffer[(2, 2)].fg, state.theme.faint);
+        assert_eq!(buffer[(2, 2)].fg, state.theme.dim);
+        assert_eq!(buffer[(2, 4)].fg, state.theme.dim);
+        assert!(buffer
+            .content()
+            .iter()
+            .any(|cell| cell.symbol() == "━" && cell.fg == state.theme.accent));
+        for time in ["00:30", "02:00"] {
+            let start = (0..=80 - time.len() as u16)
+                .find(|x| rect_text(buffer, Rect::new(*x, 6, time.len() as u16, 1)) == time)
+                .unwrap();
+            assert!(
+                (start..start + time.len() as u16).all(|x| buffer[(x, 6)].fg == state.theme.faint)
+            );
+        }
         let progress = (0..80).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
         assert!(progress.contains('♥'));
         assert!(!progress.contains('♡'));
+    }
+
+    #[test]
+    fn dashboard_leaves_account_status_to_the_global_header() {
+        let mut state = AppState::new(&Config::default());
+        state.session.nickname = Some("Listener".into());
+        state.library_synced = true;
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!rendered.contains("Listener"));
+        let shortcut = hits.menu[0].0;
+        let shortcut = &terminal.backend().buffer()[(shortcut.right() - 2, shortcut.y)];
+        assert_eq!(shortcut.fg, state.theme.fg);
+        assert_eq!(shortcut.bg, state.theme.faint);
     }
 
     #[test]

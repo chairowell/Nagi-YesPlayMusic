@@ -1,10 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::Terminal;
 use std::io::Write;
 use tempfile::TempDir;
 use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 
 use super::*;
+
+const PREVIEW_TERMINAL_SIZE: (u16, u16) = (
+    ui::library::PREVIEW_MIN_TERMINAL_WIDTH,
+    ui::cover_preview::HEIGHT + ui::HEADER_HEIGHT + ui::FOOTER_HEIGHT + ui::PANEL_GAP_Y * 2,
+);
 
 fn effects(directory: &TempDir) -> Effects {
     let (player, _events) = player::spawn(tokio::runtime::Handle::current());
@@ -35,6 +42,7 @@ fn row(id: i64) -> SongRow {
         id,
         title: format!("Track {id}"),
         artist: "Artist".into(),
+        album: "Album".into(),
         duration_ms: 180_000,
         pic_url: None,
     }
@@ -45,6 +53,7 @@ fn named_row(id: i64, title: &str, artist: &str) -> SongRow {
         id,
         title: title.into(),
         artist: artist.into(),
+        album: "Album".into(),
         duration_ms: 180_000,
         pic_url: None,
     }
@@ -79,7 +88,12 @@ async fn paused_ui_ticks_advance_the_marquee_without_consuming_the_gg_prefix() {
     let mut state = AppState::new(&Config::default());
     state.view = View::Queue;
     state.paused = true;
-    state.queue = vec![named_row(1, "A title long enough to scroll", "Artist")];
+    state.terminal_size = (80, 24);
+    state.queue = vec![named_row(
+        1,
+        "A deliberately long queue title that exceeds every available title column",
+        "Artist",
+    )];
 
     state.update(Action::GKey, &fx);
     state.update(Action::UiTick, &fx);
@@ -155,8 +169,13 @@ async fn returning_to_a_long_row_restarts_the_marquee_pause() {
     let hits = ui::Hits::default();
     let mut state = AppState::new(&Config::default());
     state.view = View::Queue;
+    state.terminal_size = (80, 24);
     state.queue = vec![
-        named_row(1, "A title long enough to scroll", "Artist"),
+        named_row(
+            1,
+            "A deliberately long queue title that exceeds every available title column",
+            "Artist",
+        ),
         named_row(2, "Short", "Artist"),
     ];
 
@@ -172,6 +191,42 @@ async fn returning_to_a_long_row_restarts_the_marquee_pause() {
         state.marquee_target.as_ref().map(|target| target.id),
         Some(1)
     );
+}
+
+#[test]
+fn marquee_targets_use_the_drawn_list_and_cover_widths() {
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Queue;
+    state.terminal_size = (80, 24);
+    state.queue = vec![named_row(1, "123456789012345678901234567890", "Artist")];
+    assert!(!state.marquee_active());
+
+    state.view = View::Library;
+    state.terminal_size = (120, 40);
+    state.library = vec![named_row(2, "1234567890123456789012", "Artist")];
+    assert!(state.selection_preview_visible());
+    assert!(!state.marquee_active());
+
+    state.library[0].title.push('3');
+    assert!(state.marquee_active());
+}
+
+#[test]
+fn selected_cover_scheduling_uses_the_framed_preview_boundaries() {
+    let mut state = AppState::new(&Config::default());
+    let minimum_rows = PREVIEW_TERMINAL_SIZE.1;
+
+    state.view = View::Library;
+    state.terminal_size = (ui::library::PREVIEW_MIN_TERMINAL_WIDTH - 1, minimum_rows);
+    assert!(!state.selection_preview_visible());
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
+    assert!(state.selection_preview_visible());
+
+    state.view = View::Search;
+    state.terminal_size = (ui::search::PREVIEW_MIN_TERMINAL_WIDTH, minimum_rows - 1);
+    assert!(!state.selection_preview_visible());
+    state.terminal_size = (ui::search::PREVIEW_MIN_TERMINAL_WIDTH, minimum_rows);
+    assert!(state.selection_preview_visible());
 }
 
 #[tokio::test]
@@ -196,7 +251,7 @@ async fn a_network_cover_waits_for_debounce_and_schedules_three_neighbors_each_s
     };
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = (0..9).map(covered_row).collect();
     state.selected = 4;
 
@@ -237,7 +292,7 @@ async fn a_hot_selected_cover_replaces_the_placeholder_synchronously() {
     let selected = covered_row(7);
     let pic_url = selected.pic_url.as_deref().unwrap();
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![selected.clone()];
 
     let request = state.cover_request(
@@ -290,7 +345,7 @@ async fn an_l2_hit_is_loaded_before_the_network_debounce() {
     let selected = covered_row(8);
     let pic_url = selected.pic_url.as_deref().unwrap();
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![selected.clone()];
     let request = state.cover_request(
         CoverSurface::Selection,
@@ -322,7 +377,7 @@ async fn a_cold_selection_holds_the_last_pixel_cover() {
     let fx = effects(&directory);
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![covered_row(1), covered_row(2)];
     let (first_key, _, _) = state.selected_cover_candidate().unwrap();
     let previous = solid_preview(ratatui::style::Color::Green);
@@ -514,7 +569,7 @@ async fn a_prefetched_pixel_warms_the_next_selection() {
     };
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![row(1), covered_row(2)];
     let next = state.library[1].clone();
     let request = state.cover_request(
@@ -572,7 +627,7 @@ async fn a_selection_without_art_still_prefetches_neighbor_originals() {
     };
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![covered_row(1), row(2), covered_row(3)];
     state.selected = 1;
     let previous = solid_preview(ratatui::style::Color::Green);
@@ -844,6 +899,10 @@ async fn restored_playback_stays_paused_until_space_then_seeks_after_start() {
     assert_eq!(state.position, Duration::from_secs(42));
     assert_eq!(state.current_track_id, Some(7));
     assert!(state.status.is_none());
+    assert_eq!(
+        state.now.as_ref().map(|now| now.album.as_str()),
+        Some("Album")
+    );
 
     state.update(Action::TogglePlay, &fx);
     assert_eq!(state.generation, 1);
@@ -861,6 +920,57 @@ async fn restored_playback_stays_paused_until_space_then_seeks_after_start() {
     assert_eq!(state.position, Duration::from_secs(42));
     assert!(state.seek_after_start.is_none());
     assert!(state.resume_on_play.is_none());
+}
+
+#[test]
+fn restored_mini_player_recovers_the_title_and_uses_a_portable_status_icon() {
+    let queued = named_row(7, "Recovered title", "Recovered artist");
+    let mut stored_current = crate::store::StoredSong::from(&queued);
+    stored_current.title.clear();
+    let mut state = AppState::new(&Config {
+        icons: crate::config::IconStyle::Nerd,
+        ..Config::default()
+    });
+    state.restore_playback(crate::store::StoredPlayback {
+        queue: vec![crate::store::StoredSong::from(&queued)],
+        current: Some(stored_current),
+        queue_pos: Some(0),
+        position_ms: 42_000,
+        volume: 0.7,
+        volume_before_mute: None,
+        play_mode: PlayMode::Off,
+        shuffle: false,
+        queue_source: Source::Liked,
+    });
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Recovered title")
+    );
+
+    let backend = TestBackend::new(80, 6);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut hits = ui::Hits::default();
+    terminal
+        .draw(|frame| ui::draw(frame, &mut state, &mut hits))
+        .unwrap();
+
+    let first = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+        .collect::<String>();
+    assert!(first.contains('▶'), "missing pause-state icon: {first:?}");
+    assert!(
+        first.contains("Recovered title"),
+        "missing restored title: {first:?}"
+    );
+
+    state.paused = false;
+    terminal
+        .draw(|frame| ui::draw(frame, &mut state, &mut hits))
+        .unwrap();
+    let first = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+        .collect::<String>();
+    assert!(first.contains('⏸'), "missing playing-state icon: {first:?}");
 }
 
 #[tokio::test]
@@ -1005,6 +1115,7 @@ async fn current_unm_result_uses_the_localised_source_status() {
                 id: 42,
                 title: "Recovered".into(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 media: api::ResolvedMedia::UnmBytes(Vec::new()),
                 kind: "mp3".into(),
                 cache_key: CacheKey::new(42, AudioQuality::High320),
@@ -1021,6 +1132,10 @@ async fn current_unm_result_uses_the_localised_source_status() {
 
     assert_eq!(state.status.as_deref(), Some(i18n::t(Key::UnmSourceUsed)));
     assert_eq!(state.current_track_id, Some(42));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.album.as_str()),
+        Some("Album")
+    );
 }
 
 #[tokio::test]
@@ -1202,6 +1317,7 @@ async fn quality_preview_rejects_a_prefetch_from_the_previous_setting() {
                 id: 42,
                 title: "Track 42".into(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 media: api::ResolvedMedia::NeteaseUrl("https://example.test/audio.mp3".into()),
                 kind: "mp3".into(),
                 cache_key: CacheKey::new(42, AudioQuality::High320),
