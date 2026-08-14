@@ -539,9 +539,9 @@ impl SearchColumns {
         Line::from(vec![
             Span::styled(" ".repeat(HEART_WIDTH + HEART_TITLE_GAP), style),
             Span::styled(pad_display(i18n::t(Key::ColumnTitle), self.title), style),
-            Span::styled(" ".repeat(COLUMN_GAP), style),
+            Span::styled(" ", style),
             Span::styled(pad_display(i18n::t(Key::ColumnArtist), ARTIST_WIDTH), style),
-            Span::styled(" ".repeat(COLUMN_GAP), style),
+            Span::styled(" ", style),
             Span::styled(pad_display_right(duration_label, DURATION_WIDTH), style),
         ])
     }
@@ -570,17 +570,17 @@ impl SearchColumns {
                 heart,
                 base.fg(if liked { theme.accent2 } else { theme.faint }),
             ),
-            Span::styled(" ".repeat(HEART_TITLE_GAP), base),
+            Span::styled(" ", base),
             Span::styled(
                 pad_or_marquee(&row.title, self.title, selected, marquee_frame),
                 title_style,
             ),
-            Span::styled(" ".repeat(COLUMN_GAP), base),
+            Span::styled(" ", base),
             Span::styled(
                 pad_or_marquee(&row.artist, ARTIST_WIDTH, selected, marquee_frame),
                 base.fg(theme.dim),
             ),
-            Span::styled(" ".repeat(COLUMN_GAP), base),
+            Span::styled(" ", base),
             Span::styled(
                 format!("{:>DURATION_WIDTH$}", super::format_ms(row.duration_ms)),
                 base.fg(theme.faint),

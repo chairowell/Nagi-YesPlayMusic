@@ -257,17 +257,17 @@ impl SongColumns {
             Span::styled(format!("{:>INDEX_WIDTH$}", "#"), style),
             Span::styled(" ".repeat(INDEX_TITLE_GAP), style),
             Span::styled(pad_display(i18n::t(Key::ColumnTitle), self.title), style),
-            Span::styled(" ".repeat(COLUMN_GAP), style),
+            Span::styled(" ", style),
             Span::styled(pad_display(i18n::t(Key::ColumnArtist), self.artist), style),
         ];
         if let Some(album_width) = self.album {
-            spans.push(Span::styled(" ".repeat(COLUMN_GAP), style));
+            spans.push(Span::styled(" ", style));
             spans.push(Span::styled(
                 pad_display(i18n::t(Key::ColumnAlbum), album_width),
                 style,
             ));
         }
-        spans.push(Span::styled(" ".repeat(COLUMN_GAP), style));
+        spans.push(Span::styled(" ", style));
         spans.push(Span::styled(
             super::text::pad_display_right(duration_label, DURATION_WIDTH),
             style,
@@ -300,20 +300,20 @@ impl SongColumns {
                 pad_or_marquee(&row.title, self.title, selected, marquee_frame),
                 title_style,
             ),
-            Span::styled(" ".repeat(COLUMN_GAP), base),
+            Span::styled(" ", base),
             Span::styled(
                 pad_or_marquee(&row.artist, self.artist, selected, marquee_frame),
                 base.fg(theme.dim),
             ),
         ];
         if let Some(album_width) = self.album {
-            spans.push(Span::styled(" ".repeat(COLUMN_GAP), base));
+            spans.push(Span::styled(" ", base));
             spans.push(Span::styled(
                 pad_display(&row.album, album_width),
                 base.fg(theme.dim),
             ));
         }
-        spans.push(Span::styled(" ".repeat(COLUMN_GAP), base));
+        spans.push(Span::styled(" ", base));
         spans.push(Span::styled(
             format!("{:>DURATION_WIDTH$}", super::format_ms(row.duration_ms)),
             base.fg(theme.faint),
