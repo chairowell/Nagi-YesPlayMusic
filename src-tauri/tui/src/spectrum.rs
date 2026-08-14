@@ -423,6 +423,66 @@ fn shade_glyph(intensity: f32) -> &'static str {
     }
 }
 
+const BRICK_GLYPH: &str = "▆";
+const BRICK_WIDTH: u16 = 2;
+const BRICK_STRIDE: u16 = 3;
+const REFLECTION_BACKGROUND_WEIGHT: f32 = 0.62;
+
+fn brick_count(width: u16) -> usize {
+    usize::from(width.saturating_add(1) / BRICK_STRIDE).max(1)
+}
+
+fn brick_row_color(ramp: Ramp, from_bottom: u16, height: u16) -> Color {
+    ramp.at((f32::from(from_bottom) + 1.0) / f32::from(height.max(1)))
+}
+
+fn draw_brick(buf: &mut Buffer, area: Rect, x: u16, y: u16, color: Color, background: Color) {
+    for offset in 0..BRICK_WIDTH {
+        put(buf, area, x + offset, y, BRICK_GLYPH, color, background);
+    }
+}
+
+fn draw_brick_bar(
+    buf: &mut Buffer,
+    area: Rect,
+    x: u16,
+    value: f32,
+    height: u16,
+    theme: &Theme,
+) -> u16 {
+    let filled = (value.clamp(0.0, 1.0) * f32::from(height)).ceil() as u16;
+    let ramp = Ramp::new(theme);
+    for from_bottom in 0..filled.min(height) {
+        draw_brick(
+            buf,
+            area,
+            x,
+            height - 1 - from_bottom,
+            brick_row_color(ramp, from_bottom, height),
+            theme.bg,
+        );
+    }
+    filled.min(height)
+}
+
+fn reflection_color(main: Color, theme: &Theme) -> Color {
+    match (main, theme.bg) {
+        (Color::Rgb(..), Color::Rgb(..)) => mix_color(main, theme.bg, REFLECTION_BACKGROUND_WEIGHT),
+        _ => theme.faint,
+    }
+}
+
+fn reflection_brick_visible(tick: u64, index: usize, distance: u16) -> bool {
+    let mut hash = tick
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        .wrapping_add((index as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9))
+        .wrapping_add(u64::from(distance).wrapping_mul(0x94d0_49bb_1331_11eb));
+    hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    hash ^= hash >> 31;
+    hash % 100 >= 18
+}
+
 fn draw_eighth_bar(
     buf: &mut Buffer,
     area: Rect,
@@ -549,7 +609,7 @@ impl SpectrumStyle for Led {
         buf: &mut Buffer,
         theme: &Theme,
     ) {
-        let count = usize::from((area.width + 1) / 3).max(1);
+        let count = brick_count(area.width);
         self.peaks.resize(count, 0.0);
         self.holds.resize(count, 0);
         let ramp = Ramp::new(theme);
@@ -572,27 +632,17 @@ impl SpectrumStyle for Led {
                 } else {
                     afterglow
                 };
-                for offset in 0..2 {
-                    put(
-                        buf,
-                        area,
-                        index as u16 * 3 + offset,
-                        y,
-                        "▆",
-                        color,
-                        theme.bg,
-                    );
-                }
+                draw_brick(buf, area, index as u16 * BRICK_STRIDE, y, color, theme.bg);
             }
             let peak_y = area
                 .height
                 .saturating_sub(1)
                 .saturating_sub((self.peaks[index] * f32::from(area.height - 1)).round() as u16);
-            for offset in 0..2 {
+            for offset in 0..BRICK_WIDTH {
                 put(
                     buf,
                     area,
-                    index as u16 * 3 + offset,
+                    index as u16 * BRICK_STRIDE + offset,
                     peak_y,
                     "▔",
                     ramp.at(1.0),
@@ -940,34 +990,31 @@ impl SpectrumStyle for Reflect {
     ) {
         self.tick = self.tick.wrapping_add(1);
         let line = area.height / 2;
+        let ramp = Ramp::new(theme);
+        for x in 0..area.width {
+            put(buf, area, x, line, "─", theme.faint, theme.bg);
+        }
         if line == 0 {
             return;
         }
-        let ramp = Ramp::new(theme);
-        for x in 0..area.width {
-            put(buf, area, x, line, "─", ramp.at(0.25), theme.bg);
-        }
-        let count = usize::from((area.width + 1) / 3).max(1);
+        let count = brick_count(area.width);
         for index in 0..count {
             let value = bin_value(bins, index, count);
-            draw_eighth_bar(buf, area, index as u16 * 3, 2, value, line, theme);
-            let reflected = (value * f32::from(line) * 0.5).ceil() as u16;
+            let main_height =
+                draw_brick_bar(buf, area, index as u16 * BRICK_STRIDE, value, line, theme);
+            let reflected = main_height.div_ceil(2);
             for distance in 0..reflected.min(area.height.saturating_sub(line + 1)) {
-                let color = mix_color(
-                    ramp.at(1.0 - f32::from(distance) / f32::from(line)),
-                    theme.bg,
-                    0.6,
-                );
-                for offset in 0..2 {
-                    let x = index as u16 * 3 + offset;
-                    let hash = self
-                        .tick
-                        .wrapping_mul(6364136223846793005)
-                        .wrapping_add(u64::from(x).wrapping_mul(1442695040888963407))
-                        .wrapping_add(u64::from(distance));
-                    if hash % 100 >= 18 {
-                        put(buf, area, x, line + 1 + distance, "▀", color, theme.bg);
-                    }
+                if reflection_brick_visible(self.tick, index, distance) {
+                    let source_row = (distance * 2).min(main_height.saturating_sub(1));
+                    let color = reflection_color(brick_row_color(ramp, source_row, line), theme);
+                    draw_brick(
+                        buf,
+                        area,
+                        index as u16 * BRICK_STRIDE,
+                        line + 1 + distance,
+                        color,
+                        theme.bg,
+                    );
                 }
             }
         }
@@ -1223,5 +1270,127 @@ mod tests {
                 .any(|cell| cell.symbol() != " ");
             assert!(visible, "{kind:?} rendered an empty frame");
         }
+    }
+
+    #[test]
+    fn reflect_renders_separated_bricks_and_a_dimmed_reflection() {
+        let theme = Theme::db16();
+        let backend = TestBackend::new(12, 9);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut style = Reflect::default();
+
+        terminal
+            .draw(|frame| {
+                style.render(
+                    &[1.0; SPECTRUM_BINS],
+                    &[],
+                    frame.area(),
+                    frame.buffer_mut(),
+                    &theme,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line = 4;
+        assert!((0..12).all(|x| buffer[(x, line)].symbol() == "─"));
+        assert!((0..12).all(|x| buffer[(x, line)].fg == theme.faint));
+        assert!((0..line).any(|y| buffer[(0, y)].symbol() == "▆"));
+        assert!(
+            (0..line).all(|y| (0..12).all(|x| { matches!(buffer[(x, y)].symbol(), " " | "▆") }))
+        );
+        assert!(((line + 1)..9)
+            .all(|y| (0..12).all(|x| { matches!(buffer[(x, y)].symbol(), " " | "▆") })));
+        let reflected_x = (0..12)
+            .find(|&x| {
+                buffer[(x, line - 1)].symbol() == "▆" && buffer[(x, line + 1)].symbol() == "▆"
+            })
+            .expect("reflection should keep at least one brick");
+        assert_ne!(
+            buffer[(reflected_x, line - 1)].fg,
+            buffer[(reflected_x, line + 1)].fg
+        );
+    }
+
+    #[test]
+    fn led_uses_two_cell_bricks_with_one_column_gap() {
+        let backend = TestBackend::new(6, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut style = Led::default();
+
+        terminal
+            .draw(|frame| {
+                style.render(
+                    &[1.0; SPECTRUM_BINS],
+                    &[],
+                    frame.area(),
+                    frame.buffer_mut(),
+                    &Theme::db16(),
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        for y in 1..4 {
+            let symbols = (0..6).map(|x| buffer[(x, y)].symbol()).collect::<Vec<_>>();
+            assert_eq!(symbols, ["▆", "▆", " ", "▆", "▆", " "]);
+        }
+    }
+
+    #[test]
+    fn reflect_sparkle_is_repeatable_and_transparent_safe() {
+        let render = || {
+            let theme = Theme::by_name("transparent");
+            let backend = TestBackend::new(42, 10);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut style = Reflect::default();
+            terminal
+                .draw(|frame| {
+                    style.render(
+                        &[1.0; SPECTRUM_BINS],
+                        &[],
+                        frame.area(),
+                        frame.buffer_mut(),
+                        &theme,
+                    );
+                })
+                .unwrap();
+            terminal.backend().buffer().clone()
+        };
+
+        let first = render();
+        let second = render();
+        assert_eq!(first, second);
+
+        let theme = Theme::by_name("transparent");
+        let reflection = (6..=8).flat_map(|y| {
+            let buffer = &first;
+            (0..42)
+                .filter(|x| x % BRICK_STRIDE < BRICK_WIDTH)
+                .map(move |x| &buffer[(x, y)])
+        });
+        let cells = reflection.collect::<Vec<_>>();
+        assert!(cells.iter().any(|cell| cell.symbol() == BRICK_GLYPH));
+        assert!(cells.iter().any(|cell| cell.symbol() == " "));
+        assert!(cells
+            .iter()
+            .filter(|cell| cell.symbol() == BRICK_GLYPH)
+            .all(|cell| cell.fg == theme.faint && cell.fg != Color::Reset));
+    }
+
+    #[test]
+    fn reflection_color_uses_rgb_mix_and_reset_fallback() {
+        let mut theme = Theme::db16();
+        theme.bg = Color::Rgb(20, 30, 40);
+        assert_eq!(
+            reflection_color(Color::Rgb(100, 150, 200), &theme),
+            Color::Rgb(50, 76, 101)
+        );
+
+        theme.bg = Color::Reset;
+        assert_eq!(
+            reflection_color(Color::Rgb(100, 150, 200), &theme),
+            theme.faint
+        );
     }
 }
