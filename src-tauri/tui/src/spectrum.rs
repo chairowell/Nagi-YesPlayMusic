@@ -171,10 +171,18 @@ impl SpectrumKind {
     ];
 }
 
+// Automatic gain: bars are normalized against a slowly decaying rolling
+// peak so the loudest bin always reaches full height. A fixed mapping
+// leaves typical music at 5-30% amplitude, which reads as a dead band no
+// matter how many rows the spectrum gets.
+const CEILING_FLOOR: f32 = 0.12;
+const CEILING_DECAY: f32 = 0.995;
+
 struct SpectrumAnalyzer {
     fft: Arc<dyn Fft<f32>>,
     work: Vec<Complex<f32>>,
     bins: [f32; SPECTRUM_BINS],
+    ceiling: f32,
 }
 
 impl Default for SpectrumAnalyzer {
@@ -184,6 +192,7 @@ impl Default for SpectrumAnalyzer {
             fft: planner.plan_fft_forward(FFT_SAMPLES),
             work: vec![Complex::default(); FFT_SAMPLES],
             bins: [0.0; SPECTRUM_BINS],
+            ceiling: CEILING_FLOOR,
         }
     }
 }
@@ -205,7 +214,8 @@ impl SpectrumAnalyzer {
         self.fft.process(&mut self.work);
 
         let high = (FFT_SAMPLES / 2) as f32;
-        for index in 0..SPECTRUM_BINS {
+        let mut targets = [0.0_f32; SPECTRUM_BINS];
+        for (index, target) in targets.iter_mut().enumerate() {
             let start = high
                 .powf(index as f32 / SPECTRUM_BINS as f32)
                 .floor()
@@ -219,9 +229,16 @@ impl SpectrumAnalyzer {
                 .map(|value| value.norm())
                 .fold(0.0_f32, f32::max)
                 / FFT_SAMPLES as f32;
-            let target = (magnitude * 40.0).ln_1p() / 41.0_f32.ln();
-            let coefficient = if target > self.bins[index] { 0.4 } else { 0.09 };
-            self.bins[index] += (target.clamp(0.0, 1.0) - self.bins[index]) * coefficient;
+            *target = (magnitude * 40.0).ln_1p() / 41.0_f32.ln();
+        }
+        let frame_peak = targets.iter().copied().fold(0.0_f32, f32::max);
+        self.ceiling = (self.ceiling * CEILING_DECAY)
+            .max(frame_peak)
+            .max(CEILING_FLOOR);
+        for (bin, target) in self.bins.iter_mut().zip(targets) {
+            let normalized = (target / self.ceiling).clamp(0.0, 1.0);
+            let coefficient = if normalized > *bin { 0.4 } else { 0.09 };
+            *bin += (normalized - *bin) * coefficient;
         }
         &self.bins
     }

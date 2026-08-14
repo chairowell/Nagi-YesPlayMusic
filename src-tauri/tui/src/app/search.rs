@@ -2,7 +2,7 @@ use std::{future::Future, time::Duration};
 
 use tokio::task::AbortHandle;
 
-use crate::action::{Action, View};
+use crate::action::Action;
 use crate::api::{
     AlbumHit, ArtistHit, PlaylistHit, SearchChannel, SearchPage, SearchPayload, SongRow,
 };
@@ -47,12 +47,17 @@ impl AppState {
                 }
             }
             KeyCode::Esc => {
-                if self.search.query.is_empty() {
-                    self.search.invalidate();
-                    self.view = View::NowPlaying;
-                } else {
+                // Esc walks outward one layer at a time: focus the result
+                // list first (number keys switch views there), then clear
+                // the draft query, then leave the view.
+                if self.search.current_len() > 0 {
+                    self.search.input = false;
+                    self.selected = self.search.saved_selection();
+                } else if !self.search.query.is_empty() {
                     self.search.clear();
                     self.selected = 0;
+                } else {
+                    self.navigate_back(fx);
                 }
             }
             KeyCode::Down if self.search.current_len() > 0 => {

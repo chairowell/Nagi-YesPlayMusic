@@ -185,7 +185,13 @@ fn query_graphics_picker(mode: CoverMode, background: Color) -> Option<Picker> {
     if mode != CoverMode::Original {
         return None;
     }
-    let mut picker = select_graphics_picker(mode, Picker::from_query_stdio().ok())?;
+    let queried = Picker::from_query_stdio().ok();
+    // ratatui-image's query bundle includes its own OSC 11, and its parser
+    // can stop reading before a slow terminal finishes answering. Sweep the
+    // leftovers before the event stream starts, or they arrive as phantom
+    // key presses (seen as the command palette popping open with hex noise).
+    crate::terminal_background::drain_pending_responses();
+    let mut picker = select_graphics_picker(mode, queried)?;
     if let Color::Rgb(red, green, blue) = background {
         picker.set_background_color(Some(Rgba([red, green, blue, 255])));
     }
@@ -594,7 +600,9 @@ impl AppState {
         let height = height.clamp(8, 40);
         let content_width = ui::centered_content(Rect::new(0, 0, cols, rows)).width;
         let width = (height * 2).min(match self.layout {
-            PlayLayout::Side => content_width.saturating_sub(30).max(16),
+            PlayLayout::Side => content_width
+                .saturating_sub(ui::now_playing::SIDE_PANEL_RESERVED_COLS)
+                .max(16),
             PlayLayout::Stacked => content_width.saturating_sub(4).max(16),
         });
         (width, width / 2)

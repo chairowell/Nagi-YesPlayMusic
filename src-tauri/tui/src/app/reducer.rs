@@ -698,7 +698,7 @@ impl AppState {
         }
     }
 
-    fn navigate_back(&mut self, fx: &Effects) {
+    pub(super) fn navigate_back(&mut self, fx: &Effects) {
         let search_selected = if self.view == View::Search {
             self.visible_row(self.selected)
                 .map_or(self.selected, |(underlying, _)| underlying)

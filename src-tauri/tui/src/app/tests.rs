@@ -1288,7 +1288,10 @@ async fn spectrum_setting_reflows_cover_geometry_immediately() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);
     let mut state = AppState::new(&Config::default());
-    state.terminal_size = (80, 24);
+    // The stacked layout reserves a bottom band for the spectrum, so
+    // enabling it must shrink the cover.
+    state.layout = PlayLayout::Stacked;
+    state.terminal_size = (60, 40);
     let before = state.desired_cover_cells();
 
     state.update(Action::SwitchView(View::Settings), &fx);
@@ -1302,6 +1305,13 @@ async fn spectrum_setting_reflows_cover_geometry_immediately() {
     assert!(state.config.spectrum_enabled);
     assert_eq!(state.style_revision, revision + 1);
     assert!(state.desired_cover_cells().1 < before.1);
+
+    // The side layout hosts the spectrum inside the right panel instead;
+    // the cover keeps its geometry.
+    state.layout = PlayLayout::Side;
+    let side_on = state.desired_cover_cells();
+    state.config.spectrum_enabled = false;
+    assert_eq!(state.desired_cover_cells(), side_on);
 }
 
 #[tokio::test]
