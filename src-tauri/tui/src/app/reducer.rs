@@ -1,22 +1,47 @@
 use std::time::Duration;
 
+use crossterm::event::{KeyCode, KeyModifiers};
+
 use crate::action::{Action, CoverSurface, View};
 use crate::api::Source;
 use crate::event;
 use crate::i18n::Key;
 use crate::player::PlayerCommand;
 
+use super::search::spawn_search_detail;
 use super::{
-    apply_pixel_cover, song_row_from_resolved, spawn_cover_prefetch, spawn_render_idle,
-    spawn_resolve, AppState, CoverLoad, CoverStyle, Effects, PlaybackModeSlot, PREVIEW_CELLS,
+    apply_pixel_cover,
+    command_palette::{CommandError, CommandInvocation},
+    song_row_from_resolved, spawn_cover_prefetch, spawn_render_idle, spawn_resolve, AppState,
+    CoverLoad, CoverStyle, Effects, PlaybackModeSlot, PREVIEW_CELLS,
 };
 
 impl AppState {
     pub(super) fn update(&mut self, action: Action, fx: &Effects) {
         if matches!(action, Action::UiTick) {
             self.advance_marquee();
+            self.advance_command_feedback();
             return;
         }
+        // The command palette is the topmost input owner. Background async
+        // results still reduce normally while keys, paste, and mouse stay modal.
+        let action = if self.command_palette.open {
+            match action {
+                Action::RawKey(key) => {
+                    self.handle_command_palette_key(key, fx);
+                    return;
+                }
+                Action::Paste(text) => {
+                    self.clear_command_feedback();
+                    self.command_palette.paste(&text);
+                    return;
+                }
+                Action::Mouse(_) => return,
+                action => action,
+            }
+        } else {
+            action
+        };
         // The quit dialog owns keyboard input, while background results
         // keep flowing through the normal reducer.
         let action = if self.confirm_quit {
@@ -53,6 +78,7 @@ impl AppState {
                     | Action::NextTrack
                     | Action::PrevTrack
                     | Action::ToggleLike
+                    | Action::OpenCommandPalette
                     | Action::Quit),
                 ) = event::key_action(*key)
                 {
@@ -81,6 +107,9 @@ impl AppState {
             }
             if self.filter.input {
                 self.handle_filter_key(*key);
+                return;
+            }
+            if self.view == View::Search && self.handle_search_channel_key(fx, *key) {
                 return;
             }
             let Some(mapped) = event::key_action(*key) else {
@@ -136,7 +165,21 @@ impl AppState {
             }
             Action::ConfirmYes => {}
             Action::Quit => self.confirm_quit = true,
+            Action::OpenCommandPalette => {
+                self.show_help = false;
+                self.clear_command_feedback();
+                self.command_palette.open();
+            }
+            Action::CloseCommandPalette => self.command_palette.close(),
+            Action::MoveCommandSelection(delta) => self.command_palette.move_selection(delta),
+            Action::ExecuteCommand => self.execute_command_palette(fx),
             Action::SwitchView(view) => {
+                if self.view == View::Search {
+                    let selected = self
+                        .visible_row(self.selected)
+                        .map_or(self.selected, |(underlying, _)| underlying);
+                    self.search.remember_selection(selected);
+                }
                 self.clear_filter();
                 if view == View::Settings {
                     self.open_settings();
@@ -147,7 +190,8 @@ impl AppState {
                     self.view = view;
                 }
                 if view == View::Search {
-                    self.search.input = true;
+                    self.search.input = self.search.is_results();
+                    self.selected = self.search.page_selection();
                 }
             }
             Action::Back => self.navigate_back(fx),
@@ -164,7 +208,11 @@ impl AppState {
                     self.view = View::NowPlaying;
                 }
             }
-            Action::ToggleSpectrum => self.toggle_spectrum(fx),
+            Action::ToggleSpectrum => {
+                if let Err(message) = self.toggle_spectrum(fx) {
+                    self.status = Some(message);
+                }
+            }
             Action::TogglePlay => self.toggle_play(fx),
             Action::SeekBy(seconds) => {
                 let step = Duration::from_secs(seconds.unsigned_abs());
@@ -240,16 +288,25 @@ impl AppState {
                     }
                 }
                 View::Search if !self.search.input => {
-                    if let Some((_, row)) = self.visible_row(self.selected) {
+                    if self.search.song_rows().is_some() {
+                        let Some((underlying, row)) = self.visible_row(self.selected) else {
+                            return;
+                        };
                         self.queue = self.visible_rows_owned();
                         self.queue_pos = Some(self.selected);
                         self.queue_source = Source::Search;
                         self.pending_fm_next = false;
                         self.fm_request_pending = false;
                         self.reset_shuffle_order();
+                        self.search.remember_selection(underlying);
                         self.play_row(fx, row);
                         self.clear_filter();
                         self.view = View::NowPlaying;
+                    } else if let Some(request) = self.search.open_detail(self.selected) {
+                        self.clear_filter();
+                        let seq = request.seq;
+                        let task = spawn_search_detail(fx, request);
+                        self.search.attach_detail_task(seq, task);
                     }
                 }
                 _ => {}
@@ -282,13 +339,20 @@ impl AppState {
             }
             Action::StartFilter => {
                 if matches!(self.view, View::Library | View::Queue)
-                    || self.view == View::Search && !self.search.input
+                    || self.view == View::Search
+                        && !self.search.input
+                        && self.search.song_rows().is_some()
                 {
                     self.filter.start();
                     self.selected = 0;
                     if self.view == View::Library {
                         self.sidebar_focus = false;
                     }
+                }
+            }
+            Action::SelectSearchChannel(channel) => {
+                if self.view == View::Search && self.search.is_results() {
+                    self.select_search_channel(fx, channel);
                 }
             }
             Action::ToggleLibraryFocus => {
@@ -358,17 +422,48 @@ impl AppState {
                 request,
                 message,
             } => self.apply_library_failed(session, request, message),
-            Action::SearchResults { seq, query, rows } => {
-                if self.search.accept(seq, &query, rows) && !self.search.results.is_empty() {
+            Action::SearchResults {
+                seq,
+                query,
+                channel,
+                payload,
+            } => {
+                let is_current = self.view == View::Search
+                    && self.search.is_results()
+                    && self.search.channel == channel;
+                if self.search.accept(seq, &query, channel, payload)
+                    && is_current
+                    && self.search.current_len() > 0
+                {
                     self.selected = 0;
                 }
             }
             Action::SearchFailed {
                 seq,
                 query,
+                channel,
                 message,
             } => {
-                self.search.fail(seq, &query, message);
+                self.search.fail(seq, &query, channel, message);
+            }
+            Action::SearchDetailLoaded {
+                seq,
+                channel,
+                id,
+                rows,
+            } => {
+                let is_current = self.view == View::Search && !self.search.is_results();
+                if self.search.accept_detail(seq, channel, id, rows) && is_current {
+                    self.selected = 0;
+                }
+            }
+            Action::SearchDetailFailed {
+                seq,
+                channel,
+                id,
+                message,
+            } => {
+                self.search.fail_detail(seq, channel, id, message);
             }
             Action::LikeFinished {
                 session,
@@ -603,10 +698,21 @@ impl AppState {
     }
 
     fn navigate_back(&mut self, fx: &Effects) {
+        let search_selected = if self.view == View::Search {
+            self.visible_row(self.selected)
+                .map_or(self.selected, |(underlying, _)| underlying)
+        } else {
+            0
+        };
         self.clear_filter();
         if self.view == View::Settings {
             self.cancel_settings(fx);
+        } else if self.view == View::Search && !self.search.is_results() {
+            self.selected = self.search.close_detail().unwrap_or_default();
+            self.search.input = false;
         } else if self.view == View::Search && !self.search.input {
+            self.search.remember_selection(search_selected);
+            self.selected = search_selected;
             self.search.input = true;
         } else if self.view == View::Library && !self.sidebar_focus && self.sidebar_visible() {
             self.sidebar_focus = true;
@@ -637,5 +743,117 @@ impl AppState {
             let volume = self.volume_before_mute.take().unwrap_or(1.0);
             self.set_volume(fx, volume);
         }
+    }
+
+    fn handle_command_palette_key(&mut self, key: crossterm::event::KeyEvent, fx: &Effects) {
+        if let Some(action) = event::command_palette_key_action(key) {
+            self.update(action, fx);
+            return;
+        }
+        match key.code {
+            KeyCode::Backspace => {
+                self.clear_command_feedback();
+                self.command_palette.backspace();
+            }
+            KeyCode::Home => self.command_palette.select_first(),
+            KeyCode::End => self.command_palette.select_last(),
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.clear_command_feedback();
+                self.command_palette.push(character);
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_command_palette(&mut self, fx: &Effects) {
+        let invocation = match self.command_palette.invocation() {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                self.set_command_feedback(command_error_message(error), true);
+                return;
+            }
+        };
+        let name = invocation.name();
+        self.command_palette.close();
+
+        let result = match invocation {
+            CommandInvocation::TogglePlay => {
+                self.update(Action::TogglePlay, fx);
+                Ok(())
+            }
+            CommandInvocation::Next => {
+                self.update(Action::NextTrack, fx);
+                Ok(())
+            }
+            CommandInvocation::Prev => {
+                self.update(Action::PrevTrack, fx);
+                Ok(())
+            }
+            CommandInvocation::Shuffle => {
+                self.update(Action::ToggleShuffle, fx);
+                Ok(())
+            }
+            CommandInvocation::Repeat => {
+                self.update(Action::CycleRepeat, fx);
+                Ok(())
+            }
+            CommandInvocation::Like => {
+                self.update(Action::ToggleLike, fx);
+                Ok(())
+            }
+            CommandInvocation::Zen => {
+                self.update(Action::ToggleZen, fx);
+                Ok(())
+            }
+            CommandInvocation::Spectrum => self.toggle_spectrum(fx),
+            CommandInvocation::Mute => {
+                self.update(Action::ToggleMute, fx);
+                Ok(())
+            }
+            CommandInvocation::Seek(seconds) => {
+                self.update(Action::SeekBy(seconds), fx);
+                Ok(())
+            }
+            CommandInvocation::Volume(percent) => {
+                self.update(Action::SetVolumeTo(f32::from(percent) / 100.0), fx);
+                Ok(())
+            }
+            CommandInvocation::Theme(theme) => self.set_command_theme(fx, &theme),
+            CommandInvocation::Quality(quality) => self.set_command_quality(fx, quality),
+            CommandInvocation::Goto(view) => {
+                self.zen = false;
+                self.update(Action::SwitchView(view), fx);
+                Ok(())
+            }
+            CommandInvocation::Quit => {
+                self.update(Action::Quit, fx);
+                Ok(())
+            }
+        };
+        match result {
+            Ok(()) => self.set_command_feedback(crate::i18n::t_command_executed(name), false),
+            Err(message) => self.set_command_feedback(message, true),
+        }
+    }
+}
+
+fn command_error_message(error: CommandError) -> String {
+    match error {
+        CommandError::Unknown(command) => crate::i18n::t_command_unknown(&command),
+        CommandError::MissingArgument { command, expected } => {
+            crate::i18n::t_command_missing_argument(command, expected)
+        }
+        CommandError::UnexpectedArgument { command } => {
+            crate::i18n::t_command_unexpected_argument(command)
+        }
+        CommandError::InvalidArgument {
+            command,
+            value,
+            expected,
+        } => crate::i18n::t_command_invalid_argument(command, &value, expected),
     }
 }

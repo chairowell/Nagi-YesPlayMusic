@@ -1,20 +1,50 @@
 //! Queue view: the current listening context; the play glyph marks its row.
 
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::AppState;
 use crate::i18n::{self, Key};
-use crate::ui::text::pad_or_marquee;
+use crate::ui::text::{needs_marquee, pad_or_marquee};
 use crate::ui::Hits;
+
+/// The now-playing marker occupies one terminal cell.
+const MARKER_WIDTH: usize = 1;
+/// Keep the play marker distinct from the heart state.
+const MARKER_HEART_GAP: usize = 1;
+/// The solid heart state occupies one terminal cell.
+const HEART_WIDTH: usize = 1;
+/// Keep the heart distinct from the ordinal column.
+const HEART_INDEX_GAP: usize = 1;
+/// Width of the right-aligned ordinal column.
+const INDEX_WIDTH: usize = 3;
+/// Gap between the ordinal and the primary title column.
+const INDEX_TITLE_GAP: usize = 2;
+/// Artist metadata keeps a stable scan width.
+const ARTIST_WIDTH: usize = 12;
+/// Terminal playback durations always use `mm:ss`.
+const DURATION_WIDTH: usize = 5;
+/// Metadata columns are separated by one blank terminal cell.
+const COLUMN_GAP: usize = 1;
 
 pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let icons = crate::icons::for_style(state.config.icons);
     let rows = state.visible_rows(&state.queue);
+    let block = super::panel_block(
+        theme,
+        i18n::t(Key::Queue),
+        Some(i18n::t_track_count(rows.len())),
+    )
+    .title_bottom(super::filter_title(state));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.is_empty() {
+        return;
+    }
     if rows.is_empty() {
         let message = if !state.filter.query.is_empty() && !state.queue.is_empty() {
             i18n::t(Key::NoResults)
@@ -27,21 +57,23 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
                 Style::new().fg(theme.dim),
             )))
             .centered(),
-            area,
+            inner,
         );
         return;
     }
 
-    let visible = area.height as usize;
+    let visible = inner.height.saturating_sub(1) as usize; // header row
     let offset = super::scroll_offset(state.selected, rows.len(), visible);
     let marquee_frame = state.marquee_frame();
-    let mut lines = Vec::with_capacity(visible);
+    let columns = QueueColumns::for_width(inner.width as usize);
+    let mut lines = Vec::with_capacity(visible + 1);
+    lines.push(columns.header(theme));
     for (visible_index, (index, row)) in rows.iter().enumerate().skip(offset).take(visible) {
         hits.rows.push((
             Rect {
-                x: area.x,
-                y: area.y + (visible_index - offset) as u16,
-                width: area.width,
+                x: inner.x,
+                y: inner.y + 1 + (visible_index - offset) as u16,
+                width: inner.width,
                 height: 1,
             },
             visible_index,
@@ -49,37 +81,134 @@ pub fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
         let playing = state.queue_pos == Some(*index);
         let selected = visible_index == state.selected && !state.filter.input;
         let marker = if playing { icons.play } else { " " };
-        let style = if selected {
-            Style::new().fg(theme.selection_fg()).bg(theme.sel)
-        } else if playing {
-            Style::new().fg(theme.accent)
-        } else {
-            Style::new().fg(theme.fg)
-        };
         let liked = state.liked.contains(&row.id);
-        let heart_style = if selected {
-            Style::new()
-                .fg(if liked { theme.accent2 } else { theme.faint })
-                .bg(theme.sel)
-        } else {
-            Style::new().fg(if liked { theme.accent2 } else { theme.faint })
-        };
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {marker} "), style),
-            Span::styled(icons.heart, heart_style),
+        lines.push(columns.row(
+            theme,
+            marker,
+            icons.heart,
+            index + 1,
+            row,
+            playing,
+            liked,
+            selected,
+            marquee_frame,
+        ));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+pub(crate) fn marquee_needed(row: &crate::api::SongRow, area_width: u16) -> bool {
+    let columns = QueueColumns::for_width(super::panel_inner_width(area_width));
+    needs_marquee(&row.title, columns.title) || needs_marquee(&row.artist, ARTIST_WIDTH)
+}
+
+#[derive(Clone, Copy)]
+struct QueueColumns {
+    title: usize,
+}
+
+impl QueueColumns {
+    fn for_width(width: usize) -> Self {
+        let fixed = MARKER_WIDTH
+            + MARKER_HEART_GAP
+            + HEART_WIDTH
+            + HEART_INDEX_GAP
+            + INDEX_WIDTH
+            + INDEX_TITLE_GAP
+            + ARTIST_WIDTH
+            + DURATION_WIDTH
+            + COLUMN_GAP * 2;
+        Self {
+            title: width.saturating_sub(fixed),
+        }
+    }
+
+    fn header(self, theme: &crate::theme::Theme) -> Line<'static> {
+        self.header_with_duration(theme, i18n::t(Key::ColumnDuration))
+    }
+
+    fn header_with_duration(
+        self,
+        theme: &crate::theme::Theme,
+        duration_label: &str,
+    ) -> Line<'static> {
+        let style = Style::new().fg(theme.faint);
+        Line::from(vec![
             Span::styled(
-                format!(
-                    " {:>3}  {} {} {:>5}",
-                    index + 1,
-                    pad_or_marquee(&row.title, 24, selected, marquee_frame),
-                    pad_or_marquee(&row.artist, 14, selected, marquee_frame),
-                    super::format_ms(row.duration_ms)
-                ),
+                " ".repeat(MARKER_WIDTH + MARKER_HEART_GAP + HEART_WIDTH + HEART_INDEX_GAP),
                 style,
             ),
-        ]));
+            Span::styled(format!("{:>INDEX_WIDTH$}", "#"), style),
+            Span::styled(" ".repeat(INDEX_TITLE_GAP), style),
+            Span::styled(
+                super::text::pad_display(i18n::t(Key::ColumnTitle), self.title),
+                style,
+            ),
+            Span::styled(" ", style),
+            Span::styled(
+                super::text::pad_display(i18n::t(Key::ColumnArtist), ARTIST_WIDTH),
+                style,
+            ),
+            Span::styled(" ", style),
+            Span::styled(
+                super::text::pad_display_right(duration_label, DURATION_WIDTH),
+                style,
+            ),
+        ])
     }
-    frame.render_widget(Paragraph::new(lines), area);
+
+    #[allow(clippy::too_many_arguments)]
+    fn row(
+        self,
+        theme: &crate::theme::Theme,
+        marker: &'static str,
+        heart: &'static str,
+        index: usize,
+        row: &crate::api::SongRow,
+        playing: bool,
+        liked: bool,
+        selected: bool,
+        marquee_frame: u64,
+    ) -> Line<'static> {
+        let base = if selected {
+            Style::new().bg(theme.selection_bg())
+        } else {
+            Style::new()
+        };
+        let title_style = if selected {
+            base.fg(theme.fg).add_modifier(Modifier::BOLD)
+        } else {
+            base.fg(theme.fg)
+        };
+        Line::from(vec![
+            Span::styled(
+                marker,
+                base.fg(if playing { theme.accent } else { theme.faint }),
+            ),
+            Span::styled(" ", base),
+            Span::styled(
+                heart,
+                base.fg(if liked { theme.accent2 } else { theme.faint }),
+            ),
+            Span::styled(" ", base),
+            Span::styled(format!("{index:>INDEX_WIDTH$}"), base.fg(theme.faint)),
+            Span::styled(" ".repeat(INDEX_TITLE_GAP), base),
+            Span::styled(
+                pad_or_marquee(&row.title, self.title, selected, marquee_frame),
+                title_style,
+            ),
+            Span::styled(" ", base),
+            Span::styled(
+                pad_or_marquee(&row.artist, ARTIST_WIDTH, selected, marquee_frame),
+                base.fg(theme.dim),
+            ),
+            Span::styled(" ", base),
+            Span::styled(
+                format!("{:>DURATION_WIDTH$}", super::format_ms(row.duration_ms)),
+                base.fg(theme.faint),
+            ),
+        ])
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +221,34 @@ mod tests {
     use crate::config::Config;
 
     #[test]
+    fn cjk_duration_header_fits_every_supported_queue_width() {
+        let state = AppState::new(&Config::default());
+        let minimum = MARKER_WIDTH
+            + MARKER_HEART_GAP
+            + HEART_WIDTH
+            + HEART_INDEX_GAP
+            + INDEX_WIDTH
+            + INDEX_TITLE_GAP
+            + ARTIST_WIDTH
+            + DURATION_WIDTH
+            + COLUMN_GAP * 2;
+
+        for width in minimum..=200 {
+            let header = QueueColumns::for_width(width).header_with_duration(&state.theme, "时长");
+            assert_eq!(header.width(), width, "width {width}");
+
+            let backend = TestBackend::new(width as u16, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| frame.render_widget(Paragraph::new(header.clone()), frame.area()))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[((width - 4) as u16, 0)].symbol(), "时");
+            assert_eq!(buffer[((width - 2) as u16, 0)].symbol(), "长");
+        }
+    }
+
+    #[test]
     fn queue_rows_render_solid_hearts_in_state_colors() {
         for liked in [false, true] {
             let backend = TestBackend::new(80, 5);
@@ -101,6 +258,7 @@ mod tests {
                 id: 1,
                 title: "Track".into(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 duration_ms: 180_000,
                 pic_url: None,
             });
@@ -113,7 +271,7 @@ mod tests {
                 .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
                 .unwrap();
 
-            let cell = &terminal.backend().buffer()[(4, 0)];
+            let cell = &terminal.backend().buffer()[(4, 2)];
             assert_eq!(cell.symbol(), "♥");
             assert_eq!(
                 cell.fg,
@@ -124,5 +282,43 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn queue_panel_and_selected_row_follow_the_skeleton_language() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new(&Config::default());
+        state.queue.push(SongRow {
+            id: 1,
+            title: "Track".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+            duration_ms: 180_000,
+            pic_url: None,
+        });
+        state.queue_pos = Some(0);
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &state, frame.area(), &mut hits))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        for (position, symbol) in [
+            ((0, 0), "╭"),
+            ((79, 0), "╮"),
+            ((0, 23), "╰"),
+            ((79, 23), "╯"),
+        ] {
+            assert_eq!(buffer[position].symbol(), symbol);
+        }
+        assert_eq!(hits.rows, vec![(Rect::new(2, 2, 76, 1), 0)]);
+        assert_eq!(buffer[(2, 2)].fg, state.theme.accent);
+        assert_eq!(buffer[(11, 2)].fg, state.theme.fg);
+        assert_eq!(buffer[(11, 2)].bg, state.theme.selection_bg());
+        assert!(buffer[(11, 2)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(60, 2)].fg, state.theme.dim);
+        assert_eq!(buffer[(73, 2)].fg, state.theme.faint);
     }
 }

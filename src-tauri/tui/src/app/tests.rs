@@ -1,10 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::Terminal;
 use std::io::Write;
 use tempfile::TempDir;
 use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 
 use super::*;
+
+const PREVIEW_TERMINAL_SIZE: (u16, u16) = (
+    ui::library::PREVIEW_MIN_TERMINAL_WIDTH,
+    ui::cover_preview::HEIGHT + ui::HEADER_HEIGHT + ui::FOOTER_HEIGHT + ui::PANEL_GAP_Y * 2,
+);
 
 fn effects(directory: &TempDir) -> Effects {
     let (player, _events) = player::spawn(tokio::runtime::Handle::current());
@@ -35,6 +42,7 @@ fn row(id: i64) -> SongRow {
         id,
         title: format!("Track {id}"),
         artist: "Artist".into(),
+        album: "Album".into(),
         duration_ms: 180_000,
         pic_url: None,
     }
@@ -45,6 +53,7 @@ fn named_row(id: i64, title: &str, artist: &str) -> SongRow {
         id,
         title: title.into(),
         artist: artist.into(),
+        album: "Album".into(),
         duration_ms: 180_000,
         pic_url: None,
     }
@@ -79,7 +88,12 @@ async fn paused_ui_ticks_advance_the_marquee_without_consuming_the_gg_prefix() {
     let mut state = AppState::new(&Config::default());
     state.view = View::Queue;
     state.paused = true;
-    state.queue = vec![named_row(1, "A title long enough to scroll", "Artist")];
+    state.terminal_size = (80, 24);
+    state.queue = vec![named_row(
+        1,
+        "A deliberately long queue title that exceeds every available title column",
+        "Artist",
+    )];
 
     state.update(Action::GKey, &fx);
     state.update(Action::UiTick, &fx);
@@ -155,8 +169,13 @@ async fn returning_to_a_long_row_restarts_the_marquee_pause() {
     let hits = ui::Hits::default();
     let mut state = AppState::new(&Config::default());
     state.view = View::Queue;
+    state.terminal_size = (80, 24);
     state.queue = vec![
-        named_row(1, "A title long enough to scroll", "Artist"),
+        named_row(
+            1,
+            "A deliberately long queue title that exceeds every available title column",
+            "Artist",
+        ),
         named_row(2, "Short", "Artist"),
     ];
 
@@ -172,6 +191,42 @@ async fn returning_to_a_long_row_restarts_the_marquee_pause() {
         state.marquee_target.as_ref().map(|target| target.id),
         Some(1)
     );
+}
+
+#[test]
+fn marquee_targets_use_the_drawn_list_and_cover_widths() {
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Queue;
+    state.terminal_size = (80, 24);
+    state.queue = vec![named_row(1, "123456789012345678901234567890", "Artist")];
+    assert!(!state.marquee_active());
+
+    state.view = View::Library;
+    state.terminal_size = (120, 40);
+    state.library = vec![named_row(2, "1234567890123456789012", "Artist")];
+    assert!(state.selection_preview_visible());
+    assert!(!state.marquee_active());
+
+    state.library[0].title.push('3');
+    assert!(state.marquee_active());
+}
+
+#[test]
+fn selected_cover_scheduling_uses_the_framed_preview_boundaries() {
+    let mut state = AppState::new(&Config::default());
+    let minimum_rows = PREVIEW_TERMINAL_SIZE.1;
+
+    state.view = View::Library;
+    state.terminal_size = (ui::library::PREVIEW_MIN_TERMINAL_WIDTH - 1, minimum_rows);
+    assert!(!state.selection_preview_visible());
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
+    assert!(state.selection_preview_visible());
+
+    state.view = View::Search;
+    state.terminal_size = (ui::search::PREVIEW_MIN_TERMINAL_WIDTH, minimum_rows - 1);
+    assert!(!state.selection_preview_visible());
+    state.terminal_size = (ui::search::PREVIEW_MIN_TERMINAL_WIDTH, minimum_rows);
+    assert!(state.selection_preview_visible());
 }
 
 #[tokio::test]
@@ -196,7 +251,7 @@ async fn a_network_cover_waits_for_debounce_and_schedules_three_neighbors_each_s
     };
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = (0..9).map(covered_row).collect();
     state.selected = 4;
 
@@ -237,7 +292,7 @@ async fn a_hot_selected_cover_replaces_the_placeholder_synchronously() {
     let selected = covered_row(7);
     let pic_url = selected.pic_url.as_deref().unwrap();
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![selected.clone()];
 
     let request = state.cover_request(
@@ -290,7 +345,7 @@ async fn an_l2_hit_is_loaded_before_the_network_debounce() {
     let selected = covered_row(8);
     let pic_url = selected.pic_url.as_deref().unwrap();
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![selected.clone()];
     let request = state.cover_request(
         CoverSurface::Selection,
@@ -322,7 +377,7 @@ async fn a_cold_selection_holds_the_last_pixel_cover() {
     let fx = effects(&directory);
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![covered_row(1), covered_row(2)];
     let (first_key, _, _) = state.selected_cover_candidate().unwrap();
     let previous = solid_preview(ratatui::style::Color::Green);
@@ -514,7 +569,7 @@ async fn a_prefetched_pixel_warms_the_next_selection() {
     };
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![row(1), covered_row(2)];
     let next = state.library[1].clone();
     let request = state.cover_request(
@@ -572,7 +627,7 @@ async fn a_selection_without_art_still_prefetches_neighbor_originals() {
     };
     let mut state = AppState::new(&Config::default());
     state.view = View::Library;
-    state.terminal_size = (96, 15);
+    state.terminal_size = PREVIEW_TERMINAL_SIZE;
     state.library = vec![covered_row(1), row(2), covered_row(3)];
     state.selected = 1;
     let previous = solid_preview(ratatui::style::Color::Green);
@@ -844,6 +899,10 @@ async fn restored_playback_stays_paused_until_space_then_seeks_after_start() {
     assert_eq!(state.position, Duration::from_secs(42));
     assert_eq!(state.current_track_id, Some(7));
     assert!(state.status.is_none());
+    assert_eq!(
+        state.now.as_ref().map(|now| now.album.as_str()),
+        Some("Album")
+    );
 
     state.update(Action::TogglePlay, &fx);
     assert_eq!(state.generation, 1);
@@ -861,6 +920,57 @@ async fn restored_playback_stays_paused_until_space_then_seeks_after_start() {
     assert_eq!(state.position, Duration::from_secs(42));
     assert!(state.seek_after_start.is_none());
     assert!(state.resume_on_play.is_none());
+}
+
+#[test]
+fn restored_mini_player_recovers_the_title_and_uses_a_portable_status_icon() {
+    let queued = named_row(7, "Recovered title", "Recovered artist");
+    let mut stored_current = crate::store::StoredSong::from(&queued);
+    stored_current.title.clear();
+    let mut state = AppState::new(&Config {
+        icons: crate::config::IconStyle::Nerd,
+        ..Config::default()
+    });
+    state.restore_playback(crate::store::StoredPlayback {
+        queue: vec![crate::store::StoredSong::from(&queued)],
+        current: Some(stored_current),
+        queue_pos: Some(0),
+        position_ms: 42_000,
+        volume: 0.7,
+        volume_before_mute: None,
+        play_mode: PlayMode::Off,
+        shuffle: false,
+        queue_source: Source::Liked,
+    });
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Recovered title")
+    );
+
+    let backend = TestBackend::new(80, 6);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut hits = ui::Hits::default();
+    terminal
+        .draw(|frame| ui::draw(frame, &mut state, &mut hits))
+        .unwrap();
+
+    let first = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+        .collect::<String>();
+    assert!(first.contains('▶'), "missing pause-state icon: {first:?}");
+    assert!(
+        first.contains("Recovered title"),
+        "missing restored title: {first:?}"
+    );
+
+    state.paused = false;
+    terminal
+        .draw(|frame| ui::draw(frame, &mut state, &mut hits))
+        .unwrap();
+    let first = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+        .collect::<String>();
+    assert!(first.contains('⏸'), "missing playing-state icon: {first:?}");
 }
 
 #[tokio::test]
@@ -1005,6 +1115,7 @@ async fn current_unm_result_uses_the_localised_source_status() {
                 id: 42,
                 title: "Recovered".into(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 media: api::ResolvedMedia::UnmBytes(Vec::new()),
                 kind: "mp3".into(),
                 cache_key: CacheKey::new(42, AudioQuality::High320),
@@ -1021,6 +1132,10 @@ async fn current_unm_result_uses_the_localised_source_status() {
 
     assert_eq!(state.status.as_deref(), Some(i18n::t(Key::UnmSourceUsed)));
     assert_eq!(state.current_track_id, Some(42));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.album.as_str()),
+        Some("Album")
+    );
 }
 
 #[tokio::test]
@@ -1127,6 +1242,13 @@ async fn cover_detail_setting_rebuilds_pixel_art_immediately() {
     assert_eq!(state.config.cover_detail, pixel::CoverDetail::Quad);
     assert_eq!(state.style_revision, revision + 1);
     assert_ne!(state.selected_cover.placeholder, previous);
+
+    state.update(Action::AdjustSetting(1), &fx);
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.cover_detail, pixel::CoverDetail::Octant);
+
+    state.update(Action::AdjustSetting(1), &fx);
+    assert_eq!(state.config.cover_detail, pixel::CoverDetail::Half);
 }
 
 #[tokio::test]
@@ -1202,6 +1324,7 @@ async fn quality_preview_rejects_a_prefetch_from_the_previous_setting() {
                 id: 42,
                 title: "Track 42".into(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 media: api::ResolvedMedia::NeteaseUrl("https://example.test/audio.mp3".into()),
                 kind: "mp3".into(),
                 cache_key: CacheKey::new(42, AudioQuality::High320),
@@ -1250,6 +1373,15 @@ async fn quit_dialog_keeps_processing_async_state_updates() {
                 time: Duration::from_secs(1),
                 text: "new lyric".into(),
                 translation: None,
+                word_timing: Some(crate::yrc::YrcLine {
+                    start: Duration::from_secs(1),
+                    duration: Duration::from_millis(500),
+                    words: vec![crate::yrc::YrcWord {
+                        text: "new lyric".into(),
+                        start: Duration::from_secs(1),
+                        duration: Duration::from_millis(500),
+                    }],
+                }),
             }],
         },
         &fx,
@@ -1257,6 +1389,41 @@ async fn quit_dialog_keeps_processing_async_state_updates() {
 
     assert!(state.confirm_quit);
     assert_eq!(state.lyrics[0].text, "new lyric");
+    assert_eq!(
+        state.lyrics[0].word_timing.as_ref().map(|line| line.text()),
+        Some("new lyric".into())
+    );
+}
+
+#[tokio::test]
+async fn stale_lyrics_cannot_replace_the_current_tracks_word_timeline() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.generation = 2;
+
+    state.update(
+        Action::LyricsLoaded {
+            generation: 1,
+            lines: vec![crate::lyrics::LyricLine {
+                time: Duration::ZERO,
+                text: "stale".into(),
+                translation: None,
+                word_timing: Some(crate::yrc::YrcLine {
+                    start: Duration::ZERO,
+                    duration: Duration::from_secs(1),
+                    words: vec![crate::yrc::YrcWord {
+                        text: "stale".into(),
+                        start: Duration::ZERO,
+                        duration: Duration::from_secs(1),
+                    }],
+                }),
+            }],
+        },
+        &fx,
+    );
+
+    assert!(state.lyrics.is_empty());
 }
 
 #[tokio::test]
@@ -1301,7 +1468,11 @@ async fn editing_search_rejects_results_and_failures_for_the_previous_query() {
             Action::SearchResults {
                 seq: request.seq,
                 query: request.query,
-                rows: vec![row(1)],
+                channel: request.channel,
+                payload: crate::api::SearchPayload::Songs(crate::api::SearchPage {
+                    items: vec![row(1)],
+                    total: 1,
+                }),
             },
             &fx,
         );
@@ -1309,14 +1480,15 @@ async fn editing_search_rejects_results_and_failures_for_the_previous_query() {
             Action::SearchFailed {
                 seq: stale_seq,
                 query: stale_query,
+                channel: request.channel,
                 message: "old failure".into(),
             },
             &fx,
         );
 
-        assert!(state.search.results.is_empty());
-        assert!(state.search.error.is_none());
-        assert!(!state.search.searching);
+        assert!(state.search.songs.items.is_empty());
+        assert!(state.search.current_error().is_none());
+        assert!(!state.search.current_searching());
         assert!(state.search.input);
     }
 }
@@ -1329,9 +1501,15 @@ async fn search_row_click_selects_first_then_activates() {
     state.view = View::Search;
     state.search.query = "query".into();
     let request = state.search.submit().unwrap();
-    assert!(state
-        .search
-        .accept(request.seq, &request.query, vec![row(1), row(2)]));
+    assert!(state.search.accept(
+        request.seq,
+        &request.query,
+        request.channel,
+        crate::api::SearchPayload::Songs(crate::api::SearchPage {
+            items: vec![row(1), row(2)],
+            total: 2,
+        }),
+    ));
     assert!(state.search.input);
     state.selected = 0;
 
@@ -1370,7 +1548,7 @@ async fn selecting_a_different_search_row_focuses_the_result_list() {
     let mut state = AppState::new(&Config::default());
     state.view = View::Search;
     state.search.input = true;
-    state.search.results = vec![row(1), row(2)];
+    state.search.songs.items = vec![row(1), row(2)];
 
     state.update(Action::SelectIndex(1), &fx);
 
@@ -1385,10 +1563,339 @@ async fn jump_bottom_reaches_the_last_search_result() {
     let mut state = AppState::new(&Config::default());
     state.view = View::Search;
     state.search.input = false;
-    state.search.results = vec![row(1), row(2), row(3)];
+    state.search.songs.items = vec![row(1), row(2), row(3)];
 
     state.update(Action::JumpBottom, &fx);
 
+    assert_eq!(state.selected, 2);
+}
+
+#[tokio::test]
+async fn search_entity_activation_pushes_and_back_pops_the_detail_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Artists;
+    state.search.artists.items = vec![
+        crate::api::ArtistHit {
+            id: 1,
+            name: "First".into(),
+            pic_url: None,
+            album_count: 1,
+            song_count: 2,
+        },
+        crate::api::ArtistHit {
+            id: 2,
+            name: "Second".into(),
+            pic_url: None,
+            album_count: 3,
+            song_count: 4,
+        },
+    ];
+    state.selected = 1;
+
+    state.update(Action::Activate, &fx);
+
+    assert_eq!(state.search.detail_title(), Some("Second"));
+    assert_eq!(state.selected, 0);
+    assert!(!state.search.input);
+
+    state.update(Action::Back, &fx);
+
+    assert!(state.search.is_results());
+    assert_eq!(state.search.channel, crate::api::SearchChannel::Artists);
+    assert_eq!(state.selected, 1);
+    assert!(!state.search.input);
+}
+
+#[tokio::test]
+async fn detail_tracks_support_enqueue_and_context_playback() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Albums;
+    state.search.albums.items.push(crate::api::AlbumHit {
+        id: 7,
+        name: "Album".into(),
+        artist: "Artist".into(),
+        pic_url: None,
+        song_count: 2,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![row(10), row(11)],
+        },
+        &fx,
+    );
+    state.selected = 1;
+
+    state.update(Action::AddSelectedToQueue, &fx);
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [11]
+    );
+
+    state.update(Action::Activate, &fx);
+    assert_eq!(state.view, View::NowPlaying);
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [10, 11]
+    );
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 11")
+    );
+}
+
+#[tokio::test]
+async fn detail_tracks_support_local_filtering() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Albums;
+    state.search.albums.items.push(crate::api::AlbumHit {
+        id: 7,
+        name: "Album".into(),
+        artist: "Artist".into(),
+        pic_url: None,
+        song_count: 2,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![named_row(10, "Alpha", "One"), named_row(11, "Beta", "Two")],
+        },
+        &fx,
+    );
+
+    state.update(raw_key(KeyCode::Char('/')), &fx);
+    state.update(raw_key(KeyCode::Char('b')), &fx);
+    state.update(raw_key(KeyCode::Char('t')), &fx);
+
+    assert!(state.filter.input);
+    assert_eq!(state.visible_len(), 1);
+    assert_eq!(state.visible_row(0).map(|(_, row)| row.id), Some(11));
+
+    state.update(raw_key(KeyCode::Enter), &fx);
+    state.update(Action::AddSelectedToQueue, &fx);
+
+    assert!(!state.filter.input);
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [11]
+    );
+}
+
+#[tokio::test]
+async fn detail_track_is_used_for_the_selection_cover_preview() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.terminal_size = (
+        ui::search::PREVIEW_MIN_TERMINAL_WIDTH,
+        ui::cover_preview::HEIGHT + ui::HEADER_HEIGHT + ui::FOOTER_HEIGHT + ui::PANEL_GAP_Y * 2,
+    );
+    state.search.input = false;
+    state.search.channel = crate::api::SearchChannel::Playlists;
+    state.search.playlists.items.push(crate::api::PlaylistHit {
+        id: 8,
+        name: "Playlist".into(),
+        creator: "Listener".into(),
+        cover_url: None,
+        track_count: 1,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![covered_row(9)],
+        },
+        &fx,
+    );
+
+    let (key, row, neighbors) = state.selected_cover_candidate().unwrap();
+
+    assert_eq!(key.id, 9);
+    assert_eq!(row.pic_url.as_deref(), Some("https://example.test/9.jpg"));
+    assert!(neighbors.is_empty());
+}
+
+#[tokio::test]
+async fn late_detail_result_does_not_move_another_views_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.search.channel = crate::api::SearchChannel::Playlists;
+    state.search.playlists.items.push(crate::api::PlaylistHit {
+        id: 8,
+        name: "Playlist".into(),
+        creator: "Listener".into(),
+        cover_url: None,
+        track_count: 1,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.view = View::Library;
+    state.library = vec![row(1), row(2), row(3)];
+    state.selected = 2;
+
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![row(9)],
+        },
+        &fx,
+    );
+
+    assert_eq!(state.selected, 2);
+    assert_eq!(state.search.song_rows().unwrap()[0].id, 9);
+
+    state.update(Action::SwitchView(View::Search), &fx);
+
+    assert_eq!(state.selected, 0);
+    assert_eq!(state.visible_len(), 1);
+}
+
+#[tokio::test]
+async fn search_detail_selection_survives_a_round_trip_through_another_view() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.channel = crate::api::SearchChannel::Albums;
+    state.search.albums.items.push(crate::api::AlbumHit {
+        id: 7,
+        name: "Album".into(),
+        artist: "Artist".into(),
+        pic_url: None,
+        song_count: 3,
+    });
+    let request = state.search.open_detail(0).unwrap();
+    state.update(
+        Action::SearchDetailLoaded {
+            seq: request.seq,
+            channel: request.channel,
+            id: request.id,
+            rows: vec![row(1), row(2), row(3)],
+        },
+        &fx,
+    );
+    state.selected = 2;
+
+    state.update(Action::SwitchView(View::Library), &fx);
+    state.library = vec![row(10), row(11)];
+    state.selected = 1;
+    state.update(Action::SwitchView(View::Search), &fx);
+
+    assert_eq!(state.selected, 2);
+    assert_eq!(state.visible_row(2).map(|(_, row)| row.id), Some(3));
+}
+
+#[tokio::test]
+async fn a_refresh_cannot_activate_hidden_stale_search_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.query = "query".into();
+    let first = state.search.submit().unwrap();
+    assert!(state.search.accept(
+        first.seq,
+        &first.query,
+        first.channel,
+        crate::api::SearchPayload::Songs(crate::api::SearchPage {
+            items: vec![row(1)],
+            total: 1,
+        }),
+    ));
+    assert!(state.search.submit().is_some());
+
+    state.update(raw_key(KeyCode::Down), &fx);
+    state.update(Action::Activate, &fx);
+
+    assert!(state.search.input);
+    assert!(state.now.is_none());
+    assert_eq!(state.visible_len(), 0);
+}
+
+#[tokio::test]
+async fn search_channel_keys_wrap_without_triggering_seek() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = true;
+
+    state.update(raw_key(KeyCode::BackTab), &fx);
+    assert_eq!(state.search.channel, crate::api::SearchChannel::Playlists);
+
+    state.search.input = false;
+    state.update(raw_key(KeyCode::Right), &fx);
+    assert_eq!(state.search.channel, crate::api::SearchChannel::Songs);
+}
+
+#[tokio::test]
+async fn switching_search_channels_preserves_the_underlying_filtered_song() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.songs.items = vec![
+        named_row(1, "Alpha", "One"),
+        named_row(2, "Target one", "Two"),
+        named_row(3, "Target two", "Three"),
+    ];
+    state.filter.query = "target".into();
+    state.selected = 1;
+
+    state.update(
+        Action::SelectSearchChannel(crate::api::SearchChannel::Artists),
+        &fx,
+    );
+    state.update(
+        Action::SelectSearchChannel(crate::api::SearchChannel::Songs),
+        &fx,
+    );
+
+    assert_eq!(state.selected, 2);
+    assert!(state.filter.query.is_empty());
+    assert_eq!(state.visible_row(2).map(|(_, row)| row.id), Some(3));
+}
+
+#[tokio::test]
+async fn returning_to_search_input_preserves_the_result_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = false;
+    state.search.songs.items = vec![row(1), row(2), row(3)];
+    state.selected = 2;
+
+    state.update(Action::Back, &fx);
+    assert!(state.search.input);
+    state.update(raw_key(KeyCode::Down), &fx);
+
+    assert!(!state.search.input);
     assert_eq!(state.selected, 2);
 }
 
@@ -1708,4 +2215,163 @@ async fn a_known_track_uses_the_shared_cache_before_resolving_a_url() {
         state.now.as_ref().map(|now| now.title.as_str()),
         Some("Track 42")
     );
+}
+
+#[tokio::test]
+async fn command_palette_owns_mini_player_input_and_blocks_background_mouse_hits() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.terminal_size = (80, 6);
+    state.view = View::Queue;
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+    state.show_help = true;
+
+    state.update(raw_key(KeyCode::Char(':')), &fx);
+    assert!(state.command_palette.open);
+    assert!(!state.show_help);
+
+    state.update(raw_key(KeyCode::Char('n')), &fx);
+    assert_eq!(state.command_palette.query, "n");
+    assert_eq!(state.queue_pos, Some(0));
+
+    let mut hits = ui::Hits::default();
+    hits.rows.push((Rect::new(0, 1, 20, 1), 1));
+    apply(
+        &mut state,
+        Action::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        }),
+        &fx,
+        &hits,
+    );
+    assert_eq!(state.selected, 0);
+
+    state.update(raw_key(KeyCode::Esc), &fx);
+    assert!(!state.command_palette.open);
+}
+
+#[tokio::test]
+async fn colon_remains_text_inside_search_and_list_filter_inputs() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.view = View::Search;
+    state.search.input = true;
+    state.update(raw_key(KeyCode::Char(':')), &fx);
+    assert_eq!(state.search.query, ":");
+    assert!(!state.command_palette.open);
+
+    state.view = View::Library;
+    state.search.input = false;
+    state.filter.start();
+    state.update(raw_key(KeyCode::Char(':')), &fx);
+    assert_eq!(state.filter.query, ":");
+    assert!(!state.command_palette.open);
+}
+
+#[tokio::test]
+async fn command_theme_and_quality_survive_canceling_an_open_settings_preview() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Library;
+    state.open_settings();
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("主题 pico8".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+    assert_eq!(state.config.theme, "pico8");
+    assert_eq!(state.theme, Theme::by_name("pico8"));
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("quality lossless".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+    assert_eq!(state.config.quality, AudioQuality::Lossless);
+    assert_eq!(fx.ncm.quality(), AudioQuality::Lossless);
+
+    state.update(Action::CancelSettings, &fx);
+    assert_eq!(state.config.theme, "pico8");
+    assert_eq!(state.config.quality, AudioQuality::Lossless);
+    let persisted = std::fs::read_to_string(&fx.config_path).unwrap();
+    let persisted: Config = toml::from_str(&persisted).unwrap();
+    assert_eq!(persisted.theme, "pico8");
+    assert_eq!(persisted.quality, AudioQuality::Lossless);
+}
+
+#[tokio::test]
+async fn command_feedback_expires_after_being_visible_for_ui_ticks() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("volume 37".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+    assert!(!state.command_palette.open);
+    assert!((state.volume - 0.37).abs() < f32::EPSILON);
+    assert!(state.command_feedback.is_some());
+
+    for _ in 0..23 {
+        state.update(Action::UiTick, &fx);
+    }
+    assert!(state.command_feedback.is_some());
+    state.update(Action::UiTick, &fx);
+    assert!(state.command_feedback.is_none());
+}
+
+#[tokio::test]
+async fn invalid_command_arguments_keep_the_palette_open_for_correction() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("volume 101".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+
+    assert!(state.command_palette.open);
+    assert_eq!(state.command_palette.query, "volume 101");
+    assert_eq!(state.volume, 1.0);
+    assert!(state
+        .command_feedback
+        .as_deref()
+        .is_some_and(|feedback| { feedback.contains("101") && feedback.contains("volume") }));
+    assert!(state.command_feedback_error);
+
+    state.update(raw_key(KeyCode::Backspace), &fx);
+    assert_eq!(state.command_palette.query, "volume 10");
+    assert!(state.command_feedback.is_none());
+    assert!(!state.command_feedback_error);
+
+    state.update(Action::ExecuteCommand, &fx);
+    assert!(!state.command_palette.open);
+    assert!(state.command_feedback.is_some());
+    assert!(!state.command_feedback_error);
+    state.update(Action::OpenCommandPalette, &fx);
+    assert!(state.command_feedback.is_none());
+}
+
+#[tokio::test]
+async fn spectrum_command_reports_a_persistence_failure_as_an_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    std::fs::create_dir(&fx.config_path).unwrap();
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::OpenCommandPalette, &fx);
+    state.update(Action::Paste("spectrum".into()), &fx);
+    state.update(Action::ExecuteCommand, &fx);
+
+    assert!(!state.command_palette.open);
+    assert!(state.command_feedback_error);
+    assert!(state
+        .command_feedback
+        .as_deref()
+        .is_some_and(|feedback| feedback.contains(crate::i18n::t(Key::SettingsSaveFailed))));
 }

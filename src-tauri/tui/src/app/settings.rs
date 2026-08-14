@@ -140,8 +140,12 @@ impl AppState {
                 self.config.cover_mode = cycle(VALUES, &self.config.cover_mode, delta);
             }
             SettingField::CoverDetail => {
-                const VALUES: &[CoverDetail] =
-                    &[CoverDetail::Half, CoverDetail::Quad, CoverDetail::Sextant];
+                const VALUES: &[CoverDetail] = &[
+                    CoverDetail::Half,
+                    CoverDetail::Quad,
+                    CoverDetail::Sextant,
+                    CoverDetail::Octant,
+                ];
                 self.config.cover_detail = cycle(VALUES, &self.config.cover_detail, delta);
             }
             SettingField::Layout => {
@@ -231,6 +235,9 @@ impl AppState {
                 CoverMode::Original if self.original_cover.is_some() => "Original".to_owned(),
                 CoverMode::Original => "Original (restart)".to_owned(),
             },
+            SettingField::CoverDetail if self.config.cover_detail == CoverDetail::Octant => {
+                format!("octant · {}", i18n::t(Key::OctantFontRequired))
+            }
             SettingField::CoverDetail => self.config.cover_detail.as_str().to_owned(),
             SettingField::Layout => match self.config.layout.as_str() {
                 "stacked" => "Stacked",
@@ -266,7 +273,7 @@ impl AppState {
         i18n::t(if enabled { Key::On } else { Key::Off }).to_owned()
     }
 
-    pub(crate) fn toggle_spectrum(&mut self, fx: &Effects) {
+    pub(crate) fn toggle_spectrum(&mut self, fx: &Effects) -> Result<(), String> {
         self.config.spectrum_enabled = !self.config.spectrum_enabled;
         let persistent = if let Some(original) = &mut self.settings.original {
             original.spectrum_enabled = self.config.spectrum_enabled;
@@ -274,9 +281,50 @@ impl AppState {
         } else {
             self.config.clone()
         };
-        if let Err(error) = persistent.save_to(&fx.config_path) {
-            self.status = Some(format!("{}: {error}", i18n::t(Key::SettingsSaveFailed)));
-        }
+        persistent
+            .save_to(&fx.config_path)
+            .map_err(|error| format!("{}: {error}", i18n::t(Key::SettingsSaveFailed)))
+    }
+
+    pub(crate) fn set_command_theme(
+        &mut self,
+        fx: &Effects,
+        theme_name: &str,
+    ) -> Result<(), String> {
+        let before = self.config.clone();
+        self.config.theme = theme_name.to_owned();
+        self.apply_config_preview(fx, &before, None);
+
+        let persistent = if let Some(original) = &mut self.settings.original {
+            original.theme.clone_from(&self.config.theme);
+            self.settings.original_theme = Some(self.theme);
+            original.clone()
+        } else {
+            self.config.clone()
+        };
+        persistent
+            .save_to(&fx.config_path)
+            .map_err(|error| format!("{}: {error}", i18n::t(Key::SettingsSaveFailed)))
+    }
+
+    pub(crate) fn set_command_quality(
+        &mut self,
+        fx: &Effects,
+        quality: AudioQuality,
+    ) -> Result<(), String> {
+        let before = self.config.clone();
+        self.config.quality = quality;
+        self.apply_config_preview(fx, &before, None);
+
+        let persistent = if let Some(original) = &mut self.settings.original {
+            original.quality = quality;
+            original.clone()
+        } else {
+            self.config.clone()
+        };
+        persistent
+            .save_to(&fx.config_path)
+            .map_err(|error| format!("{}: {error}", i18n::t(Key::SettingsSaveFailed)))
     }
 
     fn apply_config_preview(

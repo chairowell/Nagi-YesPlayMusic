@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::settings::SettingField;
@@ -9,45 +9,73 @@ use crate::app::AppState;
 use crate::config::IconStyle;
 use crate::i18n::{self, Key};
 
-use super::{text::display_width, Hits};
+use super::{panel_block, text::display_width, Hits, PANEL_GAP_Y};
+
+/// Border and shared one-cell padding leave the original 60-column settings measure.
+const SETTINGS_PANEL_WIDTH: u16 = 64;
+/// The optional spectrum preview occupies a compact seven-row instrument panel.
+const SPECTRUM_PREVIEW_HEIGHT: u16 = 7;
+/// Borders, hint, status, actions, and one breathing row surround the setting rows.
+const SETTINGS_PANEL_CHROME_HEIGHT: u16 = 8;
+/// Hint copy may wrap onto a second terminal row.
+const SETTINGS_HINT_HEIGHT: u16 = 2;
+/// Status feedback occupies exactly one row above the actions.
+const SETTINGS_STATUS_HEIGHT: u16 = 1;
+/// Actions keep one row of optical space beneath their keycaps.
+const SETTINGS_ACTIONS_HEIGHT: u16 = 2;
+/// Save and cancel remain visually distinct without drifting apart.
+const SETTINGS_ACTION_GAP: u16 = 3;
+/// Marker, arrows, and their spaces consume eight columns around label and value.
+const SETTINGS_ROW_CHROME_WIDTH: usize = 8;
+/// Each adjustment arrow and its adjacent space share a two-cell hit target.
+const SETTINGS_ARROW_WIDTH: u16 = 2;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
     let theme = state.theme;
     let show_preview =
         SettingField::ALL.get(state.settings.selected) == Some(&SettingField::SpectrumStyle);
-    let preview_height = if show_preview { 7 } else { 0 };
-    let width = 62_u16.min(area.width);
-    let height = (SettingField::ALL.len() as u16 + 8 + preview_height).min(area.height);
+    let preview_height = if show_preview {
+        SPECTRUM_PREVIEW_HEIGHT
+    } else {
+        0
+    };
+    let preview_gap_height = if show_preview { PANEL_GAP_Y } else { 0 };
+    let width = SETTINGS_PANEL_WIDTH.min(area.width);
+    let height = (SettingField::ALL.len() as u16
+        + SETTINGS_PANEL_CHROME_HEIGHT
+        + preview_gap_height
+        + preview_height)
+        .min(area.height);
     let panel = Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
         y: area.y + area.height.saturating_sub(height) / 2,
         width,
         height,
     };
-    let block = Block::bordered()
-        .title(format!(" {} ", i18n::t(Key::Settings)))
-        .style(Style::new().bg(theme.bg))
-        .border_style(Style::new().fg(theme.accent));
+    let block = panel_block(&theme, i18n::t(Key::Settings), None);
     let inner = block.inner(panel);
     frame.render_widget(block, panel);
     if inner.is_empty() {
         return;
     }
 
-    let [hint_area, rows_area, preview_area, status_area, buttons_area] = Layout::vertical([
-        Constraint::Length(2),
+    let [hint_area, rows_area, _, preview_area, status_area, buttons_area] = Layout::vertical([
+        Constraint::Length(SETTINGS_HINT_HEIGHT),
         Constraint::Min(SettingField::ALL.len() as u16),
+        Constraint::Length(preview_gap_height),
         Constraint::Length(preview_height),
-        Constraint::Length(1),
-        Constraint::Length(2),
+        Constraint::Length(SETTINGS_STATUS_HEIGHT),
+        Constraint::Length(SETTINGS_ACTIONS_HEIGHT),
     ])
     .areas(inner);
-    let hint = if SettingField::ALL.get(state.settings.selected) == Some(&SettingField::Icons)
-        && state.config.icons == IconStyle::Nerd
-    {
-        Key::NerdFontHint
-    } else {
-        Key::SettingsHint
+    let hint = match SettingField::ALL.get(state.settings.selected) {
+        Some(SettingField::Icons) if state.config.icons == IconStyle::Nerd => Key::NerdFontHint,
+        Some(SettingField::CoverDetail)
+            if state.config.cover_detail == crate::pixel::CoverDetail::Octant =>
+        {
+            Key::OctantFontHint
+        }
+        _ => Key::SettingsHint,
     };
     frame.render_widget(
         Paragraph::new(i18n::t(hint)).style(Style::new().fg(theme.dim)),
@@ -76,14 +104,18 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
             ..rows_area
         };
         let selected = index == state.settings.selected;
-        let row_style = if selected {
-            Style::new()
-                .fg(theme.selection_fg())
-                .bg(theme.sel)
-                .add_modifier(Modifier::BOLD)
+        let row_base = if selected {
+            Style::new().bg(theme.selection_bg())
         } else {
-            Style::new().fg(theme.fg)
+            Style::new()
         };
+        let marker_style = row_base.fg(if selected { theme.accent } else { theme.faint });
+        let mut label_style = row_base.fg(theme.fg);
+        if selected {
+            label_style = label_style.add_modifier(Modifier::BOLD);
+        }
+        let value_style = row_base.fg(theme.dim);
+        let arrow_style = row_base.fg(theme.faint);
         let label = i18n::t(field.label());
         let label_width = display_width(label);
         let value = state.setting_value(field);
@@ -95,44 +127,44 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
             + icon_preview.as_deref().map(display_width).unwrap_or(0))
             as u16;
         let available = row.width as usize;
-        let content_width = label_width + usize::from(value_width) + 8;
+        let content_width = label_width + usize::from(value_width) + SETTINGS_ROW_CHROME_WIDTH;
         let pad = available.saturating_sub(content_width);
         let mut spans = vec![
-            Span::styled(if selected { " › " } else { "   " }, row_style),
-            Span::styled(label, row_style),
-            Span::styled(" ".repeat(pad), row_style),
-            Span::styled("‹ ", row_style),
+            Span::styled(if selected { " › " } else { "   " }, marker_style),
+            Span::styled(label, label_style),
+            Span::styled(" ".repeat(pad), row_base),
+            Span::styled("‹ ", arrow_style),
         ];
         if icon_preview.is_some() {
             let icons = crate::icons::for_style(state.config.icons);
-            let preview_base = if selected {
-                Style::new().bg(theme.sel).add_modifier(Modifier::BOLD)
-            } else {
-                Style::new()
-            };
-            spans.push(Span::styled(icons.heart, preview_base.fg(theme.faint)));
-            spans.push(Span::styled(" ", preview_base));
-            spans.push(Span::styled(icons.heart, preview_base.fg(theme.accent2)));
-            spans.push(Span::styled(" ", preview_base));
+            spans.push(Span::styled(icons.heart, row_base.fg(theme.faint)));
+            spans.push(Span::styled(" ", row_base));
+            spans.push(Span::styled(icons.heart, row_base.fg(theme.accent2)));
+            spans.push(Span::styled(" ", row_base));
         }
-        spans.push(Span::styled(value, row_style));
-        spans.push(Span::styled(" › ", row_style));
+        spans.push(Span::styled(value, value_style));
+        spans.push(Span::styled(" › ", arrow_style));
         let line = Line::from(spans);
-        frame.render_widget(Paragraph::new(line), row);
+        frame.render_widget(Paragraph::new(line).style(row_base), row);
         hits.settings_rows.push((row, index));
         if selected && available >= content_width {
-            let next = Rect::new(row.right().saturating_sub(2), row.y, 2, 1);
-            let previous_x = next.x.saturating_sub(value_width.saturating_add(3));
+            let next = Rect::new(
+                row.right().saturating_sub(SETTINGS_ARROW_WIDTH),
+                row.y,
+                SETTINGS_ARROW_WIDTH,
+                1,
+            );
+            let previous_x = next
+                .x
+                .saturating_sub(value_width.saturating_add(SETTINGS_ARROW_WIDTH + 1));
             hits.settings_adjust
-                .push((Rect::new(previous_x, row.y, 2, 1), -1));
+                .push((Rect::new(previous_x, row.y, SETTINGS_ARROW_WIDTH, 1), -1));
             hits.settings_adjust.push((next, 1));
         }
     }
 
     if show_preview && preview_area.height >= 3 {
-        let preview = Block::bordered()
-            .title(format!(" {} ", i18n::t(Key::SpectrumPreview)))
-            .border_style(Style::new().fg(theme.faint));
+        let preview = panel_block(&theme, i18n::t(Key::SpectrumPreview), None);
         let preview_inner = preview.inner(preview_area);
         frame.render_widget(preview, preview_area);
         state.spectrum.render(
@@ -145,32 +177,45 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
     }
 
     if let Some(status) = &state.status {
+        let color = if status.starts_with(i18n::t(Key::SettingsSaveFailed)) {
+            theme.accent2
+        } else {
+            theme.dim
+        };
         frame.render_widget(
-            Paragraph::new(status.as_str()).style(Style::new().fg(theme.accent2)),
+            Paragraph::new(status.as_str()).style(Style::new().fg(color)),
             status_area,
         );
     }
 
     let save = format!("[ Enter · {} ]", i18n::t(Key::Save));
     let cancel = format!("[ Esc · {} ]", i18n::t(Key::Cancel));
-    let gap = 3_u16;
     let save_width = display_width(&save) as u16;
     let cancel_width = display_width(&cancel) as u16;
-    let total = save_width.saturating_add(gap).saturating_add(cancel_width);
+    let total = save_width
+        .saturating_add(SETTINGS_ACTION_GAP)
+        .saturating_add(cancel_width);
     let start = buttons_area.x + buttons_area.width.saturating_sub(total) / 2;
     let save_rect = Rect::new(start, buttons_area.y, save_width.min(buttons_area.width), 1);
     let cancel_rect = Rect::new(
-        save_rect.right().saturating_add(gap),
+        save_rect
+            .right()
+            .saturating_add(SETTINGS_ACTION_GAP)
+            .min(buttons_area.right()),
         buttons_area.y,
-        cancel_width.min(buttons_area.right().saturating_sub(save_rect.right() + gap)),
+        cancel_width.min(
+            buttons_area
+                .right()
+                .saturating_sub(save_rect.right().saturating_add(SETTINGS_ACTION_GAP)),
+        ),
         1,
     );
     frame.render_widget(
-        Paragraph::new(save).style(Style::new().fg(theme.selection_fg()).bg(theme.accent)),
+        Paragraph::new(save).style(Style::new().fg(theme.fg).bg(theme.faint)),
         save_rect,
     );
     frame.render_widget(
-        Paragraph::new(cancel).style(Style::new().fg(theme.fg)),
+        Paragraph::new(cancel).style(Style::new().fg(theme.dim)),
         cancel_rect,
     );
     hits.settings_save.push(save_rect);
@@ -180,11 +225,14 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
 #[cfg(test)]
 mod tests {
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use ratatui::Terminal;
 
     use super::*;
     use crate::config::Config;
     use crate::spectrum::SampleBuffer;
+
+    const SKELETON_SIZES: [(u16, u16); 3] = [(80, 24), (120, 40), (200, 60)];
 
     fn rendered_settings(
         width: u16,
@@ -200,6 +248,28 @@ mod tests {
             .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
             .unwrap();
         (terminal.backend().buffer().clone(), hits)
+    }
+
+    fn symbol_position(buffer: &Buffer, symbol: &str) -> (u16, u16) {
+        let area = buffer.area;
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                if buffer[(x, y)].symbol() == symbol {
+                    return (x, y);
+                }
+            }
+        }
+        panic!("missing symbol {symbol}");
+    }
+
+    fn all_hits_stay_inside(hits: &Hits, width: u16, height: u16) -> bool {
+        hits.settings_rows
+            .iter()
+            .map(|(area, _)| area)
+            .chain(hits.settings_adjust.iter().map(|(area, _)| area))
+            .chain(hits.settings_save.iter())
+            .chain(hits.settings_cancel.iter())
+            .all(|area| area.x <= width && area.y < height && area.right() <= width)
     }
 
     #[test]
@@ -218,6 +288,114 @@ mod tests {
 
         assert_eq!(buffer[(previous.x, previous.y)].symbol(), "‹");
         assert_eq!(buffer[(next.x, next.y)].symbol(), "›");
+    }
+
+    #[test]
+    fn settings_panel_is_complete_centered_and_bounded_at_all_skeleton_sizes() {
+        for (width, height) in SKELETON_SIZES {
+            let (buffer, hits) = rendered_settings(width, height, 0);
+            let top_left = symbol_position(&buffer, "╭");
+            let top_right = symbol_position(&buffer, "╮");
+            let bottom_left = symbol_position(&buffer, "╰");
+            let bottom_right = symbol_position(&buffer, "╯");
+            let panel_width = SETTINGS_PANEL_WIDTH.min(width);
+
+            assert_eq!(top_right.0 - top_left.0 + 1, panel_width);
+            assert_eq!(top_left.1, top_right.1);
+            assert_eq!(bottom_left.1, bottom_right.1);
+            assert_eq!(top_left.0, bottom_left.0);
+            assert_eq!(top_right.0, bottom_right.0);
+            assert!(top_left.0.abs_diff(width - top_right.0 - 1) <= 1);
+            assert!(top_left.1.abs_diff(height - bottom_left.1 - 1) <= 1);
+            assert_eq!(buffer[top_left].fg, crate::theme::Theme::db16().faint);
+            assert!((top_left.0..=top_right.0)
+                .any(|x| buffer[(x, top_left.1)].fg == crate::theme::Theme::db16().accent));
+            assert!(all_hits_stay_inside(&hits, width, height));
+            assert!(hits
+                .settings_rows
+                .iter()
+                .all(|(row, _)| { row.x == top_left.0 + 2 && row.right() == top_right.0 - 1 }));
+        }
+    }
+
+    #[test]
+    fn selected_setting_bolds_only_its_label_and_keeps_controls_quiet() {
+        let (buffer, hits) = rendered_settings(80, 24, 0);
+        let row = hits
+            .settings_rows
+            .iter()
+            .find_map(|(area, index)| (*index == 0).then_some(*area))
+            .unwrap();
+        let previous = hits
+            .settings_adjust
+            .iter()
+            .find_map(|(area, delta)| (*delta < 0).then_some(*area))
+            .unwrap();
+        let next = hits
+            .settings_adjust
+            .iter()
+            .find_map(|(area, delta)| (*delta > 0).then_some(*area))
+            .unwrap();
+        let theme = crate::theme::Theme::db16();
+        let label = &buffer[(row.x + 3, row.y)];
+        let value = &buffer[(previous.right(), row.y)];
+
+        assert_eq!(label.bg, theme.selection_bg());
+        assert_eq!(label.fg, theme.fg);
+        assert!(label.modifier.contains(Modifier::BOLD));
+        assert_eq!(value.fg, theme.dim);
+        assert!(!value.modifier.contains(Modifier::BOLD));
+        for arrow in [previous, next] {
+            let cell = &buffer[(arrow.x, arrow.y)];
+            assert_eq!(cell.fg, theme.faint);
+            assert_eq!(cell.bg, theme.selection_bg());
+            assert!(!cell.modifier.contains(Modifier::BOLD));
+        }
+        let mut column = row.x + 3;
+        let mut wide_continuations = Vec::new();
+        for character in i18n::t(SettingField::Theme.label()).chars() {
+            let character_width = display_width(&character.to_string()) as u16;
+            wide_continuations.extend(column + 1..column + character_width);
+            column += character_width;
+        }
+        assert!((row.x..row.right()).all(|x| {
+            wide_continuations.contains(&x) || buffer[(x, row.y)].bg == theme.selection_bg()
+        }));
+
+        let save = hits.settings_save[0];
+        assert_eq!(buffer[(save.x, save.y)].bg, theme.faint);
+        assert_eq!(buffer[(save.x, save.y)].fg, theme.fg);
+    }
+
+    #[test]
+    fn settings_status_reserves_accent2_for_errors() {
+        let cases = [
+            ("✓ saved".to_owned(), "✓", crate::theme::Theme::db16().dim),
+            (
+                format!("{} §", i18n::t(Key::SettingsSaveFailed)),
+                "§",
+                crate::theme::Theme::db16().accent2,
+            ),
+        ];
+        for (status, marker, expected) in cases {
+            let backend = TestBackend::new(80, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut state = AppState::new(&Config::default());
+            state.status = Some(status);
+            let mut hits = Hits::default();
+            terminal
+                .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+                .unwrap();
+
+            let cell = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .find(|cell| cell.symbol() == marker)
+                .unwrap();
+            assert_eq!(cell.fg, expected);
+        }
     }
 
     #[test]
@@ -268,6 +446,40 @@ mod tests {
     }
 
     #[test]
+    fn selected_octant_marks_and_explains_font_support() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let config = Config {
+            cover_detail: crate::pixel::CoverDetail::Octant,
+            ..Config::default()
+        };
+        let mut state = AppState::new(&config);
+        state.settings.selected = SettingField::ALL
+            .iter()
+            .position(|field| *field == SettingField::CoverDetail)
+            .unwrap();
+        assert!(state
+            .setting_value(SettingField::CoverDetail)
+            .contains(i18n::t(Key::OctantFontRequired)));
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("octant"));
+        assert!(rendered.contains("Unicode 16"));
+        assert!(rendered.contains("sextant"));
+    }
+
+    #[test]
     fn icon_setting_previews_unliked_and_liked_with_the_same_glyph() {
         let index = SettingField::ALL
             .iter()
@@ -304,7 +516,7 @@ mod tests {
             .iter()
             .position(|field| *field == SettingField::SpectrumStyle)
             .unwrap();
-        state.spectrum.tick(&SampleBuffer::default(), false);
+        state.spectrum.tick(&SampleBuffer::default(), false, true);
         let mut hits = Hits::default();
 
         terminal
@@ -313,6 +525,23 @@ mod tests {
 
         assert!(terminal.backend().buffer().content().iter().any(|cell| {
             matches!(cell.symbol(), "▁" | "▂" | "▃" | "▄" | "▅" | "▆" | "▇" | "█")
+        }));
+
+        let buffer = terminal.backend().buffer();
+        let last_row_y = hits
+            .settings_rows
+            .iter()
+            .map(|(area, _)| area.y)
+            .max()
+            .unwrap();
+        let nested_top_y = (0..buffer.area.height)
+            .filter(|y| *y > last_row_y)
+            .find(|y| (0..buffer.area.width).any(|x| buffer[(x, *y)].symbol() == "╭"))
+            .unwrap();
+        assert!(nested_top_y > last_row_y + PANEL_GAP_Y);
+        assert!((0..buffer.area.width).any(|x| {
+            let cell = &buffer[(x, nested_top_y)];
+            cell.fg == state.theme.accent && !matches!(cell.symbol(), " " | "─" | "╭" | "╮")
         }));
     }
 }

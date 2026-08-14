@@ -3,7 +3,7 @@
 use yesplaymusic_core::auth::Session;
 use yesplaymusic_core::cache::CacheLease;
 
-use crate::api::{ResolvedTrack, SongRow, Source};
+use crate::api::{ResolvedTrack, SearchChannel, SearchPayload, SongRow, Source};
 use crate::pixel::PixelCover;
 use crate::player::PlayerEvent;
 
@@ -56,6 +56,10 @@ pub enum Action {
     SwitchView(View),
     Back,
     Escape,
+    OpenCommandPalette,
+    CloseCommandPalette,
+    MoveCommandSelection(i32),
+    ExecuteCommand,
     ToggleZen,
     ToggleSpectrum,
     TogglePlay,
@@ -75,6 +79,7 @@ pub enum Action {
     CycleRepeat,
     CyclePlaybackMode,
     StartFilter,
+    SelectSearchChannel(SearchChannel),
     ToggleLibraryFocus,
     ToggleHelp,
     ToggleLike,
@@ -204,11 +209,25 @@ pub enum Action {
     SearchResults {
         seq: u64,
         query: String,
-        rows: Vec<SongRow>,
+        channel: SearchChannel,
+        payload: SearchPayload,
     },
     SearchFailed {
         seq: u64,
         query: String,
+        channel: SearchChannel,
+        message: String,
+    },
+    SearchDetailLoaded {
+        seq: u64,
+        channel: SearchChannel,
+        id: i64,
+        rows: Vec<SongRow>,
+    },
+    SearchDetailFailed {
+        seq: u64,
+        channel: SearchChannel,
+        id: i64,
         message: String,
     },
     LikedIds {

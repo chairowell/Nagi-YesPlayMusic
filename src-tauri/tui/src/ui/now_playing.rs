@@ -1,6 +1,8 @@
 //! The main view has two moods: an idle dashboard (pixel art + menu,
 //! dashboard-nvim style) and the playing layout (cover · lyrics · progress).
 
+use std::time::Duration;
+
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -79,7 +81,7 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
         .height
         .min(area.height.saturating_sub(menu_height + 4));
 
-    let [_, art_area, _, menu_area, _, footer_area, _] = Layout::vertical([
+    let [_, art_area, _, menu_area, _, _, _] = Layout::vertical([
         Constraint::Fill(2),
         Constraint::Length(art_height),
         Constraint::Length(1),
@@ -109,29 +111,11 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
                 format!(" {label}{}", " ".repeat(pad)),
                 Style::new().fg(theme.fg),
             ),
-            Span::styled((*key).to_owned(), Style::new().fg(theme.accent)),
+            Span::styled((*key).to_owned(), Style::new().fg(theme.fg).bg(theme.faint)),
             Span::raw(" "),
         ]);
         frame.render_widget(Paragraph::new(line), row);
     }
-
-    let footer = match (&state.session.nickname, state.library.len()) {
-        (Some(nickname), n) if state.library_synced => {
-            format!("♪ {nickname} · {}", i18n::t_songs_ready(n))
-        }
-        (Some(nickname), _) => {
-            format!("♪ {nickname} · {}", i18n::t(Key::SyncingLibrary))
-        }
-        (None, _) => i18n::t(Key::NotLoggedInSync).into(),
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            footer,
-            Style::new().fg(theme.faint),
-        )))
-        .centered(),
-        footer_area,
-    );
 }
 
 fn menu_entries(state: &AppState) -> Vec<(String, &'static str, MenuEntry)> {
@@ -196,7 +180,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
     if let Some(now) = &state.now {
         lines.push(Line::from(Span::styled(
             format!("{indent}{}", now.title),
-            Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
             format!("{indent}{} ", now.artist),
@@ -205,7 +189,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
         if !now.album.is_empty() {
             lines.push(Line::from(Span::styled(
                 format!("{indent}{}", now.album),
-                Style::new().fg(theme.faint),
+                Style::new().fg(theme.dim),
             )));
         }
         if !state.lyrics.is_empty() {
@@ -219,7 +203,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
                 format!("{indent}{status}"),
-                Style::new().fg(theme.accent2),
+                Style::new().fg(theme.dim),
             )));
         }
     }
@@ -243,7 +227,7 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
 /// Rows of synced lyrics with the current pair pinned mid-window.
 fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
     let theme = &state.theme;
-    let current = crate::lyrics::line_index_at(&state.lyrics, state.position);
+    let current = current_lyric_index(&state.lyrics, state.position);
     let rows = height.max(1) as usize;
     let anchor = current.unwrap_or(0);
     // Walk backwards in *display rows* (a translated line costs two),
@@ -281,10 +265,16 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
         } else {
             original_style
         };
-        lines.push(Line::from(vec![
-            Span::styled(if is_current { "▎ " } else { "  " }, marker_style),
-            Span::styled(lyric.text.clone(), original_style),
-        ]));
+        let mut original = vec![Span::styled(
+            if is_current { "▎ " } else { "  " },
+            marker_style,
+        )];
+        if is_current {
+            original.extend(current_lyric_spans(lyric, state.position, theme));
+        } else {
+            original.push(Span::styled(lyric.text.clone(), original_style));
+        }
+        lines.push(Line::from(original));
         used += 1;
         // Every line carries its translation; the current pair reads brighter.
         if let Some(translation) = &lyric.translation {
@@ -309,6 +299,61 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
         }
     }
     lines
+}
+
+/// Prefer an upcoming YRC line as soon as its word timeline starts, while
+/// never letting late word data move the display back behind the LRC line.
+fn current_lyric_index(lyrics: &[crate::lyrics::LyricLine], position: Duration) -> Option<usize> {
+    let line_index = crate::lyrics::line_index_at(lyrics, position);
+    let word_index = lyrics
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            line.word_timing
+                .as_ref()
+                .is_some_and(|timing| timing.start <= position)
+        })
+        .map(|(index, _)| index)
+        .next_back();
+    match (line_index, word_index) {
+        (Some(line), Some(word)) => Some(line.max(word)),
+        (line, word) => line.or(word),
+    }
+}
+
+/// Color a YRC line by half-open word intervals. A zero-duration token is
+/// treated as sung at its timestamp and never flashes as the current word.
+fn current_lyric_spans(
+    lyric: &crate::lyrics::LyricLine,
+    position: Duration,
+    theme: &crate::theme::Theme,
+) -> Vec<Span<'static>> {
+    let Some(timing) = lyric
+        .word_timing
+        .as_ref()
+        .filter(|timing| !timing.words.is_empty())
+    else {
+        return vec![Span::styled(
+            lyric.text.clone(),
+            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD),
+        )];
+    };
+
+    timing
+        .words
+        .iter()
+        .map(|word| {
+            let end = word.start.saturating_add(word.duration);
+            let style = if position < word.start {
+                Style::new().fg(theme.fg)
+            } else if !word.duration.is_zero() && position < end {
+                Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(theme.accent)
+            };
+            Span::styled(word.text.clone(), style)
+        })
+        .collect()
 }
 
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
@@ -377,7 +422,7 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         ]
     } else {
         vec![
-            Span::styled("━".repeat(head), Style::new().fg(theme.fg)),
+            Span::styled("━".repeat(head), Style::new().fg(theme.accent)),
             Span::styled("●", Style::new().fg(theme.accent)),
             Span::styled(
                 "─".repeat(bar_width.saturating_sub(head + 1)),
@@ -398,12 +443,12 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         Span::raw(" "),
         Span::styled(play_icon, Style::new().fg(theme.fg)),
         Span::raw(" ".repeat(play_slot_width.saturating_sub(display_width(play_icon)) + 1)),
-        Span::styled(elapsed, Style::new().fg(theme.dim)),
+        Span::styled(elapsed, Style::new().fg(theme.faint)),
         Span::raw(" "),
     ];
     spans.extend(bar_spans);
     spans.push(Span::raw(" "));
-    spans.push(Span::styled(total, Style::new().fg(theme.dim)));
+    spans.push(Span::styled(total, Style::new().fg(theme.faint)));
     // Clickable heart: its cell position is the rendered width so far + 2.
     let heart_x = spans
         .iter()
@@ -492,13 +537,17 @@ mod tests {
     use ratatui::style::Modifier;
     use ratatui::Terminal;
 
-    use super::{draw_meta, draw_progress, lyric_window, menu_entries};
+    use super::{
+        current_lyric_index, current_lyric_spans, draw_meta, draw_progress, lyric_window,
+        menu_entries,
+    };
     use crate::action::{Action, MenuEntry};
     use crate::app::{AppState, NowPlaying, PlayMode};
     use crate::config::Config;
     use crate::event;
     use crate::lyrics::LyricLine;
     use crate::ui::Hits;
+    use crate::yrc::{YrcLine, YrcWord};
 
     fn rect_text(buffer: &Buffer, rect: Rect) -> String {
         (rect.x..rect.right())
@@ -524,11 +573,13 @@ mod tests {
                 time: Duration::ZERO,
                 text: "Current".into(),
                 translation: Some("当前翻译".into()),
+                word_timing: None,
             },
             LyricLine {
                 time: Duration::from_secs(10),
                 text: "Context".into(),
                 translation: Some("上下文翻译".into()),
+                word_timing: None,
             },
         ];
 
@@ -561,6 +612,156 @@ mod tests {
             .contains(Modifier::ITALIC));
     }
 
+    fn word_synced_line() -> LyricLine {
+        LyricLine {
+            time: Duration::from_secs(1),
+            text: "雨🌧️爱".into(),
+            translation: Some("Rain love".into()),
+            word_timing: Some(YrcLine {
+                start: Duration::from_secs(1),
+                duration: Duration::from_millis(900),
+                words: vec![
+                    YrcWord {
+                        text: "雨".into(),
+                        start: Duration::from_millis(1_000),
+                        duration: Duration::from_millis(200),
+                    },
+                    YrcWord {
+                        text: "🌧️".into(),
+                        start: Duration::from_millis(1_200),
+                        duration: Duration::from_millis(200),
+                    },
+                    YrcWord {
+                        text: "爱".into(),
+                        start: Duration::from_millis(1_500),
+                        duration: Duration::ZERO,
+                    },
+                ],
+            }),
+        }
+    }
+
+    #[test]
+    fn yrc_words_use_half_open_current_intervals_and_preserve_utf8() {
+        let state = AppState::new(&Config::default());
+        let lyric = word_synced_line();
+
+        let at_first_start =
+            current_lyric_spans(&lyric, Duration::from_millis(1_000), &state.theme);
+        assert_eq!(at_first_start[0].style.fg, Some(state.theme.accent));
+        assert!(at_first_start[0]
+            .style
+            .add_modifier
+            .contains(Modifier::BOLD));
+        assert_eq!(at_first_start[1].style.fg, Some(state.theme.fg));
+
+        let at_boundary = current_lyric_spans(&lyric, Duration::from_millis(1_200), &state.theme);
+        assert_eq!(at_boundary[0].style.fg, Some(state.theme.accent));
+        assert!(!at_boundary[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(at_boundary[1].style.fg, Some(state.theme.accent));
+        assert!(at_boundary[1].style.add_modifier.contains(Modifier::BOLD));
+
+        let in_gap = current_lyric_spans(&lyric, Duration::from_millis(1_450), &state.theme);
+        assert!(in_gap
+            .iter()
+            .all(|span| !span.style.add_modifier.contains(Modifier::BOLD)));
+        assert_eq!(in_gap[2].style.fg, Some(state.theme.fg));
+
+        let zero_duration = current_lyric_spans(&lyric, Duration::from_millis(1_500), &state.theme);
+        assert_eq!(zero_duration[2].style.fg, Some(state.theme.accent));
+        assert!(!zero_duration[2].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(
+            zero_duration
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "雨🌧️爱"
+        );
+    }
+
+    #[test]
+    fn yrc_start_can_advance_the_current_line_ahead_of_its_lrc_timestamp() {
+        let mut upcoming = word_synced_line();
+        upcoming.time = Duration::from_secs(2);
+        let lines = vec![
+            LyricLine {
+                time: Duration::from_secs(1),
+                text: "Previous".into(),
+                translation: None,
+                word_timing: None,
+            },
+            upcoming,
+        ];
+
+        assert_eq!(
+            current_lyric_index(&lines, Duration::from_millis(1_250)),
+            Some(1)
+        );
+
+        let mut late_previous = lines.clone();
+        late_previous[1].word_timing = None;
+        late_previous[0].word_timing = Some(YrcLine {
+            start: Duration::from_millis(2_100),
+            duration: Duration::from_millis(100),
+            words: vec![YrcWord {
+                text: "Previous".into(),
+                start: Duration::from_millis(2_100),
+                duration: Duration::from_millis(100),
+            }],
+        });
+        assert_eq!(
+            current_lyric_index(&late_previous, Duration::from_millis(2_150)),
+            Some(1),
+            "late YRC data must not move the display back to an older line"
+        );
+    }
+
+    #[test]
+    fn zen_mode_renders_word_synced_lyrics_and_the_translation_pair() {
+        let mut state = AppState::new(&Config::default());
+        state.zen = true;
+        state.now = Some(NowPlaying {
+            title: "Title".into(),
+            artist: "Artist".into(),
+            album: String::new(),
+        });
+        state.position = Duration::from_millis(1_250);
+        state.lyrics = vec![word_synced_line()];
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut state, &mut hits))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rain = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "雨")
+            .expect("word-synchronised original should be visible");
+        let emoji = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "🌧️")
+            .expect("current word should be visible");
+        assert_eq!(rain.fg, state.theme.accent);
+        assert!(!rain.modifier.contains(Modifier::BOLD));
+        assert_eq!(emoji.fg, state.theme.accent);
+        assert!(emoji.modifier.contains(Modifier::BOLD));
+
+        let translation = "Rain love";
+        let translation_start = buffer
+            .content()
+            .windows(translation.len())
+            .find(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == translation)
+            .expect("translation should remain paired with the current line");
+        assert!(translation_start
+            .iter()
+            .all(|cell| cell.fg == state.theme.fg && cell.modifier.contains(Modifier::ITALIC)));
+    }
+
     #[test]
     fn metadata_and_liked_progress_render_the_new_visual_hierarchy() {
         let mut state = AppState::new(&Config::default());
@@ -571,6 +772,9 @@ mod tests {
         });
         state.current_track_id = Some(42);
         state.liked.insert(42);
+        state.position = Duration::from_secs(30);
+        state.duration = Some(Duration::from_secs(120));
+        state.status = Some("Resolving".into());
         let backend = TestBackend::new(80, 8);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -583,13 +787,53 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(2, 0)].fg, state.theme.accent);
+        assert_eq!(buffer[(2, 0)].fg, state.theme.fg);
         assert!(buffer[(2, 0)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(2, 1)].fg, state.theme.dim);
-        assert_eq!(buffer[(2, 2)].fg, state.theme.faint);
+        assert_eq!(buffer[(2, 2)].fg, state.theme.dim);
+        assert_eq!(buffer[(2, 4)].fg, state.theme.dim);
+        assert!(buffer
+            .content()
+            .iter()
+            .any(|cell| cell.symbol() == "━" && cell.fg == state.theme.accent));
+        for time in ["00:30", "02:00"] {
+            let start = (0..=80 - time.len() as u16)
+                .find(|x| rect_text(buffer, Rect::new(*x, 6, time.len() as u16, 1)) == time)
+                .unwrap();
+            assert!(
+                (start..start + time.len() as u16).all(|x| buffer[(x, 6)].fg == state.theme.faint)
+            );
+        }
         let progress = (0..80).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
         assert!(progress.contains('♥'));
         assert!(!progress.contains('♡'));
+    }
+
+    #[test]
+    fn dashboard_leaves_account_status_to_the_global_header() {
+        let mut state = AppState::new(&Config::default());
+        state.session.nickname = Some("Listener".into());
+        state.library_synced = true;
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+
+        terminal
+            .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!rendered.contains("Listener"));
+        let shortcut = hits.menu[0].0;
+        let shortcut = &terminal.backend().buffer()[(shortcut.right() - 2, shortcut.y)];
+        assert_eq!(shortcut.fg, state.theme.fg);
+        assert_eq!(shortcut.bg, state.theme.faint);
     }
 
     #[test]

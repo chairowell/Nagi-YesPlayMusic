@@ -1,12 +1,18 @@
 use std::time::Duration;
+use std::{cmp::Ordering, ops::Add};
+
+use crate::yrc::YrcLine;
 
 const TRANSLATION_TOLERANCE: Duration = Duration::from_millis(50);
+const YRC_TEXT_MATCH_TOLERANCE: Duration = Duration::from_millis(750);
+const YRC_TIME_ONLY_TOLERANCE: Duration = Duration::from_millis(120);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LyricLine {
     pub time: Duration,
     pub text: String,
     pub translation: Option<String>,
+    pub word_timing: Option<YrcLine>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +33,7 @@ pub fn parse_lrc(lrc: &str, tlyric: Option<&str>) -> Vec<LyricLine> {
             time: line.time,
             text: line.text,
             translation: None,
+            word_timing: None,
         })
         .collect::<Vec<_>>();
 
@@ -34,6 +41,142 @@ pub fn parse_lrc(lrc: &str, tlyric: Option<&str>) -> Vec<LyricLine> {
         merge_translations(&mut lines, &parse_timed_text(tlyric));
     }
     lines
+}
+
+/// Bind each YRC line to its matching LRC line. Partial YRC remains partial;
+/// unmatched word timing never shifts onto the next display line.
+pub fn parse_with_yrc(lrc: &str, tlyric: Option<&str>, word_lines: &[YrcLine]) -> Vec<LyricLine> {
+    let mut lines = parse_lrc(lrc, tlyric);
+    if !lines.is_empty() {
+        attach_word_timings(&mut lines, word_lines);
+        return lines;
+    }
+    if word_lines.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines = word_lines
+        .iter()
+        .map(|line| LyricLine {
+            time: line.start,
+            text: line.text(),
+            translation: None,
+            word_timing: Some(line.clone()),
+        })
+        .collect::<Vec<_>>();
+    if let Some(tlyric) = tlyric {
+        merge_translations(&mut lines, &parse_timed_text(tlyric));
+    }
+    lines
+}
+
+fn attach_word_timings(lines: &mut [LyricLine], word_lines: &[YrcLine]) {
+    let line_text = lines
+        .iter()
+        .map(|line| normalized_text(&line.text))
+        .collect::<Vec<_>>();
+    let word_text = word_lines
+        .iter()
+        .map(|line| normalized_text(&line.text()))
+        .collect::<Vec<_>>();
+    let mut scores = vec![vec![AlignmentScore::default(); word_lines.len() + 1]; lines.len() + 1];
+    for line_index in (0..lines.len()).rev() {
+        for word_index in (0..word_lines.len()).rev() {
+            let mut best = better_score(
+                scores[line_index + 1][word_index],
+                scores[line_index][word_index + 1],
+            );
+            if let Some(pair) = pair_score(
+                &line_text[line_index],
+                lines[line_index].time,
+                &word_text[word_index],
+                word_lines[word_index].start,
+            ) {
+                best = better_score(best, scores[line_index + 1][word_index + 1] + pair);
+            }
+            scores[line_index][word_index] = best;
+        }
+    }
+
+    let (mut line_index, mut word_index) = (0, 0);
+    while line_index < lines.len() && word_index < word_lines.len() {
+        if let Some(pair) = pair_score(
+            &line_text[line_index],
+            lines[line_index].time,
+            &word_text[word_index],
+            word_lines[word_index].start,
+        ) {
+            if scores[line_index + 1][word_index + 1] + pair == scores[line_index][word_index] {
+                lines[line_index].word_timing = Some(word_lines[word_index].clone());
+                line_index += 1;
+                word_index += 1;
+                continue;
+            }
+        }
+        if scores[line_index + 1][word_index] == scores[line_index][word_index] {
+            line_index += 1;
+        } else {
+            word_index += 1;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct AlignmentScore {
+    matches: usize,
+    text_matches: usize,
+    distance_ms: u128,
+}
+
+impl Add for AlignmentScore {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            matches: self.matches.saturating_add(other.matches),
+            text_matches: self.text_matches.saturating_add(other.text_matches),
+            distance_ms: self.distance_ms.saturating_add(other.distance_ms),
+        }
+    }
+}
+
+fn pair_score(
+    line_text: &str,
+    line_start: Duration,
+    word_text: &str,
+    word_start: Duration,
+) -> Option<AlignmentScore> {
+    let distance = duration_distance(line_start, word_start);
+    let text_matches = !line_text.is_empty() && line_text == word_text;
+    let tolerance = if text_matches {
+        YRC_TEXT_MATCH_TOLERANCE
+    } else {
+        YRC_TIME_ONLY_TOLERANCE
+    };
+    (distance <= tolerance).then_some(AlignmentScore {
+        matches: 1,
+        text_matches: usize::from(text_matches),
+        distance_ms: distance.as_millis(),
+    })
+}
+
+fn better_score(left: AlignmentScore, right: AlignmentScore) -> AlignmentScore {
+    match left
+        .text_matches
+        .cmp(&right.text_matches)
+        .then(left.matches.cmp(&right.matches))
+        .then_with(|| right.distance_ms.cmp(&left.distance_ms))
+    {
+        Ordering::Less => right,
+        Ordering::Equal | Ordering::Greater => left,
+    }
+}
+
+fn normalized_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 pub fn line_index_at(lines: &[LyricLine], position: Duration) -> Option<usize> {
@@ -197,7 +340,8 @@ fn duration_distance(left: Duration, right: Duration) -> Duration {
 mod tests {
     use std::time::Duration;
 
-    use super::{line_index_at, parse_lrc, LyricLine};
+    use super::{line_index_at, parse_lrc, parse_with_yrc, LyricLine};
+    use crate::yrc::parse_yrc;
 
     #[test]
     fn parses_realistic_lines_with_stable_time_sorting() {
@@ -302,9 +446,101 @@ mod tests {
         assert_eq!(line_index_at(&lines, Duration::from_secs(30)), Some(2));
     }
 
+    #[test]
+    fn yrc_supplies_primary_text_when_lrc_has_no_timed_lines() {
+        let word_lines =
+            parse_yrc("[1000,500](1000,200,0)逐(1200,300,0)字\n[2000,500](二,2000,500)");
+        let translated = "[00:01.020]word synced\n[00:02]second";
+
+        let fallback = parse_with_yrc("", Some(translated), &word_lines);
+        assert_eq!(fallback.len(), 2);
+        assert_eq!(fallback[0].time, Duration::from_millis(1_000));
+        assert_eq!(fallback[0].text, "逐字");
+        assert_eq!(fallback[0].translation.as_deref(), Some("word synced"));
+        assert_eq!(fallback[0].word_timing.as_ref(), Some(&word_lines[0]));
+        assert_eq!(fallback[1].time, Duration::from_millis(2_000));
+        assert_eq!(fallback[1].text, "二");
+        assert_eq!(fallback[1].translation.as_deref(), Some("second"));
+        assert_eq!(fallback[1].word_timing.as_ref(), Some(&word_lines[1]));
+    }
+
+    #[test]
+    fn yrc_matches_lrc_by_normalized_text_across_small_time_offsets() {
+        let word_lines =
+            parse_yrc("[1250,500](1250,500,0)Hello world\n[1900,500](1900,500,0)下一句");
+
+        let lines = parse_with_yrc(
+            "[00:01] Hello   World \n[00:02] 下一句",
+            Some("[00:01]翻译保持"),
+            &word_lines,
+        );
+
+        assert_eq!(lines[0].word_timing.as_ref(), Some(&word_lines[0]));
+        assert_eq!(lines[0].translation.as_deref(), Some("翻译保持"));
+        assert_eq!(lines[1].word_timing.as_ref(), Some(&word_lines[1]));
+    }
+
+    #[test]
+    fn partial_yrc_does_not_shift_onto_a_missing_middle_line() {
+        let word_lines = parse_yrc("[1020,500](1020,500,0)第一行\n[2980,500](2980,500,0)第三行");
+
+        let lines = parse_with_yrc(
+            "[00:01]第一行\n[00:02.900]第二行\n[00:03]第三行",
+            None,
+            &word_lines,
+        );
+
+        assert_eq!(lines[0].word_timing.as_ref(), Some(&word_lines[0]));
+        assert_eq!(lines[1].word_timing, None);
+        assert_eq!(lines[2].word_timing.as_ref(), Some(&word_lines[1]));
+    }
+
+    #[test]
+    fn partial_yrc_with_repeated_text_uses_the_closest_lrc_occurrence() {
+        let word_lines = parse_yrc("[1500,300](1500,300,0)啊");
+
+        let lines = parse_with_yrc("[00:01]啊\n[00:01.500]啊", None, &word_lines);
+
+        assert_eq!(lines[0].word_timing, None);
+        assert_eq!(lines[1].word_timing.as_ref(), Some(&word_lines[0]));
+    }
+
+    #[test]
+    fn repeated_text_keeps_two_available_yrc_lines_in_monotonic_order() {
+        let word_lines = parse_yrc("[1490,200](1490,200,0)啊\n[1510,200](1510,200,0)啊");
+
+        let lines = parse_with_yrc("[00:01]啊\n[00:01.500]啊", None, &word_lines);
+
+        assert_eq!(lines[0].word_timing.as_ref(), Some(&word_lines[0]));
+        assert_eq!(lines[1].word_timing.as_ref(), Some(&word_lines[1]));
+    }
+
+    #[test]
+    fn exact_text_alignment_wins_over_more_nearby_wrong_text_matches() {
+        let word_lines =
+            parse_yrc("[1000,200](1000,200,0)B\n[1500,200](1500,200,0)C\n[2000,200](2000,200,0)X");
+
+        let lines = parse_with_yrc("[00:01]A\n[00:01.500]B\n[00:02]C", None, &word_lines);
+
+        assert_eq!(lines[0].word_timing, None);
+        assert_eq!(lines[1].word_timing.as_ref(), Some(&word_lines[0]));
+        assert_eq!(lines[2].word_timing.as_ref(), Some(&word_lines[1]));
+    }
+
+    #[test]
+    fn near_identical_timing_can_match_text_variants_but_not_distant_lines() {
+        let word_lines = parse_yrc("[1000,500](1000,500,0)词（现场）\n[2500,500](2500,500,0)太远");
+
+        let lines = parse_with_yrc("[00:01.080]词\n[00:02]不匹配", None, &word_lines);
+
+        assert_eq!(lines[0].word_timing.as_ref(), Some(&word_lines[0]));
+        assert_eq!(lines[1].word_timing, None);
+    }
+
     fn assert_line(line: &LyricLine, milliseconds: u64, text: &str) {
         assert_eq!(line.time, Duration::from_millis(milliseconds));
         assert_eq!(line.text, text);
         assert_eq!(line.translation, None);
+        assert_eq!(line.word_timing, None);
     }
 }

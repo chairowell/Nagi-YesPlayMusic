@@ -71,6 +71,25 @@ pub struct Config {
     pub spectrum_glow: bool,
 }
 
+pub struct LoadedConfig {
+    pub config: Config,
+    pub theme_is_explicit: bool,
+}
+
+impl LoadedConfig {
+    pub fn should_probe_terminal_background(&self) -> bool {
+        !self.theme_is_explicit
+    }
+
+    pub fn apply_terminal_brightness(&mut self, is_light: Option<bool>) {
+        if self.theme_is_explicit {
+            return;
+        }
+        let Some(is_light) = is_light else { return };
+        self.config.theme = if is_light { "fairyfloss" } else { "db16" }.into();
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -98,13 +117,16 @@ impl Config {
     /// Missing or invalid config falls back to defaults — the TUI must
     /// always start. A missing file gets a commented template so the
     /// options are discoverable without reading docs.
-    pub fn load() -> Self {
+    pub fn load_with_metadata() -> LoadedConfig {
         let path = config_dir().join("config.toml");
         match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_default(),
+            Ok(text) => parse_with_metadata(&text),
             Err(_) => {
                 let _ = write_template(&path);
-                Self::default()
+                LoadedConfig {
+                    config: Self::default(),
+                    theme_is_explicit: false,
+                }
             }
         }
     }
@@ -127,6 +149,22 @@ impl Config {
     }
 }
 
+fn parse_with_metadata(text: &str) -> LoadedConfig {
+    let Ok(value) = toml::from_str::<toml::Value>(text) else {
+        return LoadedConfig {
+            config: Config::default(),
+            theme_is_explicit: false,
+        };
+    };
+    let theme_is_explicit = value
+        .as_table()
+        .is_some_and(|table| table.contains_key("theme"));
+    LoadedConfig {
+        config: value.try_into().unwrap_or_default(),
+        theme_is_explicit,
+    }
+}
+
 const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修改；手动编辑后重启生效。
 # 所有项都可省略（使用默认值）。
 
@@ -135,11 +173,13 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # unm_enabled = true          # 无版权/VIP 曲目无可播地址时尝试 UNM 换源
 # theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm
 #                              # one-dark | one-dark-pro | dracula | synthwave84 | laserwave | fairyfloss | ultraviolence | transparent
+#                              # 省略时：暗色终端用 db16，亮色终端用 fairyfloss
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
 # icons = "unicode"           # unicode（无需特殊字体）| nerd（需要 Nerd Font）
 # cover_mode = "pixel"        # pixel（主题像素画）| original（终端原图协议，不支持时回退 pixel）
-# cover_detail = "half"       # half（1×2）| quad（2×2）| sextant（2×3）
+# cover_detail = "half"       # half（1×2）| quad（2×2）| sextant（2×3）| octant（2×4，需 Unicode 16 字体）
+#                              # octant 显示方框时请切回 sextant
 # enter_replaces_queue = true # Enter：整列表成为队列；false = 只播这一首
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 8192       # 仅显式设置时更新 ypm 进程共享的上限
@@ -284,11 +324,47 @@ mod tests {
         let parsed: Config = toml::from_str("cover_detail = \"sextant\"").unwrap();
         assert_eq!(parsed.cover_detail, CoverDetail::Sextant);
 
+        let parsed: Config = toml::from_str("cover_detail = \"octant\"").unwrap();
+        assert_eq!(parsed.cover_detail, CoverDetail::Octant);
+
         let parsed: Config = toml::from_str("unm_enabled = false").unwrap();
         assert!(!parsed.unm_enabled);
 
         let parsed: Config = toml::from_str("cache_limit_mib = 4096").unwrap();
         assert_eq!(parsed.cache_limit_mib, Some(4096));
+    }
+
+    #[test]
+    fn terminal_theme_only_applies_when_theme_is_implicit() {
+        let mut light = parse_with_metadata("quality = \"lossless\"");
+        assert!(!light.theme_is_explicit);
+        assert!(light.should_probe_terminal_background());
+        light.apply_terminal_brightness(Some(true));
+        assert_eq!(light.config.theme, "fairyfloss");
+
+        let mut dark = parse_with_metadata("language = \"ja\"");
+        dark.apply_terminal_brightness(Some(false));
+        assert_eq!(dark.config.theme, "db16");
+
+        let mut unavailable = parse_with_metadata("quality = \"192\"");
+        unavailable.apply_terminal_brightness(None);
+        assert_eq!(unavailable.config.theme, "db16");
+
+        for is_light in [false, true] {
+            let mut explicit = parse_with_metadata("theme = \"dracula\"");
+            assert!(explicit.theme_is_explicit);
+            assert!(!explicit.should_probe_terminal_background());
+            explicit.apply_terminal_brightness(Some(is_light));
+            assert_eq!(explicit.config.theme, "dracula");
+        }
+
+        let malformed = parse_with_metadata("theme = [");
+        assert!(!malformed.theme_is_explicit);
+        assert_eq!(malformed.config, Config::default());
+
+        let invalid_value = parse_with_metadata("theme = 42");
+        assert!(invalid_value.theme_is_explicit);
+        assert_eq!(invalid_value.config.theme, "db16");
     }
 
     #[test]

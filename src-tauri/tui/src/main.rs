@@ -13,8 +13,10 @@ pub mod pixel;
 mod player;
 mod spectrum;
 mod store;
+mod terminal_background;
 mod theme;
 mod ui;
+mod yrc;
 
 use anyhow::Result;
 use clap::Parser;
@@ -31,8 +33,8 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let _log_guard = init_logging(args.debug)?;
 
-    let config = config::Config::load();
-    i18n::init(i18n::Lang::from_config(&config.language));
+    let config = config::Config::load_with_metadata();
+    i18n::init(i18n::Lang::from_config(&config.config.language));
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(app::run(config))
 }

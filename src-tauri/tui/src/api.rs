@@ -39,6 +39,7 @@ pub struct ResolvedTrack {
     pub id: i64,
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub media: ResolvedMedia,
     pub kind: String,
     pub cache_key: CacheKey,
@@ -93,13 +94,98 @@ impl UnmResolver for UnmState {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SongRow {
     pub id: i64,
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub duration_ms: i64,
     pub pic_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LyricsPayload {
+    pub lrc: String,
+    pub tlyric: Option<String>,
+    pub yrc: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum SearchChannel {
+    #[default]
+    Songs,
+    Artists,
+    Albums,
+    Playlists,
+}
+
+impl SearchChannel {
+    pub const ALL: [Self; 4] = [Self::Songs, Self::Artists, Self::Albums, Self::Playlists];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Songs => 0,
+            Self::Artists => 1,
+            Self::Albums => 2,
+            Self::Playlists => 3,
+        }
+    }
+
+    pub fn cycle(self, delta: i32) -> Self {
+        let index = (self.index() as i32 + delta).rem_euclid(Self::ALL.len() as i32) as usize;
+        Self::ALL[index]
+    }
+
+    const fn api_type(self) -> &'static str {
+        match self {
+            Self::Songs => "1",
+            Self::Artists => "100",
+            Self::Albums => "10",
+            Self::Playlists => "1000",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchPage<T> {
+    pub items: Vec<T>,
+    pub total: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistHit {
+    pub id: i64,
+    pub name: String,
+    pub pic_url: Option<String>,
+    pub album_count: usize,
+    pub song_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlbumHit {
+    pub id: i64,
+    pub name: String,
+    pub artist: String,
+    pub pic_url: Option<String>,
+    pub song_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaylistHit {
+    pub id: i64,
+    pub name: String,
+    pub creator: String,
+    pub cover_url: Option<String>,
+    pub track_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SearchPayload {
+    Songs(SearchPage<SongRow>),
+    Artists(SearchPage<ArtistHit>),
+    Albums(SearchPage<AlbumHit>),
+    Playlists(SearchPage<PlaylistHit>),
 }
 
 /// Which library list is on screen / feeding the queue.
@@ -276,8 +362,7 @@ impl Ncm {
             .playlist_track_all(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
-        let songs = response_array(&response.body, &["songs"])?;
-        Ok(songs.iter().map(song_row).collect())
+        parse_song_collection(&response.body, &["songs"])
     }
 
     pub async fn set_like(&self, id: i64, like: bool, session: Option<&Session>) -> Result<()> {
@@ -391,48 +476,85 @@ impl Ncm {
         ))
     }
 
-    /// Raw LRC text pair (original, translation) for a song.
-    pub async fn lyrics(&self, id: i64) -> Result<(String, Option<String>)> {
+    /// Raw line-, translation-, and word-synchronised lyrics for a song.
+    pub async fn lyrics(&self, id: i64) -> Result<LyricsPayload> {
         let query = self.query().param("id", &id.to_string());
         let response = self
             .client
-            .lyric(&query)
+            // `lyric_new` sends yv/ytv/yrv, the API's YRC request flags.
+            .lyric_new(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpLyrics, error)))?;
-        let body = &response.body;
-        let lrc = body["lrc"]["lyric"].as_str().unwrap_or_default().to_owned();
-        let tlyric = body["tlyric"]["lyric"]
-            .as_str()
-            .filter(|text| !text.trim().is_empty())
-            .map(str::to_owned);
-        Ok((lrc, tlyric))
+        parse_lyrics_payload(&response.body)
     }
 
-    pub async fn search_songs(&self, keywords: &str, limit: u32) -> Result<Vec<Value>> {
+    pub async fn search_channel(
+        &self,
+        keywords: &str,
+        channel: SearchChannel,
+        limit: u32,
+    ) -> Result<SearchPayload> {
         let query = self
             .query()
             .param("keywords", keywords)
-            .param("type", "1")
+            .param("type", channel.api_type())
             .param("limit", &limit.to_string());
         let response = self
             .client
             .cloudsearch(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSearch, error)))?;
-        Ok(response.body["result"]["songs"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default())
+        parse_search_payload(&response.body, channel)
     }
 
-    /// Song search mapped straight to typed rows.
-    pub async fn search_rows(&self, keywords: &str, limit: u32) -> Result<Vec<SongRow>> {
-        Ok(self
-            .search_songs(keywords, limit)
-            .await?
-            .iter()
-            .map(song_row)
-            .collect())
+    pub async fn artist_top_songs(&self, artist_id: i64) -> Result<Vec<SongRow>> {
+        let query = self.query().param("id", &artist_id.to_string());
+        let response = self
+            .client
+            .artist_top_song(&query)
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
+        parse_song_collection(&response.body, &["songs"])
+    }
+
+    pub async fn album_songs(&self, album_id: i64) -> Result<Vec<SongRow>> {
+        let query = self.query().param("id", &album_id.to_string());
+        let response = self
+            .client
+            .album(&query)
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
+        parse_song_collection(&response.body, &["songs"])
+    }
+
+    pub async fn playlist_detail_songs(&self, playlist_id: i64) -> Result<Vec<SongRow>> {
+        let query = self.query().param("id", &playlist_id.to_string());
+        let response = self
+            .client
+            .playlist_detail(&query)
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
+        let (embedded, total) = parse_playlist_detail(&response.body)?;
+        let session = self.session_snapshot();
+        complete_playlist_detail(embedded, total, || {
+            self.playlist_songs(playlist_id, session.as_ref())
+        })
+        .await
+    }
+
+    pub async fn search_songs(&self, keywords: &str, limit: u32) -> Result<Vec<Value>> {
+        let query = self
+            .query()
+            .param("keywords", keywords)
+            .param("type", SearchChannel::Songs.api_type())
+            .param("limit", &limit.to_string());
+        let response = self
+            .client
+            .cloudsearch(&query)
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSearch, error)))?;
+        require_success(&response.body)?;
+        Ok(response_array(&response.body, &["result", "songs"])?.to_vec())
     }
 
     /// Resolve a known song id straight to a playable track.
@@ -524,6 +646,7 @@ impl Ncm {
             id: row.id,
             title: row.title.clone(),
             artist: row.artist.clone(),
+            album: row.album.clone(),
             media,
             kind: codec.extension().to_owned(),
             cache_key: CacheKey::new(row.id, requested_quality),
@@ -555,6 +678,7 @@ impl Ncm {
                 id,
                 title: song["name"].as_str().unwrap_or(title).to_owned(),
                 artist: song["ar"][0]["name"].as_str().unwrap_or(artist).to_owned(),
+                album: song["al"]["name"].as_str().unwrap_or("").to_owned(),
                 duration_ms: song["dt"].as_i64().unwrap_or(0),
                 pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
             };
@@ -573,6 +697,7 @@ impl Ncm {
             id: row.id,
             title: row.title,
             artist: row.artist,
+            album: row.album,
             kind: source.codec.extension().to_owned(),
             cache_key: CacheKey::new(row.id, requested_quality),
             codec: source.codec,
@@ -584,6 +709,32 @@ impl Ncm {
             pic_url: row.pic_url,
         }
     }
+}
+
+fn parse_lyrics_payload(body: &Value) -> Result<LyricsPayload> {
+    require_success(body)?;
+    Ok(LyricsPayload {
+        lrc: lyric_text(body, "lrc")?.unwrap_or_default(),
+        tlyric: lyric_text(body, "tlyric")?,
+        yrc: lyric_text(body, "yrc")?,
+    })
+}
+
+fn lyric_text(body: &Value, field: &str) -> Result<Option<String>> {
+    let Value::Object(body) = body else {
+        return Err(invalid_payload("$"));
+    };
+    let section = match body.get(field) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Object(section)) => section,
+        Some(_) => return Err(invalid_payload(&format!("$.{field}"))),
+    };
+    let text = match section.get("lyric") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::String(text)) => text,
+        Some(_) => return Err(invalid_payload(&format!("$.{field}.lyric"))),
+    };
+    Ok((!text.trim().is_empty()).then(|| text.clone()))
 }
 
 async fn collect_playlist_pages<F, Fut>(mut fetch: F) -> Result<Vec<SongRow>>
@@ -639,6 +790,223 @@ fn response_array<'a>(body: &'a Value, path: &[&str]) -> Result<&'a [Value]> {
         .as_array()
         .map(Vec::as_slice)
         .ok_or_else(|| anyhow!(i18n::t(Key::ApiLibraryPayloadMissing)))
+}
+
+fn parse_search_payload(body: &Value, channel: SearchChannel) -> Result<SearchPayload> {
+    require_success(body)?;
+    match channel {
+        SearchChannel::Songs => {
+            let total = required_usize(body, &["result", "songCount"])?;
+            Ok(SearchPayload::Songs(SearchPage {
+                items: search_result_array(body, &["result", "songs"], total)?
+                    .iter()
+                    .map(parse_song_row)
+                    .collect::<Result<_>>()?,
+                total,
+            }))
+        }
+        SearchChannel::Artists => {
+            let total = required_usize(body, &["result", "artistCount"])?;
+            Ok(SearchPayload::Artists(SearchPage {
+                items: search_result_array(body, &["result", "artists"], total)?
+                    .iter()
+                    .map(parse_artist_hit)
+                    .collect::<Result<_>>()?,
+                total,
+            }))
+        }
+        SearchChannel::Albums => {
+            let total = required_usize(body, &["result", "albumCount"])?;
+            Ok(SearchPayload::Albums(SearchPage {
+                items: search_result_array(body, &["result", "albums"], total)?
+                    .iter()
+                    .map(parse_album_hit)
+                    .collect::<Result<_>>()?,
+                total,
+            }))
+        }
+        SearchChannel::Playlists => {
+            let total = required_usize(body, &["result", "playlistCount"])?;
+            Ok(SearchPayload::Playlists(SearchPage {
+                items: search_result_array(body, &["result", "playlists"], total)?
+                    .iter()
+                    .map(parse_playlist_hit)
+                    .collect::<Result<_>>()?,
+                total,
+            }))
+        }
+    }
+}
+
+fn search_result_array<'a>(value: &'a Value, path: &[&str], total: usize) -> Result<&'a [Value]> {
+    let Some((field, parent_path)) = path.split_last() else {
+        return Err(invalid_payload("$"));
+    };
+    let parent = required_value(value, parent_path)?;
+    match parent.get(*field) {
+        Some(Value::Array(items)) => Ok(items),
+        None if total == 0 => Ok(&[]),
+        _ => Err(invalid_payload_path(path)),
+    }
+}
+
+fn parse_song_collection(body: &Value, path: &[&str]) -> Result<Vec<SongRow>> {
+    require_success(body)?;
+    required_array(body, path)?
+        .iter()
+        .map(parse_song_row)
+        .collect()
+}
+
+fn parse_playlist_detail(body: &Value) -> Result<(Vec<SongRow>, usize)> {
+    let rows = parse_song_collection(body, &["playlist", "tracks"])?;
+    let total = required_usize(body, &["playlist", "trackCount"])?;
+    Ok((rows, total))
+}
+
+async fn complete_playlist_detail<F, Fut>(
+    embedded: Vec<SongRow>,
+    total: usize,
+    fetch_all: F,
+) -> Result<Vec<SongRow>>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<SongRow>>>,
+{
+    if embedded.len() >= total {
+        Ok(embedded)
+    } else {
+        fetch_all().await
+    }
+}
+
+fn parse_song_row(song: &Value) -> Result<SongRow> {
+    let artists = required_array(song, &["ar"])?;
+    let artist = artists.first().ok_or_else(|| invalid_payload("$.ar[0]"))?;
+    let album = required_value(song, &["al"])?;
+    let id = required_i64(song, &["id"])?;
+    if id <= 0 {
+        return Err(invalid_payload("$.id"));
+    }
+    let duration_ms = required_i64(song, &["dt"])?;
+    if duration_ms < 0 {
+        return Err(invalid_payload("$.dt"));
+    }
+
+    Ok(SongRow {
+        id,
+        title: required_string(song, &["name"])?,
+        artist: required_string(artist, &["name"])?,
+        album: required_string(album, &["name"])?,
+        duration_ms,
+        pic_url: optional_string(album, "picUrl")?,
+    })
+}
+
+fn parse_artist_hit(artist: &Value) -> Result<ArtistHit> {
+    let id = required_i64(artist, &["id"])?;
+    if id <= 0 {
+        return Err(invalid_payload("$.id"));
+    }
+    let pic_url = match optional_string(artist, "picUrl")? {
+        Some(pic_url) => Some(pic_url),
+        None => optional_string(artist, "img1v1Url")?,
+    };
+    Ok(ArtistHit {
+        id,
+        name: required_string(artist, &["name"])?,
+        pic_url,
+        album_count: required_usize(artist, &["albumSize"])?,
+        song_count: required_usize(artist, &["musicSize"])?,
+    })
+}
+
+fn parse_album_hit(album: &Value) -> Result<AlbumHit> {
+    let id = required_i64(album, &["id"])?;
+    if id <= 0 {
+        return Err(invalid_payload("$.id"));
+    }
+    Ok(AlbumHit {
+        id,
+        name: required_string(album, &["name"])?,
+        artist: required_string(album, &["artist", "name"])?,
+        pic_url: optional_string(album, "picUrl")?,
+        song_count: required_usize(album, &["size"])?,
+    })
+}
+
+fn parse_playlist_hit(playlist: &Value) -> Result<PlaylistHit> {
+    let id = required_i64(playlist, &["id"])?;
+    if id <= 0 {
+        return Err(invalid_payload("$.id"));
+    }
+    Ok(PlaylistHit {
+        id,
+        name: required_string(playlist, &["name"])?,
+        creator: required_string(playlist, &["creator", "nickname"])?,
+        cover_url: optional_string(playlist, "coverImgUrl")?,
+        track_count: required_usize(playlist, &["trackCount"])?,
+    })
+}
+
+fn require_success(body: &Value) -> Result<()> {
+    match body.get("code").and_then(Value::as_i64) {
+        Some(200) => Ok(()),
+        _ => Err(invalid_payload("$.code")),
+    }
+}
+
+fn required_value<'a>(value: &'a Value, path: &[&str]) -> Result<&'a Value> {
+    let mut current = value;
+    for segment in path {
+        current = current
+            .get(*segment)
+            .ok_or_else(|| invalid_payload_path(path))?;
+    }
+    Ok(current)
+}
+
+fn required_array<'a>(value: &'a Value, path: &[&str]) -> Result<&'a [Value]> {
+    required_value(value, path)?
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| invalid_payload_path(path))
+}
+
+fn required_string(value: &Value, path: &[&str]) -> Result<String> {
+    required_value(value, path)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| invalid_payload_path(path))
+}
+
+fn optional_string(value: &Value, field: &str) -> Result<Option<String>> {
+    match value.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => Ok((!text.is_empty()).then_some(text.clone())),
+        Some(_) => Err(invalid_payload(&format!("$.{field}"))),
+    }
+}
+
+fn required_i64(value: &Value, path: &[&str]) -> Result<i64> {
+    required_value(value, path)?
+        .as_i64()
+        .ok_or_else(|| invalid_payload_path(path))
+}
+
+fn required_usize(value: &Value, path: &[&str]) -> Result<usize> {
+    required_value(value, path)?
+        .as_u64()
+        .and_then(|number| usize::try_from(number).ok())
+        .ok_or_else(|| invalid_payload_path(path))
+}
+
+fn invalid_payload_path(path: &[&str]) -> anyhow::Error {
+    invalid_payload(&format!("$.{}", path.join(".")))
+}
+
+fn invalid_payload(path: &str) -> anyhow::Error {
+    anyhow!("invalid NCM response at {path}")
 }
 
 fn parse_playback_source(data: &Value) -> Result<PlaybackSource> {
@@ -760,16 +1128,6 @@ fn parse_account(body: &Value) -> Result<(i64, String)> {
     Ok((uid, nickname))
 }
 
-fn song_row(song: &Value) -> SongRow {
-    SongRow {
-        id: song["id"].as_i64().unwrap_or(0),
-        title: song["name"].as_str().unwrap_or("?").to_owned(),
-        artist: song["ar"][0]["name"].as_str().unwrap_or("?").to_owned(),
-        duration_ms: song["dt"].as_i64().unwrap_or(0),
-        pic_url: song["al"]["picUrl"].as_str().map(str::to_owned),
-    }
-}
-
 /// Tolerant mapping: daily/FM/cloud payloads use ar|artists, al|album,
 /// dt|duration interchangeably.
 fn song_row_flex(song: &Value) -> SongRow {
@@ -777,6 +1135,11 @@ fn song_row_flex(song: &Value) -> SongRow {
         .as_str()
         .or_else(|| song["artists"][0]["name"].as_str())
         .unwrap_or("?")
+        .to_owned();
+    let album = song["al"]["name"]
+        .as_str()
+        .or_else(|| song["album"]["name"].as_str())
+        .unwrap_or("")
         .to_owned();
     let pic_url = song["al"]["picUrl"]
         .as_str()
@@ -790,6 +1153,7 @@ fn song_row_flex(song: &Value) -> SongRow {
         id: song["id"].as_i64().unwrap_or(0),
         title: song["name"].as_str().unwrap_or("?").to_owned(),
         artist,
+        album,
         duration_ms,
         pic_url,
     }
@@ -827,6 +1191,57 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    #[test]
+    fn lyric_payload_keeps_all_supported_timeline_kinds() {
+        let payload = parse_lyrics_payload(&serde_json::json!({
+            "code": 200,
+            "lrc": { "lyric": "[00:01]line" },
+            "tlyric": { "lyric": "[00:01]翻译" },
+            "yrc": { "lyric": "[1000,500](1000,500,0)line" }
+        }))
+        .unwrap();
+
+        assert_eq!(payload.lrc, "[00:01]line");
+        assert_eq!(payload.tlyric.as_deref(), Some("[00:01]翻译"));
+        assert_eq!(payload.yrc.as_deref(), Some("[1000,500](1000,500,0)line"));
+    }
+
+    #[test]
+    fn lyric_payload_accepts_missing_null_and_blank_optional_text() {
+        let payload = parse_lyrics_payload(&serde_json::json!({
+            "code": 200,
+            "lrc": { "lyric": null },
+            "tlyric": null
+        }))
+        .unwrap();
+
+        assert_eq!(payload, LyricsPayload::default());
+
+        let whitespace = parse_lyrics_payload(&serde_json::json!({
+            "code": 200,
+            "lrc": { "lyric": "  \n" },
+            "tlyric": {},
+            "yrc": null
+        }))
+        .unwrap();
+        assert_eq!(whitespace, LyricsPayload::default());
+    }
+
+    #[test]
+    fn lyric_payload_rejects_wrong_dynamic_types_and_unsuccessful_codes() {
+        let malformed = [
+            serde_json::json!({ "code": 200, "lrc": [] }),
+            serde_json::json!({ "code": 200, "tlyric": { "lyric": 42 } }),
+            serde_json::json!({ "code": 200, "yrc": ["not", "an", "object"] }),
+            serde_json::json!({ "code": 500, "lrc": { "lyric": "ignored" } }),
+            serde_json::json!({ "lrc": { "lyric": "missing code" } }),
+        ];
+
+        for body in malformed {
+            assert!(parse_lyrics_payload(&body).is_err());
+        }
+    }
 
     fn ncm(quality: AudioQuality) -> Ncm {
         let dir = tempfile::tempdir().unwrap();
@@ -887,9 +1302,389 @@ mod tests {
             id: 42,
             title: "Unavailable".into(),
             artist: "Artist".into(),
+            album: "Album".into(),
             duration_ms: 180_000,
             pic_url: None,
         }
+    }
+
+    fn song_payload() -> Value {
+        serde_json::json!({
+            "id": 186_016,
+            "name": "晴天",
+            "ar": [{ "id": 6_452, "name": "周杰伦" }],
+            "al": {
+                "id": 18_905,
+                "name": "叶惠美",
+                "picUrl": "https://example.test/cover.jpg"
+            },
+            "dt": 269_000
+        })
+    }
+
+    #[test]
+    fn search_channels_use_the_documented_ncm_types() {
+        assert_eq!(
+            SearchChannel::ALL.map(SearchChannel::api_type),
+            ["1", "100", "10", "1000"]
+        );
+        assert_eq!(SearchChannel::Songs.cycle(-1), SearchChannel::Playlists);
+        assert_eq!(SearchChannel::Playlists.cycle(1), SearchChannel::Songs);
+        assert_eq!(SearchChannel::Albums.index(), 2);
+    }
+
+    #[test]
+    fn search_payloads_narrow_all_four_channel_shapes() {
+        let songs = parse_search_payload(
+            &serde_json::json!({
+                "code": 200,
+                "result": { "songCount": 1, "songs": [song_payload()] }
+            }),
+            SearchChannel::Songs,
+        )
+        .unwrap();
+        let SearchPayload::Songs(songs) = songs else {
+            panic!("song search returned the wrong variant");
+        };
+        assert_eq!(songs.total, 1);
+        assert_eq!(songs.items[0].title, "晴天");
+        assert_eq!(songs.items[0].album, "叶惠美");
+
+        let artists = parse_search_payload(
+            &serde_json::json!({
+                "code": 200,
+                "result": {
+                    "artistCount": 83,
+                    "artists": [{
+                        "id": 6_452,
+                        "name": "周杰伦",
+                        "picUrl": null,
+                        "img1v1Url": "https://example.test/artist.jpg",
+                        "albumSize": 41,
+                        "musicSize": 568
+                    }]
+                }
+            }),
+            SearchChannel::Artists,
+        )
+        .unwrap();
+        let SearchPayload::Artists(artists) = artists else {
+            panic!("artist search returned the wrong variant");
+        };
+        assert_eq!(artists.total, 83);
+        assert_eq!(artists.items[0].album_count, 41);
+        assert_eq!(artists.items[0].song_count, 568);
+        assert_eq!(
+            artists.items[0].pic_url.as_deref(),
+            Some("https://example.test/artist.jpg")
+        );
+
+        let albums = parse_search_payload(
+            &serde_json::json!({
+                "code": 200,
+                "result": {
+                    "albumCount": 12,
+                    "albums": [{
+                        "id": 18_905,
+                        "name": "叶惠美",
+                        "artist": { "id": 6_452, "name": "周杰伦" },
+                        "picUrl": "https://example.test/album.jpg",
+                        "size": 11
+                    }]
+                }
+            }),
+            SearchChannel::Albums,
+        )
+        .unwrap();
+        let SearchPayload::Albums(albums) = albums else {
+            panic!("album search returned the wrong variant");
+        };
+        assert_eq!(albums.total, 12);
+        assert_eq!(albums.items[0].artist, "周杰伦");
+        assert_eq!(albums.items[0].song_count, 11);
+
+        let playlists = parse_search_payload(
+            &serde_json::json!({
+                "code": 200,
+                "result": {
+                    "playlistCount": 9,
+                    "playlists": [{
+                        "id": 19_723_756,
+                        "name": "飙升榜",
+                        "creator": { "nickname": "网易云音乐" },
+                        "coverImgUrl": "https://example.test/playlist.jpg",
+                        "trackCount": 100
+                    }]
+                }
+            }),
+            SearchChannel::Playlists,
+        )
+        .unwrap();
+        let SearchPayload::Playlists(playlists) = playlists else {
+            panic!("playlist search returned the wrong variant");
+        };
+        assert_eq!(playlists.total, 9);
+        assert_eq!(playlists.items[0].creator, "网易云音乐");
+        assert_eq!(playlists.items[0].track_count, 100);
+    }
+
+    #[test]
+    fn search_payloads_accept_explicit_empty_results() {
+        let cases = [
+            (
+                SearchChannel::Songs,
+                serde_json::json!({
+                    "code": 200,
+                    "result": { "songCount": 0, "songs": [] }
+                }),
+            ),
+            (
+                SearchChannel::Artists,
+                serde_json::json!({
+                    "code": 200,
+                    "result": { "artistCount": 0, "artists": [] }
+                }),
+            ),
+            (
+                SearchChannel::Albums,
+                serde_json::json!({
+                    "code": 200,
+                    "result": { "albumCount": 0, "albums": [] }
+                }),
+            ),
+            (
+                SearchChannel::Playlists,
+                serde_json::json!({
+                    "code": 200,
+                    "result": { "playlistCount": 0, "playlists": [] }
+                }),
+            ),
+        ];
+
+        for (channel, payload) in cases {
+            let result = parse_search_payload(&payload, channel).unwrap();
+            let (len, total) = match result {
+                SearchPayload::Songs(page) => (page.items.len(), page.total),
+                SearchPayload::Artists(page) => (page.items.len(), page.total),
+                SearchPayload::Albums(page) => (page.items.len(), page.total),
+                SearchPayload::Playlists(page) => (page.items.len(), page.total),
+            };
+            assert_eq!((len, total), (0, 0));
+        }
+    }
+
+    #[test]
+    fn search_payloads_accept_omitted_arrays_when_the_count_is_zero() {
+        let cases = [
+            (
+                SearchChannel::Songs,
+                serde_json::json!({ "code": 200, "result": { "songCount": 0 } }),
+            ),
+            (
+                SearchChannel::Artists,
+                serde_json::json!({ "code": 200, "result": { "artistCount": 0 } }),
+            ),
+            (
+                SearchChannel::Albums,
+                serde_json::json!({ "code": 200, "result": { "albumCount": 0 } }),
+            ),
+            (
+                SearchChannel::Playlists,
+                serde_json::json!({ "code": 200, "result": { "playlistCount": 0 } }),
+            ),
+        ];
+
+        for (channel, payload) in cases {
+            let result = parse_search_payload(&payload, channel).unwrap();
+            let (len, total) = match result {
+                SearchPayload::Songs(page) => (page.items.len(), page.total),
+                SearchPayload::Artists(page) => (page.items.len(), page.total),
+                SearchPayload::Albums(page) => (page.items.len(), page.total),
+                SearchPayload::Playlists(page) => (page.items.len(), page.total),
+            };
+            assert_eq!((len, total), (0, 0));
+        }
+    }
+
+    #[test]
+    fn search_payloads_reject_missing_or_wrongly_typed_fields() {
+        let cases = [
+            (
+                SearchChannel::Songs,
+                serde_json::json!({
+                    "code": 200,
+                    "result": { "songCount": 1 }
+                }),
+            ),
+            (
+                SearchChannel::Artists,
+                serde_json::json!({
+                    "code": 200,
+                    "result": {
+                        "artistCount": 1,
+                        "artists": [{
+                            "id": "6452",
+                            "name": "周杰伦",
+                            "albumSize": 41,
+                            "musicSize": 568
+                        }]
+                    }
+                }),
+            ),
+            (
+                SearchChannel::Albums,
+                serde_json::json!({
+                    "code": 200,
+                    "result": {
+                        "albumCount": 1,
+                        "albums": [{
+                            "id": 18_905,
+                            "name": "叶惠美",
+                            "artist": {},
+                            "size": 11
+                        }]
+                    }
+                }),
+            ),
+            (
+                SearchChannel::Playlists,
+                serde_json::json!({
+                    "code": 200,
+                    "result": {
+                        "playlistCount": -1,
+                        "playlists": []
+                    }
+                }),
+            ),
+        ];
+
+        for (channel, payload) in cases {
+            assert!(parse_search_payload(&payload, channel).is_err());
+        }
+        assert!(parse_search_payload(
+            &serde_json::json!({ "result": { "songCount": 0, "songs": [] } }),
+            SearchChannel::Songs,
+        )
+        .is_err());
+        assert!(parse_artist_hit(&serde_json::json!({
+            "id": 6_452,
+            "name": "周杰伦",
+            "picUrl": 42,
+            "albumSize": 41,
+            "musicSize": 568
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn detail_payloads_narrow_artist_album_and_playlist_tracks() {
+        let song = song_payload();
+        let artist = parse_song_collection(
+            &serde_json::json!({ "code": 200, "songs": [song.clone()] }),
+            &["songs"],
+        )
+        .unwrap();
+        let album = parse_song_collection(
+            &serde_json::json!({ "code": 200, "songs": [song.clone()] }),
+            &["songs"],
+        )
+        .unwrap();
+        let playlist = parse_song_collection(
+            &serde_json::json!({
+                "code": 200,
+                "playlist": { "tracks": [song] }
+            }),
+            &["playlist", "tracks"],
+        )
+        .unwrap();
+
+        assert_eq!(artist, album);
+        assert_eq!(album, playlist);
+        assert_eq!(
+            playlist[0].pic_url.as_deref(),
+            Some("https://example.test/cover.jpg")
+        );
+    }
+
+    #[test]
+    fn playlist_detail_reports_when_embedded_tracks_need_paged_completion() {
+        let (rows, total) = parse_playlist_detail(&serde_json::json!({
+            "code": 200,
+            "playlist": {
+                "trackCount": 2,
+                "tracks": [song_payload()]
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(total, 2);
+        assert!(rows.len() < total);
+    }
+
+    #[tokio::test]
+    async fn complete_playlist_detail_keeps_complete_embedded_tracks_without_fetching() {
+        let embedded = rows(1..3);
+        let expected = embedded.clone();
+        let fetch_calls = AtomicUsize::new(0);
+
+        let result = complete_playlist_detail(embedded, expected.len(), || {
+            fetch_calls.fetch_add(1, Ordering::Relaxed);
+            std::future::ready(Ok(rows(100..101)))
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result, expected);
+        assert_eq!(fetch_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn complete_playlist_detail_fetches_full_tracks_once_when_embedded_is_partial() {
+        let full = rows(1..4);
+        let expected = full.clone();
+        let fetch_calls = AtomicUsize::new(0);
+
+        let result = complete_playlist_detail(rows(1..2), expected.len(), || {
+            fetch_calls.fetch_add(1, Ordering::Relaxed);
+            std::future::ready(Ok(full))
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result, expected);
+        assert_eq!(fetch_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn detail_payloads_reject_unknown_song_shapes_instead_of_defaulting() {
+        let missing_duration = serde_json::json!({
+            "code": 200,
+            "songs": [{
+                "id": 186_016,
+                "name": "晴天",
+                "ar": [{ "name": "周杰伦" }],
+                "al": { "name": "叶惠美" }
+            }]
+        });
+        let wrong_artists = serde_json::json!({
+            "code": 200,
+            "songs": [{
+                "id": 186_016,
+                "name": "晴天",
+                "ar": { "name": "周杰伦" },
+                "al": { "name": "叶惠美" },
+                "dt": 269_000
+            }]
+        });
+
+        assert!(parse_song_collection(&missing_duration, &["songs"]).is_err());
+        assert!(parse_song_collection(&wrong_artists, &["songs"]).is_err());
+        assert!(parse_song_collection(
+            &serde_json::json!({ "code": 200, "playlist": {} }),
+            &["playlist", "tracks"],
+        )
+        .is_err());
     }
 
     #[test]
@@ -1053,6 +1848,7 @@ mod tests {
                 id: id as i64,
                 title: format!("Track {id}"),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 duration_ms: 180_000,
                 pic_url: None,
             })
@@ -1180,6 +1976,28 @@ mod tests {
     }
 
     #[test]
+    fn song_rows_preserve_album_names_from_both_payload_shapes() {
+        let standard = parse_song_row(&serde_json::json!({
+            "id": 1,
+            "name": "Track",
+            "ar": [{ "name": "Artist" }],
+            "al": { "name": "Standard Album", "picUrl": null },
+            "dt": 180_000
+        }))
+        .unwrap();
+        let flexible = song_row_flex(&serde_json::json!({
+            "id": 2,
+            "name": "Cloud Track",
+            "artists": [{ "name": "Cloud Artist" }],
+            "album": { "name": "Flexible Album", "picUrl": null },
+            "duration": 210_000
+        }));
+
+        assert_eq!(standard.album, "Standard Album");
+        assert_eq!(flexible.album, "Flexible Album");
+    }
+
+    #[test]
     fn playback_response_preserves_actual_cache_metadata() {
         let source = parse_playback_source(&serde_json::json!({
             "url": "https://example.test/audio.flac",
@@ -1213,6 +2031,7 @@ mod tests {
                 id: 42,
                 title: "Track".into(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 duration_ms: 180_000,
                 pic_url: None,
             },
@@ -1230,6 +2049,7 @@ mod tests {
         assert_eq!(track.codec, AudioCodec::Mp3);
         assert_eq!(track.kind, "mp3");
         assert_eq!(track.actual_bitrate, 320_000);
+        assert_eq!(track.album, "Album");
         assert_eq!(track.expected_bytes, Some(7_654_321));
         assert_eq!(track.expected_md5, Some([0x11; 16]));
     }

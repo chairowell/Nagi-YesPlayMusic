@@ -34,6 +34,7 @@ pub enum Key {
     NetworkRetrying,
     SessionExpired,
     NowPlaying,
+    Cover,
     Library,
     Search,
     Queue,
@@ -58,6 +59,8 @@ pub enum Key {
     Off,
     SettingsHint,
     NerdFontHint,
+    OctantFontRequired,
+    OctantFontHint,
     SettingsSaved,
     SettingsSaveFailed,
     Save,
@@ -87,7 +90,7 @@ pub enum Key {
     SpectrumPreview,
     LoginTitle,
     LoginInstruction,
-    NotLoggedInMenu,
+    SignedOut,
     LikedSongs,
     DailyRecommendations,
     PersonalFm,
@@ -96,8 +99,17 @@ pub enum Key {
     EmptyLibrary,
     ColumnTitle,
     SearchPrompt,
+    SearchSongs,
+    SearchArtists,
+    SearchAlbums,
+    SearchPlaylists,
+    SearchChannelSwitch,
+    Open,
     HelpTitle,
     HelpAnyKey,
+    CommandPalette,
+    CommandPaletteHint,
+    CommandNoMatches,
     LabelLike,
     LabelHelp,
     Searching,
@@ -108,11 +120,11 @@ pub enum Key {
     Unliked,
     LikeFailed,
     ColumnArtist,
+    ColumnAlbum,
     ColumnDuration,
     EmptyQueue,
     Relogin,
     ScanLogin,
-    NotLoggedInSync,
     OpQrKey,
     ApiQrKeyMissing,
     OpQrCheck,
@@ -143,8 +155,20 @@ pub fn t(key: Key) -> &'static str {
     t_for(language(), key)
 }
 
-pub fn t_songs_ready(n: usize) -> String {
-    songs_ready_for(language(), n)
+pub fn t_track_count(n: usize) -> String {
+    track_count_for(language(), n)
+}
+
+pub fn t_result_count(n: usize) -> String {
+    result_count_for(language(), n)
+}
+
+fn result_count_for(lang: Lang, n: usize) -> String {
+    match lang {
+        Lang::Zh => format!("{n} 项"),
+        Lang::En => format!("{n} results"),
+        Lang::Ja => format!("{n}件"),
+    }
 }
 
 pub fn t_welcome(name: &str) -> String {
@@ -156,11 +180,7 @@ pub fn t_welcome(name: &str) -> String {
 }
 
 pub fn t_liked_songs_count(n: usize) -> String {
-    match language() {
-        Lang::Zh => format!("我喜欢的音乐 · {n} 首"),
-        Lang::En => format!("Liked Songs · {n} tracks"),
-        Lang::Ja => format!("お気に入り · {n}曲"),
-    }
+    format!("{} · {}", t(Key::LikedSongs), t_track_count(n))
 }
 
 pub fn t_playing(kind: &str) -> String {
@@ -255,15 +275,55 @@ pub fn t_candidates_unavailable(keywords: &str) -> String {
     }
 }
 
+pub fn t_command_executed(command: &str) -> String {
+    match language() {
+        Lang::Zh => format!("已执行命令：{command}"),
+        Lang::En => format!("Command executed: {command}"),
+        Lang::Ja => format!("コマンドを実行しました：{command}"),
+    }
+}
+
+pub fn t_command_unknown(command: &str) -> String {
+    match language() {
+        Lang::Zh => format!("没有匹配的命令：{command}"),
+        Lang::En => format!("No matching command: {command}"),
+        Lang::Ja => format!("一致するコマンドがありません：{command}"),
+    }
+}
+
+pub fn t_command_missing_argument(command: &str, expected: &str) -> String {
+    match language() {
+        Lang::Zh => format!("{command} 缺少参数（需要 {expected}）"),
+        Lang::En => format!("{command} needs an argument ({expected})"),
+        Lang::Ja => format!("{command} に引数が必要です（{expected}）"),
+    }
+}
+
+pub fn t_command_unexpected_argument(command: &str) -> String {
+    match language() {
+        Lang::Zh => format!("{command} 不接受这些参数"),
+        Lang::En => format!("{command} does not accept those arguments"),
+        Lang::Ja => format!("{command} は引数を受け取りません"),
+    }
+}
+
+pub fn t_command_invalid_argument(command: &str, value: &str, expected: &str) -> String {
+    match language() {
+        Lang::Zh => format!("{command} 的参数“{value}”无效（需要 {expected}）"),
+        Lang::En => format!("Invalid argument “{value}” for {command} (expected {expected})"),
+        Lang::Ja => format!("{command} の引数「{value}」は無効です（{expected}）"),
+    }
+}
+
 fn language() -> Lang {
     LANGUAGE.get().copied().unwrap_or(Lang::Zh)
 }
 
-fn songs_ready_for(lang: Lang, n: usize) -> String {
+fn track_count_for(lang: Lang, n: usize) -> String {
     match lang {
-        Lang::Zh => format!("{n} 首已就绪"),
-        Lang::En => format!("{n} tracks ready"),
-        Lang::Ja => format!("{n}曲を同期済み"),
+        Lang::Zh => format!("{n} 首"),
+        Lang::En => format!("{n} tracks"),
+        Lang::Ja => format!("{n}曲"),
     }
 }
 
@@ -281,6 +341,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NetworkRetrying => "网络抖动，重试中…",
             Key::SessionExpired => "登录态已失效，请从主菜单重新扫码",
             Key::NowPlaying => "正在播放",
+            Key::Cover => "封面",
             Key::Library => "曲库",
             Key::Search => "搜索",
             Key::Queue => "队列",
@@ -307,6 +368,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NerdFontHint => {
                 "终端字体需支持 Nerd Font\nmacOS：brew install font-symbols-only-nerd-font"
             }
+            Key::OctantFontRequired => "需字体支持",
+            Key::OctantFontHint => {
+                "octant 需 Unicode 16 字体支持；不支持时会显示方框\n显示方框时请切回 sextant"
+            }
             Key::SettingsSaved => "设置已保存",
             Key::SettingsSaveFailed => "设置保存失败",
             Key::Save => "保存",
@@ -327,7 +392,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Mute => "静音",
             Key::Shuffle => "随机开 / 关",
             Key::Repeat => "列表 / 单曲 / 关",
-            Key::LibraryFocus => "侧栏 / 列表",
+            Key::LibraryFocus => "曲库焦点 / 搜索类型",
             Key::Pause => "暂停",
             Key::Seek => "快进",
             Key::Volume => "音量",
@@ -335,13 +400,22 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Spectrum => "频谱开 / 关",
             Key::SpectrumPreview => "实时预览",
             Key::SearchPrompt => "搜索网易云曲库",
+            Key::SearchSongs => "单曲",
+            Key::SearchArtists => "歌手",
+            Key::SearchAlbums => "专辑",
+            Key::SearchPlaylists => "歌单",
+            Key::SearchChannelSwitch => "切换类型",
+            Key::Open => "打开",
             Key::HelpTitle => "快捷键",
             Key::HelpAnyKey => "按任意键关闭",
+            Key::CommandPalette => "命令面板",
+            Key::CommandPaletteHint => "↑/↓ 选择 · Enter 执行 · Esc 关闭",
+            Key::CommandNoMatches => "没有匹配的命令",
             Key::LabelLike => "收藏",
             Key::LabelHelp => "全部键位",
             Key::Searching => "搜索中…",
             Key::SearchFailed => "搜索失败，请稍后重试",
-            Key::NoResults => "没有找到相关歌曲",
+            Key::NoResults => "没有找到相关结果",
             Key::TypeToSearch => "输入关键词，Enter 搜索",
             Key::Liked => "已收藏",
             Key::Unliked => "已取消收藏",
@@ -350,7 +424,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "请用网易云音乐 App 里的「扫一扫」（系统相机扫会提示无效）"
             }
-            Key::NotLoggedInMenu => "未登录 · 从主菜单扫码",
+            Key::SignedOut => "未登录",
             Key::LikedSongs => "我喜欢的音乐",
             Key::DailyRecommendations => "每日推荐",
             Key::PersonalFm => "私人FM",
@@ -359,11 +433,11 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::EmptyLibrary => "这里还是空的",
             Key::ColumnTitle => "歌名",
             Key::ColumnArtist => "歌手",
+            Key::ColumnAlbum => "专辑",
             Key::ColumnDuration => "时长",
             Key::EmptyQueue => "队列是空的——去曲库按 Enter，整列表就会成为播放队列",
             Key::Relogin => "重新扫码登录",
             Key::ScanLogin => "扫码登录",
-            Key::NotLoggedInSync => "未登录 · 扫码后同步你的音乐",
             Key::OpQrKey => "请求二维码密钥",
             Key::ApiQrKeyMissing => "二维码密钥响应缺少 unikey",
             Key::OpQrCheck => "检查二维码状态",
@@ -397,6 +471,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NetworkRetrying => "Network hiccup—retrying…",
             Key::SessionExpired => "Session expired; scan again from the main menu",
             Key::NowPlaying => "Now Playing",
+            Key::Cover => "Cover",
             Key::Library => "Library",
             Key::Search => "Search",
             Key::Queue => "Queue",
@@ -423,6 +498,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NerdFontHint => {
                 "Your terminal font must support Nerd Font\nmacOS: brew install font-symbols-only-nerd-font"
             }
+            Key::OctantFontRequired => "font support required",
+            Key::OctantFontHint => {
+                "octant needs a Unicode 16 font; unsupported glyphs show □\nIf □ appears, switch back to sextant"
+            }
             Key::SettingsSaved => "Settings saved",
             Key::SettingsSaveFailed => "Could not save settings",
             Key::Save => "Save",
@@ -443,7 +522,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Mute => "Mute",
             Key::Shuffle => "Shuffle on / off",
             Key::Repeat => "List / one / off",
-            Key::LibraryFocus => "Sidebar / list",
+            Key::LibraryFocus => "Library focus / search type",
             Key::Pause => "Pause",
             Key::Seek => "Seek",
             Key::Volume => "Volume",
@@ -451,13 +530,22 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Spectrum => "Spectrum on / off",
             Key::SpectrumPreview => "Live preview",
             Key::SearchPrompt => "Search NCM",
+            Key::SearchSongs => "Songs",
+            Key::SearchArtists => "Artists",
+            Key::SearchAlbums => "Albums",
+            Key::SearchPlaylists => "Playlists",
+            Key::SearchChannelSwitch => "Switch type",
+            Key::Open => "Open",
             Key::HelpTitle => "Keyboard",
             Key::HelpAnyKey => "Press any key to close",
+            Key::CommandPalette => "Command Palette",
+            Key::CommandPaletteHint => "↑/↓ select · Enter run · Esc close",
+            Key::CommandNoMatches => "No matching commands",
             Key::LabelLike => "Like",
             Key::LabelHelp => "All keys",
             Key::Searching => "Searching…",
             Key::SearchFailed => "Search failed. Try again later",
-            Key::NoResults => "No songs found",
+            Key::NoResults => "No results",
             Key::TypeToSearch => "Type keywords, Enter to search",
             Key::Liked => "Liked",
             Key::Unliked => "Removed from likes",
@@ -466,7 +554,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "Use Scan in the NetEase Cloud Music app (the camera app will not work)"
             }
-            Key::NotLoggedInMenu => "Signed out · scan from the main menu",
+            Key::SignedOut => "Signed out",
             Key::LikedSongs => "Liked Songs",
             Key::DailyRecommendations => "Daily Picks",
             Key::PersonalFm => "Personal FM",
@@ -475,11 +563,11 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::EmptyLibrary => "Nothing here yet",
             Key::ColumnTitle => "Title",
             Key::ColumnArtist => "Artist",
+            Key::ColumnAlbum => "Album",
             Key::ColumnDuration => "Time",
             Key::EmptyQueue => "Queue is empty—press Enter in Library to queue the list",
             Key::Relogin => "Scan again",
             Key::ScanLogin => "Sign in with QR",
-            Key::NotLoggedInSync => "Signed out · scan to sync your music",
             Key::OpQrKey => "request a QR code key",
             Key::ApiQrKeyMissing => "QR code response is missing unikey",
             Key::OpQrCheck => "check QR code status",
@@ -513,6 +601,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NetworkRetrying => "通信が不安定です。再試行中…",
             Key::SessionExpired => "ログイン期限切れです。メインメニューから再スキャンしてください",
             Key::NowPlaying => "再生中",
+            Key::Cover => "カバー",
             Key::Library => "ライブラリ",
             Key::Search => "検索",
             Key::Queue => "キュー",
@@ -539,6 +628,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::NerdFontHint => {
                 "端末のフォントはNerd Font対応が必要です\nmacOS: brew install font-symbols-only-nerd-font"
             }
+            Key::OctantFontRequired => "フォント対応必須",
+            Key::OctantFontHint => {
+                "octant は Unicode 16 対応フォントが必要です\n□ 表示時は sextant に戻してください"
+            }
             Key::SettingsSaved => "設定を保存しました",
             Key::SettingsSaveFailed => "設定を保存できませんでした",
             Key::Save => "保存",
@@ -559,7 +652,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Mute => "ミュート",
             Key::Shuffle => "シャッフル オン / オフ",
             Key::Repeat => "リスト / 1曲 / オフ",
-            Key::LibraryFocus => "サイドバー / 一覧",
+            Key::LibraryFocus => "ライブラリ操作 / 検索種類",
             Key::Pause => "一時停止",
             Key::Seek => "シーク",
             Key::Volume => "音量",
@@ -567,8 +660,17 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::Spectrum => "スペクトラム切替",
             Key::SpectrumPreview => "ライブプレビュー",
             Key::SearchPrompt => "検索",
+            Key::SearchSongs => "曲",
+            Key::SearchArtists => "アーティスト",
+            Key::SearchAlbums => "アルバム",
+            Key::SearchPlaylists => "プレイリスト",
+            Key::SearchChannelSwitch => "種類を切替",
+            Key::Open => "開く",
             Key::HelpTitle => "キー操作",
             Key::HelpAnyKey => "任意のキーで閉じる",
+            Key::CommandPalette => "コマンドパレット",
+            Key::CommandPaletteHint => "↑/↓ 選択 · Enter 実行 · Esc 閉じる",
+            Key::CommandNoMatches => "一致するコマンドがありません",
             Key::LabelLike => "お気に入り",
             Key::LabelHelp => "すべてのキー",
             Key::Searching => "検索中…",
@@ -582,7 +684,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::LoginInstruction => {
                 "NetEase Cloud Musicアプリのスキャン機能を使用してください（カメラアプリは使用不可）"
             }
-            Key::NotLoggedInMenu => "未ログイン · メインメニューからスキャン",
+            Key::SignedOut => "未ログイン",
             Key::LikedSongs => "お気に入り",
             Key::DailyRecommendations => "デイリーレコメンド",
             Key::PersonalFm => "パーソナルFM",
@@ -591,11 +693,11 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::EmptyLibrary => "まだ何もありません",
             Key::ColumnTitle => "曲名",
             Key::ColumnArtist => "アーティスト",
+            Key::ColumnAlbum => "アルバム",
             Key::ColumnDuration => "時間",
             Key::EmptyQueue => "キューは空です。ライブラリでEnterを押すと一覧を追加できます",
             Key::Relogin => "もう一度スキャン",
             Key::ScanLogin => "QRコードでログイン",
-            Key::NotLoggedInSync => "未ログイン · スキャンして音楽を同期",
             Key::OpQrKey => "QRコードキーの取得",
             Key::ApiQrKeyMissing => "QRコードの応答にunikeyがありません",
             Key::OpQrCheck => "QRコード状態の確認",
@@ -622,7 +724,9 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{init, songs_ready_for, t, t_for, t_login_interrupted, t_songs_ready, Key, Lang};
+    use super::{
+        init, result_count_for, t, t_for, t_login_interrupted, track_count_for, Key, Lang,
+    };
 
     #[test]
     fn comparable_keys_are_complete_and_distinct_in_all_languages() {
@@ -633,6 +737,15 @@ mod tests {
             Key::Seek,
             Key::LabelLike,
             Key::LabelHelp,
+            Key::SignedOut,
+            Key::ColumnAlbum,
+            Key::Cover,
+            Key::SearchSongs,
+            Key::SearchArtists,
+            Key::SearchAlbums,
+            Key::SearchPlaylists,
+            Key::SearchChannelSwitch,
+            Key::Open,
         ] {
             let translations = [
                 t_for(Lang::Zh, key),
@@ -647,6 +760,51 @@ mod tests {
     }
 
     #[test]
+    fn compact_account_and_album_labels_match_each_language() {
+        for (lang, signed_out, album) in [
+            (Lang::Zh, "未登录", "专辑"),
+            (Lang::En, "Signed out", "Album"),
+            (Lang::Ja, "未ログイン", "アルバム"),
+        ] {
+            assert_eq!(t_for(lang, Key::SignedOut), signed_out);
+            assert_eq!(t_for(lang, Key::ColumnAlbum), album);
+            assert!(!t_for(lang, Key::SignedOut).contains('·'));
+        }
+    }
+
+    #[test]
+    fn cover_panel_title_matches_each_language() {
+        for (lang, cover) in [
+            (Lang::Zh, "封面"),
+            (Lang::En, "Cover"),
+            (Lang::Ja, "カバー"),
+        ] {
+            assert_eq!(t_for(lang, Key::Cover), cover);
+        }
+    }
+
+    #[test]
+    fn octant_font_warning_is_localized_and_actionable() {
+        for (lang, required, fallback) in [
+            (Lang::Zh, "需字体支持", "显示方框时请切回 sextant"),
+            (
+                Lang::En,
+                "font support required",
+                "If □ appears, switch back to sextant",
+            ),
+            (
+                Lang::Ja,
+                "フォント対応必須",
+                "□ 表示時は sextant に戻してください",
+            ),
+        ] {
+            assert_eq!(t_for(lang, Key::OctantFontRequired), required);
+            assert!(t_for(lang, Key::OctantFontHint).contains("Unicode 16"));
+            assert!(t_for(lang, Key::OctantFontHint).contains(fallback));
+        }
+    }
+
+    #[test]
     fn language_config_falls_back_to_chinese() {
         assert_eq!(Lang::from_config("zh"), Lang::Zh);
         assert_eq!(Lang::from_config("en"), Lang::En);
@@ -656,9 +814,16 @@ mod tests {
 
     #[test]
     fn parameterized_song_counts_follow_each_language() {
-        assert_eq!(songs_ready_for(Lang::Zh, 12), "12 首已就绪");
-        assert_eq!(songs_ready_for(Lang::En, 12), "12 tracks ready");
-        assert_eq!(songs_ready_for(Lang::Ja, 12), "12曲を同期済み");
+        assert_eq!(track_count_for(Lang::Zh, 12), "12 首");
+        assert_eq!(track_count_for(Lang::En, 12), "12 tracks");
+        assert_eq!(track_count_for(Lang::Ja, 12), "12曲");
+    }
+
+    #[test]
+    fn parameterized_search_result_counts_follow_each_language() {
+        assert_eq!(result_count_for(Lang::Zh, 12), "12 项");
+        assert_eq!(result_count_for(Lang::En, 12), "12 results");
+        assert_eq!(result_count_for(Lang::Ja, 12), "12件");
     }
 
     #[test]
@@ -669,7 +834,6 @@ mod tests {
             (Lang::Ja, "メインメニュー"),
         ] {
             for message in [
-                t_for(lang, Key::NotLoggedInMenu).to_owned(),
                 t_for(lang, Key::QrExpired).to_owned(),
                 t_for(lang, Key::SessionExpired).to_owned(),
             ] {
@@ -686,6 +850,6 @@ mod tests {
     fn global_init_drives_public_translation_functions() {
         init(Lang::En);
         assert_eq!(t(Key::Quit), "Quit");
-        assert_eq!(t_songs_ready(3), "3 tracks ready");
+        assert_eq!(super::t_track_count(3), "3 tracks");
     }
 }

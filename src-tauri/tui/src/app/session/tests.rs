@@ -41,6 +41,7 @@ fn row(id: i64) -> SongRow {
         id,
         title: format!("Track {id}"),
         artist: "Artist".into(),
+        album: "Album".into(),
         duration_ms: 180_000,
         pic_url: None,
     }
@@ -625,7 +626,7 @@ async fn late_fm_page_cannot_advance_a_replaced_queue() {
     state.fm_request_pending = true;
     state.view = View::Search;
     state.search.input = false;
-    state.search.results = vec![row(9)];
+    state.search.songs.items = vec![row(9)];
 
     state.update(Action::Activate, &fx);
     let generation = state.generation;

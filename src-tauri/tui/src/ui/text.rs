@@ -6,6 +6,10 @@ pub fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
+pub fn needs_marquee(s: &str, width: usize) -> bool {
+    display_width(s) > width
+}
+
 pub fn pad_display(s: &str, width: usize) -> String {
     let current_width = display_width(s);
     if current_width <= width {
@@ -28,6 +32,18 @@ pub fn pad_display(s: &str, width: usize) -> String {
     let prefix = &s[..prefix_end];
     let gap = prefix_limit - display_width(prefix);
     format!("{prefix}{}…", " ".repeat(gap))
+}
+
+pub fn pad_display_right(s: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let current_width = display_width(s);
+    if current_width <= width {
+        return format!("{}{s}", " ".repeat(width - current_width));
+    }
+    pad_display(s, width)
 }
 
 pub fn marquee_offset(content_width: usize, viewport_width: usize, frame: u64) -> usize {
@@ -81,7 +97,7 @@ pub fn display_window(s: &str, width: usize, offset: usize) -> String {
 }
 
 pub fn pad_or_marquee(s: &str, width: usize, selected: bool, frame: u64) -> String {
-    if !selected || display_width(s) <= width {
+    if !selected || !needs_marquee(s, width) {
         return pad_display(s, width);
     }
     let offset = marquee_offset(display_width(s), width, frame);
@@ -90,7 +106,10 @@ pub fn pad_or_marquee(s: &str, width: usize, selected: bool, frame: u64) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{display_width, display_window, marquee_offset, pad_display, pad_or_marquee};
+    use super::{
+        display_width, display_window, marquee_offset, needs_marquee, pad_display,
+        pad_display_right, pad_or_marquee,
+    };
 
     #[test]
     fn pads_and_truncates_ascii() {
@@ -109,6 +128,15 @@ mod tests {
     fn pads_mixed_width_text() {
         assert_eq!(display_width("A中B"), 4);
         assert_eq!(pad_display("A中B", 6), "A中B  ");
+    }
+
+    #[test]
+    fn right_aligns_by_display_width() {
+        assert_eq!(pad_display_right("Time", 5), " Time");
+        assert_eq!(pad_display_right("时长", 5), " 时长");
+        assert_eq!(display_width(&pad_display_right("时长", 5)), 5);
+        assert_eq!(pad_display_right("中文测试", 5), "中文…");
+        assert_eq!(pad_display_right("时长", 0), "");
     }
 
     #[test]
@@ -160,5 +188,22 @@ mod tests {
         assert_eq!(pad_or_marquee("abcdefgh", 5, false, 9), "abcd…");
         assert_eq!(pad_or_marquee("abcdefgh", 5, true, 9), "bcdef");
         assert_eq!(pad_or_marquee("abc", 5, true, 99), "abc  ");
+    }
+
+    #[test]
+    fn marquee_guard_moves_only_text_wider_than_its_viewport() {
+        for (text, width) in [("短歌", 5), ("等宽A", 5)] {
+            assert!(!needs_marquee(text, width));
+            assert_eq!(
+                pad_or_marquee(text, width, true, 0),
+                pad_or_marquee(text, width, true, 9)
+            );
+        }
+
+        assert!(needs_marquee("超出宽度", 5));
+        assert_ne!(
+            pad_or_marquee("超出宽度", 5, true, 0),
+            pad_or_marquee("超出宽度", 5, true, 9)
+        );
     }
 }

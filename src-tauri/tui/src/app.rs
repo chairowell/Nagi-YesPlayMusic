@@ -1,6 +1,7 @@
 //! Single state source: input becomes Action, update() is the only writer,
 //! ui::draw() only reads.
 
+pub(crate) mod command_palette;
 mod filter;
 mod reducer;
 mod search;
@@ -27,7 +28,7 @@ use yesplaymusic_core::cache::{
 
 use crate::action::{Action, CoverRenderRequest, CoverSurface, View};
 use crate::api::{self, Ncm, SongRow, Source};
-use crate::config::{self, Config, CoverMode};
+use crate::config::{self, Config, CoverMode, LoadedConfig};
 use crate::cover_cache::CoverCache;
 use crate::event;
 use crate::i18n::{self, Key};
@@ -37,6 +38,7 @@ use crate::spectrum::SpectrumView;
 use crate::theme::Theme;
 use crate::ui;
 
+use self::command_palette::CommandPaletteState;
 use self::filter::ListFilter;
 use self::search::SearchState;
 use self::session::SessionState;
@@ -53,7 +55,7 @@ pub struct Effects {
 }
 
 const COVER_SOURCE_EDGE: u32 = 500;
-pub(crate) const PREVIEW_CELLS: (u16, u16) = (26, 13);
+pub(crate) const PREVIEW_CELLS: (u16, u16) = (22, 11);
 const HOT_PIXEL_COVER_LIMIT: usize = 64;
 
 struct OriginalCover {
@@ -367,6 +369,7 @@ pub struct AppState {
     pub theme: Theme,
     pub config: Config,
     pub(crate) settings: settings::SettingsState,
+    pub(crate) command_palette: CommandPaletteState,
     pub library: Vec<SongRow>,
     pub selected: usize,
     marquee_frame: u64,
@@ -422,6 +425,9 @@ pub struct AppState {
     resume_on_play: Option<Duration>,
     seek_after_start: Option<Duration>,
     pub status: Option<String>,
+    pub(crate) command_feedback: Option<String>,
+    pub(crate) command_feedback_error: bool,
+    command_feedback_ticks: u8,
     pub generation: u64,
     style_revision: u64,
     terminal_size: (u16, u16),
@@ -446,6 +452,7 @@ impl AppState {
             theme,
             config: config.clone(),
             settings: settings::SettingsState::default(),
+            command_palette: CommandPaletteState::default(),
             // Demo rows for the logged-out state; replaced by 我喜欢的音乐
             // right after login (id 0 = resolve via search).
             library: vec![
@@ -453,6 +460,7 @@ impl AppState {
                     id: 0,
                     title: "反方向的钟".into(),
                     artist: String::new(),
+                    album: String::new(),
                     duration_ms: 0,
                     pic_url: None,
                 },
@@ -460,6 +468,7 @@ impl AppState {
                     id: 0,
                     title: "海阔天空".into(),
                     artist: "Beyond".into(),
+                    album: String::new(),
                     duration_ms: 0,
                     pic_url: None,
                 },
@@ -532,6 +541,9 @@ impl AppState {
             resume_on_play: None,
             seek_after_start: None,
             status: None,
+            command_feedback: None,
+            command_feedback_error: false,
+            command_feedback_ticks: 0,
             generation: 0,
             style_revision: 0,
             terminal_size,
@@ -576,16 +588,19 @@ impl AppState {
         match self.view {
             View::Library => self.visible_rows(&self.library).len(),
             View::Queue => self.visible_rows(&self.queue).len(),
-            View::Search => self.visible_rows(&self.search.results).len(),
+            View::Search => self.search.song_rows().map_or_else(
+                || self.search.current_len(),
+                |rows| self.visible_rows(rows).len(),
+            ),
             _ => 0,
         }
     }
 
-    fn visible_row(&self, index: usize) -> Option<(usize, SongRow)> {
+    pub(crate) fn visible_row(&self, index: usize) -> Option<(usize, SongRow)> {
         let rows = match self.view {
-            View::Library => &self.library,
-            View::Queue => &self.queue,
-            View::Search => &self.search.results,
+            View::Library => self.library.as_slice(),
+            View::Queue => self.queue.as_slice(),
+            View::Search => self.search.song_rows()?,
             _ => return None,
         };
         self.visible_rows(rows)
@@ -610,21 +625,24 @@ impl AppState {
         }
         if self.show_help
             || self.confirm_quit
+            || self.command_palette.open
             || self.filter.input
             || self.view == View::Library && self.sidebar_focus
             || self.view == View::Search && self.search.input
         {
             return None;
         }
-        let (title_width, artist_width) = match self.view {
-            View::Library | View::Queue => (24, 14),
-            View::Search => (26, 16),
-            _ => return None,
-        };
         let (underlying, row) = self.visible_row(self.selected)?;
-        if ui::text::display_width(&row.title) <= title_width
-            && ui::text::display_width(&row.artist) <= artist_width
-        {
+        let shell_width =
+            ui::centered_content(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)).width;
+        let preview_visible = self.selection_preview_visible();
+        let needs_marquee = match self.view {
+            View::Library => ui::library::marquee_needed(&row, shell_width, preview_visible),
+            View::Search => ui::search::marquee_needed(&row, shell_width, preview_visible),
+            View::Queue => ui::queue::marquee_needed(&row, shell_width),
+            _ => false,
+        };
+        if !needs_marquee {
             return None;
         }
         Some(MarqueeTarget {
@@ -652,6 +670,31 @@ impl AppState {
         }
     }
 
+    fn set_command_feedback(&mut self, message: String, is_error: bool) {
+        self.command_feedback = Some(message);
+        self.command_feedback_error = is_error;
+        self.command_feedback_ticks = 24;
+    }
+
+    fn clear_command_feedback(&mut self) {
+        self.command_feedback = None;
+        self.command_feedback_error = false;
+        self.command_feedback_ticks = 0;
+    }
+
+    fn advance_command_feedback(&mut self) {
+        if self.command_feedback_ticks == 0 {
+            self.command_feedback = None;
+            self.command_feedback_error = false;
+            return;
+        }
+        self.command_feedback_ticks -= 1;
+        if self.command_feedback_ticks == 0 {
+            self.command_feedback = None;
+            self.command_feedback_error = false;
+        }
+    }
+
     fn reconcile_marquee(&mut self) {
         let target = self.active_marquee_target();
         if target != self.marquee_target {
@@ -674,9 +717,12 @@ impl AppState {
 
     fn visible_rows_owned(&self) -> Vec<SongRow> {
         let rows = match self.view {
-            View::Library => &self.library,
-            View::Queue => &self.queue,
-            View::Search => &self.search.results,
+            View::Library => self.library.as_slice(),
+            View::Queue => self.queue.as_slice(),
+            View::Search => match self.search.song_rows() {
+                Some(rows) => rows,
+                None => return Vec::new(),
+            },
             _ => return Vec::new(),
         };
         self.visible_rows(rows)
@@ -689,7 +735,7 @@ impl AppState {
         let body = self.terminal_size.1.saturating_sub(2) as usize;
         match self.view {
             View::Library => body.saturating_sub(1).max(1),
-            View::Search => body.saturating_sub(2).max(1),
+            View::Search => ui::search::page_size(self, self.terminal_size.1),
             View::Queue => body.max(1),
             _ => 1,
         }
@@ -757,6 +803,17 @@ impl AppState {
         self.active_row = playback
             .current
             .map(crate::store::StoredSong::into_song_row);
+        if let (Some(active), Some(queued)) = (
+            self.active_row.as_mut(),
+            self.queue_pos.and_then(|index| self.queue.get(index)),
+        ) {
+            if active.id == queued.id
+                && active.title.trim().is_empty()
+                && !queued.title.trim().is_empty()
+            {
+                active.title.clone_from(&queued.title);
+            }
+        }
         if let Some(row) = &self.active_row {
             self.current_track_id = (row.id > 0).then_some(row.id);
             self.duration =
@@ -764,7 +821,7 @@ impl AppState {
             self.now = Some(NowPlaying {
                 title: row.title.clone(),
                 artist: row.artist.clone(),
-                album: String::new(),
+                album: row.album.clone(),
             });
             self.resume_on_play = Some(self.position);
         } else {
@@ -991,19 +1048,32 @@ impl AppState {
 
     fn selection_preview_visible(&self) -> bool {
         let (cols, rows) = self.terminal_size;
+        let body_height = rows.saturating_sub(
+            crate::ui::HEADER_HEIGHT + crate::ui::FOOTER_HEIGHT + crate::ui::PANEL_GAP_Y * 2,
+        );
         match self.view {
-            View::Library => cols >= 96 && rows.saturating_sub(2) >= PREVIEW_CELLS.1,
-            View::Search => cols >= 81 && rows.saturating_sub(4) >= PREVIEW_CELLS.1,
+            View::Library => {
+                cols >= crate::ui::library::PREVIEW_MIN_TERMINAL_WIDTH
+                    && body_height >= crate::ui::cover_preview::HEIGHT
+            }
+            View::Search => {
+                cols >= crate::ui::search::PREVIEW_MIN_TERMINAL_WIDTH
+                    && body_height >= crate::ui::cover_preview::HEIGHT
+                    && self.search.song_rows().is_some()
+            }
             _ => false,
         }
     }
 
     fn selected_cover_candidate(&self) -> Option<(SelectionCoverKey, SongRow, Vec<SongRow>)> {
         if !self.selection_preview_visible()
+            || self.command_palette.open
             || self.filter.input
             || self.view == View::Library && self.sidebar_focus
             || self.view == View::Search
-                && (self.search.input || self.search.searching || self.search.error.is_some())
+                && (self.search.input
+                    || self.search.current_searching()
+                    || self.search.current_error().is_some())
         {
             return None;
         }
@@ -1023,8 +1093,8 @@ impl AppState {
             original: self.uses_original_cover(CoverSurface::Selection),
         };
         let rows = match self.view {
-            View::Library => &self.library,
-            View::Search => &self.search.results,
+            View::Library => self.library.as_slice(),
+            View::Search => self.search.song_rows()?,
             _ => return None,
         };
         let visible = self.visible_rows(rows);
@@ -1101,7 +1171,7 @@ impl AppState {
         self.now = Some(NowPlaying {
             title: track.title.clone(),
             artist: track.artist.clone(),
-            album: String::new(),
+            album: track.album.clone(),
         });
         self.duration =
             (track.duration_ms > 0).then(|| Duration::from_millis(track.duration_ms as u64));
@@ -1148,7 +1218,7 @@ impl AppState {
         self.now = Some(NowPlaying {
             title: row.title.clone(),
             artist: row.artist.clone(),
-            album: String::new(),
+            album: row.album.clone(),
         });
         self.duration =
             (row.duration_ms > 0).then(|| Duration::from_millis(row.duration_ms as u64));
@@ -1209,7 +1279,7 @@ impl AppState {
         self.now = Some(NowPlaying {
             title: row.title.clone(),
             artist: row.artist.clone(),
-            album: String::new(),
+            album: row.album.clone(),
         });
         self.lyrics.clear();
         self.position = Duration::ZERO;
@@ -1380,6 +1450,7 @@ fn song_row_from_resolved(track: &api::ResolvedTrack) -> SongRow {
         id: track.id,
         title: track.title.clone(),
         artist: track.artist.clone(),
+        album: track.album.clone(),
         duration_ms: track.duration_ms,
         pic_url: track.pic_url.clone(),
     }
@@ -1515,10 +1586,16 @@ fn spawn_fetch_lyrics(fx: &Effects, generation: u64, song_id: i64) {
     let ncm = fx.ncm.clone();
     let actions = fx.actions.clone();
     tokio::spawn(async move {
-        let Ok((lrc, tlyric)) = ncm.lyrics(song_id).await else {
+        let Ok(payload) = ncm.lyrics(song_id).await else {
             return; // missing lyrics are cosmetic
         };
-        let lines = crate::lyrics::parse_lrc(&lrc, tlyric.as_deref());
+        let word_lines = payload
+            .yrc
+            .as_deref()
+            .map(crate::yrc::parse_yrc)
+            .unwrap_or_default();
+        let lines =
+            crate::lyrics::parse_with_yrc(&payload.lrc, payload.tlyric.as_deref(), &word_lines);
         if !lines.is_empty() {
             let _ = actions.send(Action::LyricsLoaded { generation, lines });
         }
@@ -1940,8 +2017,14 @@ fn shellexpand_home(path: &str) -> std::path::PathBuf {
     }
 }
 
-pub async fn run(config: Config) -> Result<()> {
+pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
     let mut terminal = ratatui::init();
+    if loaded.should_probe_terminal_background() {
+        let is_light = crate::terminal_background::probe()
+            .map(|appearance| matches!(appearance, crate::terminal_background::Appearance::Light));
+        loaded.apply_terminal_brightness(is_light);
+    }
+    let config = loaded.config;
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::EnableMouseCapture,
@@ -2070,13 +2153,14 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
                 let Some(response) = response else { break };
                 state.apply_selected_pending_resize(response);
             }
-            _ = ui_tick.tick(), if state.marquee_active() => {
+            _ = ui_tick.tick(), if state.marquee_active() || state.command_feedback.is_some() => {
                 state.update(Action::UiTick, &fx);
             }
             _ = spectrum_ticks.tick(), if state.config.spectrum_enabled || state.view == View::Settings => {
                 state.spectrum.tick(
                     fx.player.samples(),
                     state.now.is_some() && !state.paused,
+                    state.view == View::Settings,
                 );
             }
         }
@@ -2096,7 +2180,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, config: &Config) ->
 fn apply(state: &mut AppState, action: Action, fx: &Effects, hits: &ui::Hits) {
     match action {
         Action::Mouse(mouse) => {
-            if state.show_help {
+            if state.command_palette.open || state.show_help {
                 state.update(Action::Mouse(mouse), fx);
             } else {
                 let selected = if state.view == View::Search && state.search.input
