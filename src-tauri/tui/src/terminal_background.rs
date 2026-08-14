@@ -4,9 +4,9 @@
 use std::time::Duration;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const OSC_11_QUERY: &[u8] = b"\x1b]11;?\x07";
+const OSC_11_WITH_DA1_QUERY: &[u8] = b"\x1b]11;?\x07\x1b[c";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const QUERY_TIMEOUT: Duration = Duration::from_millis(300);
+const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Appearance {
@@ -51,7 +51,22 @@ pub(crate) fn probe() -> Option<Rgb> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
-pub(crate) fn parse_response(response: &[u8]) -> Option<Rgb> {
+#[derive(Debug, Eq, PartialEq)]
+enum ProbeResponse {
+    AwaitingDa1,
+    Complete(Option<Rgb>),
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn parse_response(response: &[u8]) -> ProbeResponse {
+    let Some(da1_end) = find_da1_end(response) else {
+        return ProbeResponse::AwaitingDa1;
+    };
+    ProbeResponse::Complete(parse_osc_11(&response[..da1_end]))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn parse_osc_11(response: &[u8]) -> Option<Rgb> {
     for prefix in [b"\x1b]11;rgb:".as_slice(), b"\x9d11;rgb:".as_slice()] {
         for (offset, window) in response.windows(prefix.len()).enumerate() {
             if window == prefix {
@@ -59,6 +74,40 @@ pub(crate) fn parse_response(response: &[u8]) -> Option<Rgb> {
                     return Some(rgb);
                 }
             }
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn find_da1_end(response: &[u8]) -> Option<usize> {
+    for (offset, byte) in response.iter().enumerate() {
+        let parameter_start = if response[offset..].starts_with(b"\x1b[?") {
+            offset + 3
+        } else if *byte == 0x9b && response.get(offset + 1) == Some(&b'?') {
+            offset + 2
+        } else {
+            continue;
+        };
+
+        let mut cursor = parameter_start;
+        while response
+            .get(cursor)
+            .is_some_and(|value| (0x30..=0x3f).contains(value))
+        {
+            cursor += 1;
+        }
+        if cursor == parameter_start {
+            continue;
+        }
+        while response
+            .get(cursor)
+            .is_some_and(|value| (0x20..=0x2f).contains(value))
+        {
+            cursor += 1;
+        }
+        if response.get(cursor) == Some(&b'c') {
+            return Some(cursor + 1);
         }
     }
     None
@@ -113,10 +162,9 @@ mod platform {
     use std::os::fd::{AsRawFd, RawFd};
     use std::time::{Duration, Instant};
 
-    use super::{parse_response, Rgb, OSC_11_QUERY, QUERY_TIMEOUT};
+    use super::{parse_response, ProbeResponse, Rgb, OSC_11_WITH_DA1_QUERY, QUERY_TIMEOUT};
 
     const POLLIN: c_short = 0x0001;
-    const MAX_RESPONSE_BYTES: usize = 256;
 
     #[cfg(target_os = "linux")]
     type PollCount = std::ffi::c_ulong;
@@ -145,12 +193,12 @@ mod platform {
             .write(true)
             .open("/dev/tty")
             .ok()?;
-        terminal.write_all(OSC_11_QUERY).ok()?;
+        terminal.write_all(OSC_11_WITH_DA1_QUERY).ok()?;
         terminal.flush().ok()?;
 
         let deadline = Instant::now().checked_add(QUERY_TIMEOUT)?;
         let mut response = Vec::with_capacity(64);
-        while response.len() < MAX_RESPONSE_BYTES {
+        loop {
             let remaining = deadline.checked_duration_since(Instant::now())?;
             match wait_readable(terminal.as_raw_fd(), remaining) {
                 Ok(true) => {}
@@ -166,11 +214,10 @@ mod platform {
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => return None,
             }
-            if let Some(rgb) = parse_response(&response) {
-                return Some(rgb);
+            if let ProbeResponse::Complete(rgb) = parse_response(&response) {
+                return rgb;
             }
         }
-        None
     }
 
     fn wait_readable(fd: RawFd, timeout: Duration) -> io::Result<bool> {
@@ -213,43 +260,93 @@ mod tests {
     }
 
     #[test]
-    fn parses_four_digit_osc_11_with_bel_or_st() {
+    fn waits_for_da1_before_accepting_osc() {
         assert_eq!(
             parse_response(b"\x1b]11;rgb:ffff/8080/0000\x07"),
-            Some(Rgb {
+            ProbeResponse::AwaitingDa1
+        );
+    }
+
+    #[test]
+    fn osc_11_and_da1_complete_the_probe() {
+        assert_eq!(
+            parse_response(b"\x1b]11;rgb:ffff/8080/0000\x07\x1b[?1;2c"),
+            ProbeResponse::Complete(Some(Rgb {
                 red: 255,
                 green: 128,
                 blue: 0,
-            })
+            }))
         );
         assert_eq!(
-            parse_response(b"noise\x1b]11;rgb:0000/4040/ffff\x1b\\tail"),
-            Some(Rgb {
+            parse_response(b"noise\x1b]11;rgb:0000/4040/ffff\x1b\\tail\x9b?62;4c"),
+            ProbeResponse::Complete(Some(Rgb {
                 red: 0,
                 green: 64,
                 blue: 255,
-            })
+            }))
+        );
+    }
+
+    #[test]
+    fn da1_without_osc_11_completes_without_a_color() {
+        assert_eq!(parse_response(b"\x1b[?1;2c"), ProbeResponse::Complete(None));
+    }
+
+    #[test]
+    fn parses_fragmented_responses_with_interleaved_noise() {
+        let chunks: [&[u8]; 5] = [
+            b"noise:rgb:\x1b]11;rgb:ef",
+            b"ef/ebeb/e7",
+            b"e7\x1b\\junk\x1b[?6",
+            b"2;4",
+            b"c",
+        ];
+        let mut response = Vec::new();
+        for chunk in &chunks[..chunks.len() - 1] {
+            response.extend_from_slice(chunk);
+            assert_eq!(parse_response(&response), ProbeResponse::AwaitingDa1);
+        }
+        response.extend_from_slice(chunks[chunks.len() - 1]);
+        assert_eq!(
+            parse_response(&response),
+            ProbeResponse::Complete(Some(Rgb {
+                red: 239,
+                green: 235,
+                blue: 231,
+            }))
         );
     }
 
     #[test]
     fn parses_variable_precision_and_c1_terminator() {
         assert_eq!(
-            parse_response(b"\x9d11;rgb:f/80/1234\x9c"),
-            Some(Rgb {
+            parse_response(b"\x9d11;rgb:f/80/1234\x9c\x9b?62;4c"),
+            ProbeResponse::Complete(Some(Rgb {
                 red: 255,
                 green: 128,
                 blue: 18,
-            })
+            }))
         );
     }
 
     #[test]
     fn rejects_wrong_or_malformed_responses() {
-        assert_eq!(parse_response(b"\x1b]10;rgb:ffff/ffff/ffff\x07"), None);
-        assert_eq!(parse_response(b"\x1b]11;rgb:ffff/zzzz/ffff\x07"), None);
-        assert_eq!(parse_response(b"\x1b]11;rgb:fffff/0000/0000\x07"), None);
-        assert_eq!(parse_response(b"\x1b]11;rgb:ffff/0000/0000"), None);
+        for response in [
+            b"\x1b]10;rgb:ffff/ffff/ffff\x07\x1b[?1;2c".as_slice(),
+            b"\x1b]11;rgb:ffff/zzzz/ffff\x07\x1b[?1;2c".as_slice(),
+            b"\x1b]11;rgb:fffff/0000/0000\x07\x1b[?1;2c".as_slice(),
+            b"\x1b]11;rgb:ffff/0000/0000\x1b[?1;2c".as_slice(),
+        ] {
+            assert_eq!(parse_response(response), ProbeResponse::Complete(None));
+        }
+    }
+
+    #[test]
+    fn ignores_an_osc_response_after_the_da1_barrier() {
+        assert_eq!(
+            parse_response(b"\x1b[?1;2c\x1b]11;rgb:ffff/ffff/ffff\x07"),
+            ProbeResponse::Complete(None)
+        );
     }
 
     #[test]
@@ -276,7 +373,11 @@ mod tests {
 
     #[test]
     fn preserves_the_detected_rgb_for_rendering() {
-        let rgb = parse_response(b"\x1b]11;rgb:1a1a/2b2b/3c3c\x07").unwrap();
+        let ProbeResponse::Complete(Some(rgb)) =
+            parse_response(b"\x1b]11;rgb:1a1a/2b2b/3c3c\x07\x1b[?1;2c")
+        else {
+            panic!("expected a completed OSC 11 probe");
+        };
         assert_eq!(rgb.color(), ratatui::style::Color::Rgb(0x1a, 0x2b, 0x3c));
     }
 }
