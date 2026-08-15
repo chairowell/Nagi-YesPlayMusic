@@ -2490,3 +2490,28 @@ async fn spectrum_command_reports_a_persistence_failure_as_an_error() {
         .as_deref()
         .is_some_and(|feedback| feedback.contains(crate::i18n::t(Key::SettingsSaveFailed))));
 }
+
+// Regression: promoting a buffered cover used to move the pending
+// ThreadProtocol (and its pending-channel sender) into the main slot,
+// dropping the main channel's only sender. The dead worker then closed its
+// response channel and the event loop exited the whole app on the next poll.
+#[test]
+fn promoting_a_pending_cover_keeps_the_main_resize_channel_open() {
+    let picker = ratatui_image::picker::Picker::from_fontsize((8, 16).into());
+    let (main_tx, mut main_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (pending_tx, _pending_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(picker, main_tx, pending_tx);
+    let image = DynamicImage::new_rgba8(4, 4);
+
+    cover.replace(1, image.clone());
+    cover.replace(2, image);
+    assert!(cover.has_pending());
+
+    cover.promote_pending();
+
+    assert_eq!(cover.generation, Some(2));
+    assert!(matches!(
+        main_rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+}

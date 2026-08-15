@@ -69,6 +69,7 @@ struct OriginalCover {
 struct PendingOriginalCover {
     protocol: ThreadProtocol,
     generation: u64,
+    image: DynamicImage,
 }
 
 impl OriginalCover {
@@ -105,14 +106,16 @@ impl OriginalCover {
     fn replace(&mut self, generation: u64, image: DynamicImage) {
         if self.generation.is_some() {
             if let Some(requests) = self.pending_requests.clone() {
-                let protocol = self.picker.new_resize_protocol(image);
+                let protocol = self.picker.new_resize_protocol(image.clone());
                 if let Some(pending) = &mut self.pending {
                     pending.protocol.replace_protocol(protocol);
                     pending.generation = generation;
+                    pending.image = image;
                 } else {
                     self.pending = Some(PendingOriginalCover {
                         protocol: ThreadProtocol::new(requests, Some(protocol)),
                         generation,
+                        image,
                     });
                 }
                 return;
@@ -161,7 +164,13 @@ impl OriginalCover {
         let Some(pending) = self.pending.take() else {
             return;
         };
-        self.protocol = pending.protocol;
+        // Rebuild on the main channel instead of adopting pending's protocol:
+        // moving it here would drop the main channel's only sender, end its
+        // worker, and the closed channel used to exit the whole app. The
+        // pending cells stay on screen until the re-encode lands, so the
+        // extra encode is invisible.
+        self.protocol
+            .replace_protocol(self.picker.new_resize_protocol(pending.image));
         self.generation = Some(pending.generation);
     }
 
@@ -2257,16 +2266,30 @@ async fn event_loop(
                     apply(&mut state, action, &fx, &hits);
                 }
             }
+            // A closed cover channel means its resize worker died. Covers are
+            // cosmetic: drop back to pixel art instead of exiting the app.
             response = playing_responses.recv(), if state.original_cover.is_some() => {
-                let Some(response) = response else { break };
+                let Some(response) = response else {
+                    tracing::warn!("playing cover worker gone, disabling original cover");
+                    state.original_cover = None;
+                    continue;
+                };
                 state.apply_original_resize(response);
             }
             response = selected_responses.recv(), if state.selected_original_cover.is_some() => {
-                let Some(response) = response else { break };
+                let Some(response) = response else {
+                    tracing::warn!("selection cover worker gone, disabling original cover");
+                    state.selected_original_cover = None;
+                    continue;
+                };
                 state.apply_selected_original_resize(response);
             }
             response = selected_pending_responses.recv(), if state.selected_original_cover.is_some() => {
-                let Some(response) = response else { break };
+                let Some(response) = response else {
+                    tracing::warn!("selection pending cover worker gone, disabling original cover");
+                    state.selected_original_cover = None;
+                    continue;
+                };
                 state.apply_selected_pending_resize(response);
             }
             _ = ui_tick.tick(), if state.marquee_active() || state.command_feedback.is_some() => {
