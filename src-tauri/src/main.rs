@@ -15,7 +15,7 @@ mod window_preferences;
 use std::{
     collections::HashMap,
     env, fs,
-    io::{BufRead, BufReader, Cursor, Read, Write},
+    io::{Cursor, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::PathBuf,
     sync::{
@@ -61,6 +61,7 @@ use tauri_plugin_shell::{
 use objc2_app_kit::{NSWindow, NSWindowButton, NSWindowCollectionBehavior};
 #[cfg(target_os = "macos")]
 use std::{
+    io::{BufRead, BufReader},
     os::{fd::AsRawFd, unix::net::UnixStream},
     path::Path,
 };
