@@ -5,6 +5,7 @@ mod api;
 mod app;
 mod config;
 mod cover_cache;
+mod ctl;
 mod event;
 mod i18n;
 mod icons;
@@ -12,6 +13,7 @@ mod lyrics;
 mod nerd_font;
 pub mod pixel;
 mod player;
+mod remote;
 mod spectrum;
 mod store;
 mod terminal_background;
@@ -29,10 +31,62 @@ struct Args {
     /// Write a debug log to the state directory (never to the screen).
     #[arg(long)]
     debug: bool,
+    /// Only talk to the desktop app.
+    #[arg(long, global = true, conflicts_with = "tui")]
+    gui: bool,
+    /// Only talk to a running terminal player.
+    #[arg(long, global = true)]
+    tui: bool,
+    /// Print results as JSON.
+    #[arg(long, global = true)]
+    json: bool,
+    #[command(subcommand)]
+    command: Option<Ctl>,
+}
+
+/// Control a running player (GUI or TUI) without opening the interface.
+#[derive(clap::Subcommand, Debug, Clone, Copy)]
+enum Ctl {
+    /// Show the current track.
+    Status,
+    /// Pause playback.
+    Pause,
+    /// Resume playback.
+    Resume,
+    /// Toggle between play and pause.
+    Toggle,
+    /// Skip to the next track.
+    Next,
+    /// Go back to the previous track.
+    Prev,
+}
+
+impl From<Ctl> for remote::Command {
+    fn from(command: Ctl) -> Self {
+        match command {
+            Ctl::Status => Self::Status,
+            Ctl::Pause => Self::Pause,
+            Ctl::Resume => Self::Resume,
+            Ctl::Toggle => Self::Toggle,
+            Ctl::Next => Self::Next,
+            Ctl::Prev => Self::Prev,
+        }
+    }
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(command) = args.command {
+        let forced = if args.gui {
+            Some(ctl::Target::Gui)
+        } else if args.tui {
+            Some(ctl::Target::Tui)
+        } else {
+            None
+        };
+        let runtime = tokio::runtime::Runtime::new()?;
+        return runtime.block_on(ctl::run(command.into(), forced, args.json));
+    }
     let _log_guard = init_logging(args.debug)?;
 
     let config = config::Config::load_with_metadata();

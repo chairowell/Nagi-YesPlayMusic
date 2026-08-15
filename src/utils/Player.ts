@@ -479,6 +479,7 @@ export default class Player {
               ? this._personalFMTrack
               : this._currentTrack,
             progress: this._progress,
+            playing: this._playing,
           }),
         }).catch(() => undefined);
       }

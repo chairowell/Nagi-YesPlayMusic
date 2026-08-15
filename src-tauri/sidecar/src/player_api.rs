@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 pub struct PlayerInfo {
     pub current_track: Option<Value>,
     pub progress: f64,
+    pub playing: bool,
 }
 
 impl Default for PlayerInfo {
@@ -22,6 +23,7 @@ impl Default for PlayerInfo {
         Self {
             current_track: None,
             progress: 0.0,
+            playing: false,
         }
     }
 }
@@ -115,9 +117,15 @@ fn decode_player_info(value: &Value) -> Option<PlayerInfo> {
     if !progress.is_finite() || progress < 0.0 {
         return None;
     }
+    // Older renderers omit `playing`; treat that as not playing.
+    let playing = player_info
+        .get("playing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     Some(PlayerInfo {
         current_track,
         progress,
+        playing,
     })
 }
 
@@ -132,7 +140,8 @@ mod tests {
             State(state.clone()),
             Ok(Json(json!({
                 "currentTrack": { "id": 42, "name": "Track" },
-                "progress": 12.5
+                "progress": 12.5,
+                "playing": true
             }))),
         )
         .await;
@@ -147,6 +156,7 @@ mod tests {
 
         let snapshot = state.snapshot();
         assert_eq!(snapshot.progress, 12.5);
+        assert!(snapshot.playing);
         assert_eq!(snapshot.current_track.as_ref().unwrap()["id"], 42);
         assert_eq!(state.clone().snapshot(), snapshot);
     }
@@ -174,6 +184,7 @@ mod tests {
             PlayerInfo {
                 current_track: None,
                 progress: 3.0,
+                playing: false,
             }
         );
     }

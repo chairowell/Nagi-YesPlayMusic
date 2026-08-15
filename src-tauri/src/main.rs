@@ -15,7 +15,7 @@ mod window_preferences;
 use std::{
     collections::HashMap,
     env, fs,
-    io::{Cursor, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::PathBuf,
     sync::{
@@ -112,6 +112,14 @@ fn single_instance_socket_path(identifier: &str) -> PathBuf {
 fn startup_gate_path(identifier: &str) -> PathBuf {
     env::temp_dir().join(format!(
         "{}_startup.lock",
+        single_instance_identifier(identifier)
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn control_socket_path(identifier: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "/tmp/{}_ctl.sock",
         single_instance_identifier(identifier)
     ))
 }
@@ -1074,6 +1082,55 @@ fn resolve_close_choice(app: &AppHandle, payload: serde_json::Value) -> Result<(
 
 fn emit_desktop_event(app: &AppHandle, event: &str) {
     let _ = app.emit(&format!("desktop://{event}"), ());
+}
+
+/// `ypm <cmd>` remote control: newline-delimited JSON requests whose wire
+/// words are shared with src-tauri/tui/src/remote.rs.
+#[cfg(target_os = "macos")]
+fn spawn_control_socket(app: AppHandle) {
+    use std::os::unix::net::UnixListener;
+
+    let path = control_socket_path(&app.config().identifier);
+    // Single-instance already serialized us, so an existing socket file can
+    // only be a leftover from a dead process.
+    if path.exists() && fs::remove_file(&path).is_err() {
+        return;
+    }
+    let listener = match UnixListener::bind(&path) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("[tauri] control socket unavailable: {error}");
+            return;
+        }
+    };
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut line = String::new();
+            if BufReader::new(&stream).read_line(&mut line).is_err() {
+                continue;
+            }
+            let command = serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|request| request.get("cmd")?.as_str().map(str::to_owned));
+            let event = match command.as_deref() {
+                Some("pause") => Some("pause"),
+                Some("resume") => Some("resume"),
+                Some("toggle") => Some("play"),
+                Some("next") => Some("next"),
+                Some("prev") => Some("previous"),
+                _ => None,
+            };
+            let reply = match event {
+                Some(event) => {
+                    emit_desktop_event(&app, event);
+                    r#"{"ok":true}"#
+                }
+                None => r#"{"ok":false,"error":"unsupported command"}"#,
+            };
+            let _ = writeln!(&mut stream, "{reply}");
+        }
+    });
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2633,6 +2690,8 @@ fn main() {
                 movement: Mutex::new(PendingWindowMovement::default()),
             });
             app.manage(StartupWindowState(AtomicBool::new(false)));
+            #[cfg(target_os = "macos")]
+            spawn_control_socket(app.handle().clone());
             app.manage(GlobalShortcutRegistrationState(Mutex::new(
                 GlobalShortcutRegistration::default(),
             )));
