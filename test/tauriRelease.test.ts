@@ -390,10 +390,9 @@ test('README 区分两次重构与各平台支持状态', () => {
   expect(readme).toContain('## 两次桌面重构');
   expect(readme).toContain('Electron → Tauri 2');
   expect(readme).toContain('Bun Sidecar → Rust Sidecar');
-  expect(readme).toContain('82.555 MiB');
-  expect(readme).toContain('22.977 MiB');
-  expect(readme).toContain('减少 72.2%');
-  expect(readme).toContain('DMG 为 11.970 MiB');
+  // Exact figures live in docs/performance-baseline.md; README keeps rounded ones.
+  expect(readme).toContain('82.6 MiB 降到 23.0 MiB');
+  expect(readme).toContain('DMG 12.0 MiB');
   expect(readme).toContain('Rust Sidecar');
   expect(readme).toContain('桌面包不再携带 Bun runtime');
   expect(readme).toContain('ad-hoc Hardened Runtime seal');
