@@ -2335,6 +2335,7 @@ async fn event_loop(
                     fx.player.samples(),
                     state.now.is_some() && !state.paused,
                     state.view == View::Settings,
+                    state.config.spectrum_flatten,
                 );
             }
         }

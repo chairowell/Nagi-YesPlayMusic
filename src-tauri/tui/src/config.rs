@@ -86,6 +86,8 @@ pub struct Config {
     pub spectrum_enabled: bool,
     pub spectrum_style: SpectrumKind,
     pub spectrum_glow: bool,
+    /// +4 dB/octave tilt so highs read as lively as bass (cava-style).
+    pub spectrum_flatten: bool,
     /// Silent GitHub release check on startup; hints only, never self-updates.
     pub update_check: bool,
 }
@@ -131,6 +133,7 @@ impl Default for Config {
             spectrum_enabled: false,
             spectrum_style: SpectrumKind::Blocks,
             spectrum_glow: false,
+            spectrum_flatten: true,
             update_check: true,
         }
     }
@@ -239,6 +242,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # spectrum_enabled = false     # v 键也可全局开关
 # spectrum_style = "blocks"   # blocks | mirror | led | braille | shade | scope | fire | waterfall | vu | reflect
 # spectrum_glow = false        # 荧光余辉残影
+# spectrum_flatten = true      # 高频补偿（+4dB/倍频程），关掉显示真实能量比例
 # update_check = true          # 启动时静默检查新版本
 "#;
 
@@ -359,6 +363,7 @@ mod tests {
         assert!(!config.spectrum_enabled);
         assert_eq!(config.spectrum_style, SpectrumKind::Blocks);
         assert!(!config.spectrum_glow);
+        assert!(config.spectrum_flatten);
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
         assert_eq!(parsed.quality, AudioQuality::Lossless);
@@ -541,6 +546,7 @@ idle_art = "~/art.png"
                 spectrum_enabled: true,
                 spectrum_style: SpectrumKind::Fire,
                 spectrum_glow: true,
+                spectrum_flatten: false,
                 update_check: false,
             };
 

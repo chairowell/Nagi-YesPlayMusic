@@ -29,11 +29,12 @@ pub(crate) enum SettingField {
     SpectrumEnabled,
     SpectrumStyle,
     SpectrumGlow,
+    SpectrumFlatten,
     UpdateCheck,
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 18] = [
+    pub(crate) const ALL: [Self; 19] = [
         Self::Theme,
         Self::ThemeMode,
         Self::Language,
@@ -51,6 +52,7 @@ impl SettingField {
         Self::SpectrumEnabled,
         Self::SpectrumStyle,
         Self::SpectrumGlow,
+        Self::SpectrumFlatten,
         Self::UpdateCheck,
     ];
 
@@ -73,6 +75,7 @@ impl SettingField {
             Self::SpectrumEnabled => Key::SettingSpectrumEnabled,
             Self::SpectrumStyle => Key::SettingSpectrumStyle,
             Self::SpectrumGlow => Key::SettingSpectrumGlow,
+            Self::SpectrumFlatten => Key::SettingSpectrumFlatten,
             Self::UpdateCheck => Key::SettingUpdateCheck,
         }
     }
@@ -257,6 +260,9 @@ impl AppState {
                 self.config.spectrum_style =
                     cycle(&SpectrumKind::ALL, &self.config.spectrum_style, delta);
             }
+            SettingField::SpectrumFlatten => {
+                self.config.spectrum_flatten = !self.config.spectrum_flatten;
+            }
             SettingField::SpectrumGlow => {
                 self.config.spectrum_glow = !self.config.spectrum_glow;
             }
@@ -375,6 +381,7 @@ impl AppState {
                 i18n::t_spectrum_style(self.config.spectrum_style).to_owned()
             }
             SettingField::SpectrumGlow => self.on_off(self.config.spectrum_glow),
+            SettingField::SpectrumFlatten => self.on_off(self.config.spectrum_flatten),
             SettingField::UpdateCheck => self.on_off(self.config.update_check),
             SettingField::QueueBehavior => if self.config.enter_replaces_queue {
                 i18n::t(Key::SettingQueueList)

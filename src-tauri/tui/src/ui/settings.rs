@@ -588,7 +588,9 @@ mod tests {
             .iter()
             .position(|field| *field == SettingField::SpectrumStyle)
             .unwrap();
-        state.spectrum.tick(&SampleBuffer::default(), false, true);
+        state
+            .spectrum
+            .tick(&SampleBuffer::default(), false, true, true);
         let mut hits = Hits::default();
 
         terminal

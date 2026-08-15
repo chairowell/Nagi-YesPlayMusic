@@ -901,7 +901,9 @@ mod tests {
             artist: "Artist".into(),
             album: String::new(),
         });
-        state.spectrum.tick(&SampleBuffer::default(), false, true);
+        state
+            .spectrum
+            .tick(&SampleBuffer::default(), false, true, true);
         let backend = TestBackend::new(80, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -932,7 +934,9 @@ mod tests {
             artist: "Artist".into(),
             album: String::new(),
         });
-        state.spectrum.tick(&SampleBuffer::default(), false, true);
+        state
+            .spectrum
+            .tick(&SampleBuffer::default(), false, true, true);
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -968,7 +972,9 @@ mod tests {
                 artist: "Artist".into(),
                 album: String::new(),
             });
-            state.spectrum.tick(&SampleBuffer::default(), false, true);
+            state
+                .spectrum
+                .tick(&SampleBuffer::default(), false, true, true);
             let backend = TestBackend::new(200, 60);
             let mut terminal = Terminal::new(backend).unwrap();
             let mut hits = Hits::default();
@@ -1007,7 +1013,9 @@ mod tests {
             translation: None,
             word_timing: None,
         }];
-        state.spectrum.tick(&SampleBuffer::default(), false, true);
+        state
+            .spectrum
+            .tick(&SampleBuffer::default(), false, true, true);
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();

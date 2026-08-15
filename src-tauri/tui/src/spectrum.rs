@@ -177,28 +177,42 @@ impl SpectrumKind {
 // matter how many rows the spectrum gets.
 const CEILING_FLOOR: f32 = 0.12;
 const CEILING_DECAY: f32 = 0.995;
+// Music concentrates its energy in the low bins; +4 dB per octave rebalances
+// the display toward flat for typical material (the cava/Monstercat recipe).
+const FLATTEN_DB_PER_OCTAVE: f32 = 4.0;
+// Monstercat-style smear: each bar props up its neighbors with this decay,
+// turning isolated spikes into connected hills.
+const SMEAR_DECAY: f32 = 1.6;
 
 struct SpectrumAnalyzer {
     fft: Arc<dyn Fft<f32>>,
     work: Vec<Complex<f32>>,
     bins: [f32; SPECTRUM_BINS],
+    flatten_weights: [f32; SPECTRUM_BINS],
     ceiling: f32,
 }
 
 impl Default for SpectrumAnalyzer {
     fn default() -> Self {
         let mut planner = FftPlanner::new();
+        let octaves_total = ((FFT_SAMPLES / 2) as f32).log2();
+        let mut flatten_weights = [1.0_f32; SPECTRUM_BINS];
+        for (index, weight) in flatten_weights.iter_mut().enumerate() {
+            let octaves = (index as f32 + 0.5) / SPECTRUM_BINS as f32 * octaves_total;
+            *weight = 10.0_f32.powf(FLATTEN_DB_PER_OCTAVE * octaves / 20.0);
+        }
         Self {
             fft: planner.plan_fft_forward(FFT_SAMPLES),
             work: vec![Complex::default(); FFT_SAMPLES],
             bins: [0.0; SPECTRUM_BINS],
+            flatten_weights,
             ceiling: CEILING_FLOOR,
         }
     }
 }
 
 impl SpectrumAnalyzer {
-    fn process(&mut self, samples: &[f32]) -> &[f32; SPECTRUM_BINS] {
+    fn process(&mut self, samples: &[f32], flatten: bool) -> &[f32; SPECTRUM_BINS] {
         let input_start = samples.len().saturating_sub(FFT_SAMPLES);
         let input = &samples[input_start..];
         let pad = FFT_SAMPLES - input.len();
@@ -224,12 +238,23 @@ impl SpectrumAnalyzer {
                 .powf((index + 1) as f32 / SPECTRUM_BINS as f32)
                 .ceil()
                 .max((start + 1) as f32) as usize;
-            let magnitude = self.work[start..end.min(FFT_SAMPLES / 2)]
+            let mut magnitude = self.work[start..end.min(FFT_SAMPLES / 2)]
                 .iter()
                 .map(|value| value.norm())
                 .fold(0.0_f32, f32::max)
                 / FFT_SAMPLES as f32;
+            if flatten {
+                magnitude *= self.flatten_weights[index];
+            }
             *target = (magnitude * 40.0).ln_1p() / 41.0_f32.ln();
+        }
+        // Two sweeps propagate each peak to its neighbors with exponential
+        // falloff — equivalent to the O(n²) Monstercat smear.
+        for index in 1..SPECTRUM_BINS {
+            targets[index] = targets[index].max(targets[index - 1] / SMEAR_DECAY);
+        }
+        for index in (0..SPECTRUM_BINS - 1).rev() {
+            targets[index] = targets[index].max(targets[index + 1] / SMEAR_DECAY);
         }
         let frame_peak = targets.iter().copied().fold(0.0_f32, f32::max);
         self.ceiling = (self.ceiling * CEILING_DECAY)
@@ -288,7 +313,7 @@ impl SpectrumView {
         self.terminal_background = background;
     }
 
-    pub fn tick(&mut self, capture: &SampleBuffer, playing: bool, preview: bool) {
+    pub fn tick(&mut self, capture: &SampleBuffer, playing: bool, preview: bool, flatten: bool) {
         self.ticks = self.ticks.wrapping_add(1);
         let real = capture.latest(FFT_SAMPLES);
         self.samples = if playing && !real.is_empty() {
@@ -298,7 +323,7 @@ impl SpectrumView {
         } else {
             vec![0.0; FFT_SAMPLES]
         };
-        self.bins = *self.analyzer.process(&self.samples);
+        self.bins = *self.analyzer.process(&self.samples, flatten);
         let settled =
             !playing && !preview && self.bins.iter().all(|value| *value < SILENCE_THRESHOLD);
         if settled && !self.settled {
@@ -1303,13 +1328,46 @@ mod tests {
         let loud = (0..FFT_SAMPLES)
             .map(|index| (2.0 * PI * 16.0 * index as f32 / FFT_SAMPLES as f32).sin())
             .collect::<Vec<_>>();
-        let attacked = analyzer.process(&loud)[30];
-        let attacked_again = analyzer.process(&loud)[30];
-        let decayed = analyzer.process(&vec![0.0; FFT_SAMPLES])[30];
+        let attacked = analyzer.process(&loud, false)[30];
+        let attacked_again = analyzer.process(&loud, false)[30];
+        let decayed = analyzer.process(&vec![0.0; FFT_SAMPLES], false)[30];
 
         assert!(attacked > 0.0);
         assert!((attacked_again - attacked * 1.6).abs() < 0.0001);
         assert!((decayed - attacked_again * 0.91).abs() < 0.0001);
+    }
+
+    #[test]
+    fn flatten_tilts_highs_and_smear_props_up_neighbors() {
+        let mix = (0..FFT_SAMPLES)
+            .map(|index| {
+                let t = index as f32 / FFT_SAMPLES as f32;
+                (2.0 * PI * 16.0 * t).sin() + 0.05 * (2.0 * PI * 400.0 * t).sin()
+            })
+            .collect::<Vec<_>>();
+        let plain = *SpectrumAnalyzer::default().process(&mix, false);
+        let tilted = *SpectrumAnalyzer::default().process(&mix, true);
+        let half = SPECTRUM_BINS / 2;
+        let ratio = |bins: &[f32; SPECTRUM_BINS]| {
+            bins[half..].iter().sum::<f32>() / bins[..half].iter().sum::<f32>().max(f32::EPSILON)
+        };
+        // The tilt must shift relative weight toward the high half.
+        assert!(ratio(&tilted) > ratio(&plain));
+
+        // Smear: the strongest bar props its direct neighbor up to at least
+        // peak / SMEAR_DECAY (allowing smoothing rounding).
+        let peak = plain
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(index, _)| index)
+            .unwrap();
+        let neighbor = if peak + 1 < SPECTRUM_BINS {
+            peak + 1
+        } else {
+            peak - 1
+        };
+        assert!(plain[neighbor] >= plain[peak] / (SMEAR_DECAY * 1.01));
     }
 
     #[test]
@@ -1323,20 +1381,20 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         let mut view = SpectrumView::new(SpectrumKind::Mirror);
 
-        view.tick(&capture, true, false);
+        view.tick(&capture, true, false, true);
         view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
         assert!(buffer.content().iter().any(|cell| cell.symbol() != " "));
         let playing_peak = view.bins.iter().copied().fold(0.0_f32, f32::max);
 
         capture.clear();
-        view.tick(&capture, false, false);
+        view.tick(&capture, false, false, true);
         let fading_peak = view.bins.iter().copied().fold(0.0_f32, f32::max);
         assert!(fading_peak > 0.0 && fading_peak < playing_peak);
         view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
         assert!(buffer.content().iter().any(|cell| cell.symbol() != " "));
 
         for _ in 1..200 {
-            view.tick(&capture, false, false);
+            view.tick(&capture, false, false, true);
         }
         view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
         assert!(buffer.content().iter().all(|cell| cell.symbol() == " "));
