@@ -27,7 +27,13 @@ rodio = { version = "=0.22.2", features = ["symphonia-all"] }
 rustfft = "=6.4.1"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
-stream-download = { version = "=0.24.3", features = ["reqwest-rustls"] }
+# default-features off: the defaults drag reqwest's native-tls in beside
+# rustls. reqwest13 below exists for feature unification only: it steers
+# stream-download's reqwest 0.13 onto the ring-backed rustls the 0.12 stack
+# already links, instead of adding a second crypto backend (aws-lc-sys).
+stream-download = { version = "=0.24.3", default-features = false, features = ["reqwest", "temp-storage"] }
+reqwest13 = { package = "reqwest", version = "=0.13.4", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "=0.23.31", default-features = false, features = ["ring"] }
 tempfile = "=3.27.0"
 thiserror = "=2.0.19"
 tokio = { version = "=1.53.1", features = ["full"] }

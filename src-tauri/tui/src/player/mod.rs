@@ -539,11 +539,22 @@ fn open_bytes(bytes: Vec<u8>, unm_source: bool) -> Media {
     }
 }
 
+/// stream-download's reqwest is built with `rustls-no-provider` so the whole
+/// binary links a single crypto backend; that variant requires installing the
+/// process default provider before the first client is built.
+fn install_crypto_provider() {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 async fn open_url(
     url: &str,
     cache: Option<CacheWritePlan>,
     unm_source: bool,
 ) -> anyhow::Result<Media> {
+    install_crypto_provider();
     let (provider, import) = CacheStreamProvider::new()?;
     let (complete_tx, complete_rx) = oneshot::channel();
     let mut complete_tx = cache.as_ref().map(|_| complete_tx);
