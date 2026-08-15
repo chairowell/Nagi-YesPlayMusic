@@ -186,11 +186,18 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
         if state.zen {
             now_playing::draw(frame, state, content, hits);
         } else {
-            let [tabs_area, _, body, _, hints_area] = Layout::vertical([
+            // Browsing views keep the playing track in reach at the bottom.
+            let player_bar_height = if state.now.is_some() && state.view != View::NowPlaying {
+                now_playing::PLAYER_BAR_HEIGHT
+            } else {
+                0
+            };
+            let [tabs_area, _, body, _, player_bar_area, hints_area] = Layout::vertical([
                 Constraint::Length(HEADER_HEIGHT),
                 Constraint::Length(PANEL_GAP_Y),
                 Constraint::Min(0),
                 Constraint::Length(PANEL_GAP_Y),
+                Constraint::Length(player_bar_height),
                 Constraint::Length(FOOTER_HEIGHT),
             ])
             .areas(content);
@@ -203,6 +210,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
                 View::Queue => queue::draw(frame, state, body, hits),
                 View::Login => login::draw(frame, state, body),
                 View::Settings => settings::draw(frame, state, body, hits),
+            }
+            if player_bar_height > 0 {
+                now_playing::draw_player_bar(frame, state, player_bar_area, hits);
             }
             draw_hints(frame, state, hints_area);
         }
@@ -635,6 +645,50 @@ mod tests {
     use crate::app::{AppState, NowPlaying};
     use crate::config::Config;
     use crate::i18n::{self, Key};
+
+    #[test]
+    fn browsing_views_show_the_player_bar_only_while_a_track_is_loaded() {
+        let mut state = AppState::new(&Config::default());
+        state.view = View::Library;
+        state.now = Some(NowPlaying {
+            title: "夜に駆ける".into(),
+            artist: "YOASOBI".into(),
+            album: String::new(),
+        });
+        let backend = TestBackend::new(90, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Hits::default();
+        terminal
+            .draw(|frame| draw(frame, &mut state, &mut hits))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        // CJK glyphs occupy two buffer cells, so match the ASCII tail.
+        assert!(rendered.contains("— YOASOBI"));
+        // The full control row rides along with its mouse targets.
+        assert!(!hits.play.is_empty());
+        assert!(!hits.progress.is_empty());
+
+        state.now = None;
+        let mut hits = Hits::default();
+        terminal
+            .draw(|frame| draw(frame, &mut state, &mut hits))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!rendered.contains("YOASOBI"));
+        assert!(hits.play.is_empty());
+    }
 
     fn rect_text(buffer: &Buffer, area: Rect) -> String {
         (area.y..area.bottom())

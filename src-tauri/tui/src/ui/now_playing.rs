@@ -513,6 +513,40 @@ fn current_lyric_spans(
         .collect()
 }
 
+/// Two-row strip for the non-playing views: what's playing plus the full
+/// progress/controls row (its mouse hit targets come along for free).
+pub(super) const PLAYER_BAR_HEIGHT: u16 = 2;
+
+pub(super) fn draw_player_bar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
+    let Some(now) = &state.now else { return };
+    if area.height < PLAYER_BAR_HEIGHT || area.width < 8 {
+        return;
+    }
+    let theme = &state.theme;
+    let note = "♪ ";
+    let text_width = usize::from(area.width).saturating_sub(display_width(note) + 2);
+    let title = crate::ui::text::pad_or_marquee(
+        &format!("{} — {}", now.title, now.artist),
+        text_width,
+        false,
+        0,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(note, Style::new().fg(theme.accent)),
+            Span::styled(title, Style::new().fg(theme.dim)),
+        ])),
+        Rect { height: 1, ..area },
+    );
+    let progress = Rect {
+        y: area.y + 1,
+        height: 1,
+        ..area
+    };
+    draw_progress(frame, state, progress, hits);
+}
+
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let icons = crate::icons::for_style(state.config.icons);
