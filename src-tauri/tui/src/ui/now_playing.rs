@@ -243,7 +243,7 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
                 format!(" {label}{}", " ".repeat(pad)),
                 Style::new().fg(theme.fg),
             ),
-            Span::styled((*key).to_owned(), Style::new().fg(theme.fg).bg(theme.faint)),
+            Span::styled((*key).to_owned(), Style::new().fg(theme.accent)),
             Span::raw(" "),
         ]);
         frame.render_widget(Paragraph::new(line), row);
@@ -1248,10 +1248,12 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(!rendered.contains("Listener"));
-        let shortcut = hits.menu[0].0;
-        let shortcut = &terminal.backend().buffer()[(shortcut.right() - 2, shortcut.y)];
-        assert_eq!(shortcut.fg, state.theme.fg);
-        assert_eq!(shortcut.bg, state.theme.faint);
+        let row = hits.menu[0].0;
+        let shortcut = &terminal.backend().buffer()[(row.right() - 2, row.y)];
+        let label = &terminal.backend().buffer()[(row.x + 1, row.y)];
+        // Accent text, no pill: the badge shares the label's background.
+        assert_eq!(shortcut.fg, state.theme.accent);
+        assert_eq!(shortcut.bg, label.bg);
     }
 
     #[test]

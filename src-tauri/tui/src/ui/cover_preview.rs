@@ -85,11 +85,13 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect) {
     frame.render_widget(block, area);
 
     if state.selected_original_is_available() && !areas.image.is_empty() {
-        if let Some(cover) = state.selected_pixel_cover() {
-            frame.render_widget(cover, areas.image);
-        } else {
-            frame.render_widget(state.preview_placeholder(), areas.image);
-        }
+        // Plain background under the terminal-graphics image, like the
+        // playing view: a pixel backdrop peeks out of the last partial row
+        // (the placeholder record's bottom edge showed as a grey sliver).
+        frame.render_widget(
+            ratatui::widgets::Block::new().style(Style::new().bg(state.theme.bg)),
+            areas.image,
+        );
         state.render_selected_original(frame, areas.image);
     } else if !areas.image.is_empty() {
         if let Some(cover) = state.selected_pixel_cover() {

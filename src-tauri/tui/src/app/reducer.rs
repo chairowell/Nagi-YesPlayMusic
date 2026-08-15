@@ -115,6 +115,7 @@ impl AppState {
             let Some(mapped) = event::key_action(*key) else {
                 return;
             };
+            tracing::debug!(?key, ?mapped, "key resolved");
             self.update(mapped, fx);
             return;
         }
@@ -240,6 +241,7 @@ impl AppState {
                 } else {
                     self.position.saturating_sub(step)
                 };
+                tracing::debug!(seconds, from_ms = self.position.as_millis() as u64, "seek by");
                 fx.player.send(PlayerCommand::SeekTo(target));
             }
             Action::SeekToRatio(ratio) => {
