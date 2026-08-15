@@ -630,7 +630,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils libasound2-dev pkg-config
+          sudo apt-get install -y binutils libasound2-dev pkg-config lld
 
       - name: Test ypm and core
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui -p yesplaymusic-core --all-features
@@ -642,6 +642,11 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui -- --check
 
       - name: Build ypm
+        env:
+          # GNU ld neither folds identical code nor matches MSVC/Mach-O
+          # linker GC; lld + ICF keeps the Linux binary near the other
+          # platforms instead of ~60% larger.
+          RUSTFLAGS: ${{ runner.os == 'Linux' && '-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--icf=all' || '' }}
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --target ${{ matrix.target }}
 
       - name: Smoke ypm runtime
