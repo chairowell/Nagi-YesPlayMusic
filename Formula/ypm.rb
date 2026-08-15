@@ -9,7 +9,7 @@ class Ypm < Formula
   version "0.0.0"
 
   on_macos do
-    url "https://github.com/nagi-studio/YesPlayMusic/releases/download/v0.0.0/ypm-aarch64-apple-darwin",
+    url "https://github.com/nagi-studio/YesPlayMusic/releases/download/v0.0.0/ypm-macos-aarch64",
         using: :nounzip
     sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -17,7 +17,7 @@ class Ypm < Formula
   end
 
   on_linux do
-    url "https://github.com/nagi-studio/YesPlayMusic/releases/download/v0.0.0/ypm-x86_64-unknown-linux-gnu",
+    url "https://github.com/nagi-studio/YesPlayMusic/releases/download/v0.0.0/ypm-linux-x64",
         using: :nounzip
     sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -27,9 +27,9 @@ class Ypm < Formula
 
   def install
     artifact = if OS.mac?
-      "ypm-aarch64-apple-darwin"
+      "ypm-macos-aarch64"
     else
-      "ypm-x86_64-unknown-linux-gnu"
+      "ypm-linux-x64"
     end
 
     bin.install artifact => "ypm"
