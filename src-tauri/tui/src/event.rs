@@ -172,6 +172,8 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('s') => Some(Action::ToggleShuffle),
         KeyCode::Char('r') => Some(Action::CycleRepeat),
         KeyCode::Char('*') => Some(Action::ToggleLike),
+        KeyCode::Char('f') => Some(Action::StartPersonalFm),
+        KeyCode::Char('x') => Some(Action::TrashFmTrack),
         KeyCode::Char('m') => Some(Action::ToggleMute),
         KeyCode::Char('a') => Some(Action::AddSelectedToQueue),
         KeyCode::Char('/') => Some(Action::StartFilter),
@@ -277,9 +279,15 @@ mod tests {
             map(KeyCode::Char('v')),
             Some(Action::ToggleSpectrum)
         ));
+        assert!(matches!(
+            map(KeyCode::Char('f')),
+            Some(Action::StartPersonalFm)
+        ));
+        assert!(matches!(
+            map(KeyCode::Char('x')),
+            Some(Action::TrashFmTrack)
+        ));
         assert!(map(KeyCode::Char('i')).is_none());
-        assert!(map(KeyCode::Char('f')).is_none());
-        assert!(map(KeyCode::Char('x')).is_none());
         assert!(matches!(
             map(KeyCode::Char(',')),
             Some(Action::SwitchView(View::Settings))

@@ -20,6 +20,8 @@ enum CommandKind {
     Quality,
     Mouse,
     Goto,
+    PersonalFm,
+    FmTrash,
     Quit,
 }
 
@@ -67,6 +69,18 @@ const COMMANDS: &[CommandSpec] = &[
         usage: "like",
         alias: Key::CommandLike,
         keywords: &["like", "喜欢", "收藏"],
+    },
+    CommandSpec {
+        kind: CommandKind::PersonalFm,
+        usage: "fm",
+        alias: Key::CommandPersonalFm,
+        keywords: &["fm", "radio", "私人fm", "私人电台", "电台"],
+    },
+    CommandSpec {
+        kind: CommandKind::FmTrash,
+        usage: "trash",
+        alias: Key::CommandFmTrash,
+        keywords: &["trash", "ban", "dislike", "垃圾桶", "不再播放", "不喜欢"],
     },
     CommandSpec {
         kind: CommandKind::Zen,
@@ -138,6 +152,8 @@ pub(crate) enum CommandInvocation {
     Shuffle,
     Repeat,
     Like,
+    PersonalFm,
+    FmTrash,
     Zen,
     Spectrum,
     Mute,
@@ -159,6 +175,8 @@ impl CommandInvocation {
             Self::Shuffle => "shuffle",
             Self::Repeat => "repeat",
             Self::Like => "like",
+            Self::PersonalFm => "fm",
+            Self::FmTrash => "trash",
             Self::Zen => "zen",
             Self::Spectrum => "spectrum",
             Self::Mute => "mute",
@@ -361,6 +379,8 @@ fn invocation_for(
         CommandKind::Shuffle => no_arguments(spec, arguments, CommandInvocation::Shuffle),
         CommandKind::Repeat => no_arguments(spec, arguments, CommandInvocation::Repeat),
         CommandKind::Like => no_arguments(spec, arguments, CommandInvocation::Like),
+        CommandKind::PersonalFm => no_arguments(spec, arguments, CommandInvocation::PersonalFm),
+        CommandKind::FmTrash => no_arguments(spec, arguments, CommandInvocation::FmTrash),
         CommandKind::Zen => no_arguments(spec, arguments, CommandInvocation::Zen),
         CommandKind::Spectrum => no_arguments(spec, arguments, CommandInvocation::Spectrum),
         CommandKind::Mute => no_arguments(spec, arguments, CommandInvocation::Mute),
@@ -522,6 +542,39 @@ mod tests {
         assert_eq!(
             palette("暂停").invocation(),
             Ok(CommandInvocation::TogglePlay)
+        );
+    }
+
+    #[test]
+    fn personal_fm_and_its_trash_are_reachable_from_the_palette() {
+        assert_eq!(
+            palette("fm").invocation(),
+            Ok(CommandInvocation::PersonalFm)
+        );
+        assert_eq!(
+            palette("电台").invocation(),
+            Ok(CommandInvocation::PersonalFm)
+        );
+        assert_eq!(
+            palette("trash").invocation(),
+            Ok(CommandInvocation::FmTrash)
+        );
+        assert_eq!(
+            palette("不再播放").invocation(),
+            Ok(CommandInvocation::FmTrash)
+        );
+        assert_eq!(
+            palette("垃圾桶").invocation(),
+            Ok(CommandInvocation::FmTrash)
+        );
+        // Neither takes an argument.
+        assert!(matches!(
+            palette("fm 1").invocation(),
+            Err(CommandError::UnexpectedArgument { .. })
+        ));
+        assert_eq!(
+            palette("fm").filtered().first().map(|c| c.usage),
+            Some("fm")
         );
     }
 

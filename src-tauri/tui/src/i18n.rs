@@ -129,7 +129,13 @@ pub enum Key {
     CommandQuality,
     CommandMouse,
     CommandGoto,
+    CommandPersonalFm,
+    CommandFmTrash,
     CommandQuit,
+    FmSignInRequired,
+    FmOnlyInFm,
+    FmStarting,
+    FmTrashed,
     SettingUpdateCheck,
     LabelLike,
     LabelHelp,
@@ -164,6 +170,7 @@ pub enum Key {
     OpFetchCover,
     OpReadCover,
     OpBuildQr,
+    OpFmTrash,
 }
 
 static LANGUAGE: OnceLock<Lang> = OnceLock::new();
@@ -285,6 +292,17 @@ pub fn t_song_url_rejected(code: Option<i64>) -> String {
         Lang::Ja => {
             format!("NetEase が再生 URL の取得を拒否しました（code {code}）：ログインの期限切れかレート制限の可能性があります。再ログインしてください")
         }
+    }
+}
+
+/// The vendored client rewrites some refusals into HTTP 200, so the body code
+/// is the only evidence; always carry it into the message.
+pub fn t_fm_trash_rejected(code: Option<i64>) -> String {
+    let code = code.map_or_else(|| "?".to_owned(), |code| code.to_string());
+    match language() {
+        Lang::Zh => format!("网易云拒绝了不再播放请求（code {code}）"),
+        Lang::En => format!("NetEase refused the FM trash request (code {code})"),
+        Lang::Ja => format!("NetEase が FM ゴミ箱の要求を拒否しました（code {code}）"),
     }
 }
 
@@ -480,7 +498,13 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::CommandQuality => "音质 <档位>",
             Key::CommandMouse => "鼠标捕获",
             Key::CommandGoto => "前往 <视图>",
+            Key::CommandPersonalFm => "私人 FM",
+            Key::CommandFmTrash => "不再播放",
             Key::CommandQuit => "退出",
+            Key::FmSignInRequired => "私人 FM 需要先登录，请回主菜单扫码",
+            Key::FmOnlyInFm => "不再播放只在私人 FM 里可用",
+            Key::FmStarting => "正在获取私人 FM…",
+            Key::FmTrashed => "已加入垃圾桶，不再播放",
             Key::SettingUpdateCheck => "更新检测",
             Key::LabelLike => "收藏",
             Key::LabelHelp => "全部键位",
@@ -529,6 +553,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::OpFetchCover => "下载封面",
             Key::OpReadCover => "读取封面数据",
             Key::OpBuildQr => "生成二维码",
+            Key::OpFmTrash => "加入 FM 垃圾桶",
         },
         Lang::En => match key {
             Key::Resolving => "Resolving…",
@@ -635,7 +660,13 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::CommandQuality => "Quality <level>",
             Key::CommandMouse => "Mouse capture",
             Key::CommandGoto => "Go to <view>",
+            Key::CommandPersonalFm => "Personal FM",
+            Key::CommandFmTrash => "Never play again",
             Key::CommandQuit => "Quit",
+            Key::FmSignInRequired => "Personal FM needs a sign-in; scan the QR from the main menu",
+            Key::FmOnlyInFm => "Never play again only works inside Personal FM",
+            Key::FmStarting => "Loading Personal FM…",
+            Key::FmTrashed => "Moved to the FM trash, never playing again",
             Key::SettingUpdateCheck => "Update check",
             Key::LabelLike => "Like",
             Key::LabelHelp => "All keys",
@@ -684,6 +715,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::OpFetchCover => "download cover art",
             Key::OpReadCover => "read cover data",
             Key::OpBuildQr => "build the QR code",
+            Key::OpFmTrash => "add to the FM trash",
         },
         Lang::Ja => match key {
             Key::Resolving => "読み込み中…",
@@ -790,7 +822,13 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::CommandQuality => "音質 <段階>",
             Key::CommandMouse => "マウスキャプチャ",
             Key::CommandGoto => "移動 <ビュー>",
+            Key::CommandPersonalFm => "パーソナル FM",
+            Key::CommandFmTrash => "二度と再生しない",
             Key::CommandQuit => "終了",
+            Key::FmSignInRequired => "パーソナル FM にはログインが必要です。メインメニューでスキャンしてください",
+            Key::FmOnlyInFm => "二度と再生しないはパーソナル FM でのみ使えます",
+            Key::FmStarting => "パーソナル FM を取得中…",
+            Key::FmTrashed => "ゴミ箱に入れました。二度と再生しません",
             Key::SettingUpdateCheck => "更新チェック",
             Key::LabelLike => "お気に入り",
             Key::LabelHelp => "すべてのキー",
@@ -839,6 +877,7 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::OpFetchCover => "カバー画像のダウンロード",
             Key::OpReadCover => "カバー画像データの読み込み",
             Key::OpBuildQr => "QRコードの生成",
+            Key::OpFmTrash => "FM ゴミ箱への追加",
         },
     }
 }

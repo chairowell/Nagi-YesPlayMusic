@@ -394,7 +394,7 @@ pub struct AppState {
     marquee_target: Option<MarqueeTarget>,
     pub queue: Vec<SongRow>,
     pub queue_pos: Option<usize>,
-    queue_source: Source,
+    pub(crate) queue_source: Source,
     pub play_mode: PlayMode,
     pub shuffle: bool,
     shuffle_order: Vec<usize>,
@@ -1331,8 +1331,22 @@ impl AppState {
         }
     }
 
+    /// True while the queue is being fed by personal FM.
+    pub fn playing_personal_fm(&self) -> bool {
+        self.queue_source == Source::Fm
+    }
+
     /// Reset the now-playing surface and kick off resolution for a row.
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
+        // FM never ends: once the last queued track starts, the next batch is
+        // already on the wire, so playback never stalls between batches.
+        if self.queue_source == Source::Fm
+            && self
+                .queue_pos
+                .is_some_and(|position| position + 1 >= self.queue.len())
+        {
+            self.fetch_fm_more(fx);
+        }
         fx.player.send(PlayerCommand::Stop);
         self.dashboard_hold = false;
         self.current_track_id = (row.id > 0).then_some(row.id);

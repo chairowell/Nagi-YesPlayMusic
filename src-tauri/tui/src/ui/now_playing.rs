@@ -306,10 +306,19 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
             format!("{indent}{}", now.title),
             Style::new().fg(theme.fg).add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(Span::styled(
+        // The FM badge rides the artist line: no extra row, but the queue's
+        // origin stays visible while a station track plays.
+        let mut artist = vec![Span::styled(
             format!("{indent}{} ", now.artist),
             Style::new().fg(theme.dim),
-        )));
+        )];
+        if state.playing_personal_fm() {
+            artist.push(Span::styled(
+                i18n::t(Key::PersonalFm),
+                Style::new().fg(theme.accent),
+            ));
+        }
+        lines.push(Line::from(artist));
         if !now.album.is_empty() {
             lines.push(Line::from(Span::styled(
                 format!("{indent}{}", now.album),
@@ -1161,6 +1170,42 @@ mod tests {
         let progress = (0..80).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
         assert!(progress.contains('♥'));
         assert!(!progress.contains('♡'));
+    }
+
+    #[test]
+    fn personal_fm_is_badged_on_the_artist_line_and_only_while_it_feeds_the_queue() {
+        let staged = |source| {
+            let mut state = AppState::new(&Config::default());
+            state.now = Some(NowPlaying {
+                title: "Title".into(),
+                artist: "Artist".into(),
+                album: "Album".into(),
+            });
+            state.queue_source = source;
+            state
+        };
+        let badge = crate::i18n::t(crate::i18n::Key::PersonalFm);
+        let render = |state: &mut AppState| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
+            terminal
+                .draw(|frame| draw_meta(frame, state, Rect::new(0, 0, 80, 5), false))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let artist_line = (0..80).map(|x| buffer[(x, 1)].symbol()).collect::<String>();
+            let accented = (0..80)
+                .any(|x| buffer[(x, 1)].fg == state.theme.accent && buffer[(x, 1)].symbol() != " ");
+            (artist_line, accented)
+        };
+
+        let (line, accented) = render(&mut staged(crate::api::Source::Liked));
+        assert!(line.contains("Artist"));
+        assert!(!line.contains(badge), "a normal queue carries no FM badge");
+        assert!(!accented);
+
+        let (line, accented) = render(&mut staged(crate::api::Source::Fm));
+        assert!(line.contains("Artist"));
+        assert!(line.contains(badge));
+        assert!(accented, "the badge is set apart by the accent colour");
     }
 
     #[test]

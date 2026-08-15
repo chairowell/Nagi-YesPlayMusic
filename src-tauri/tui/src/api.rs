@@ -440,6 +440,21 @@ impl Ncm {
         Ok(songs.iter().map(song_row_flex).collect())
     }
 
+    /// FM trash ("never play this again"). The transport layer rewrites some
+    /// refusals into HTTP 200, so the body's own code is the real verdict.
+    pub async fn fm_trash(&self, id: i64, session: Option<&Session>) -> Result<()> {
+        let query = Self::query_with_session(session).param("id", &id.to_string());
+        let response = self
+            .client
+            .fm_trash(&query)
+            .await
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpFmTrash, error)))?;
+        match response.body.get("code").and_then(Value::as_i64) {
+            Some(200) => Ok(()),
+            code => Err(anyhow!(i18n::t_fm_trash_rejected(code))),
+        }
+    }
+
     pub async fn cloud_songs(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
         collect_cloud_pages(|offset| self.cloud_songs_page(session, offset)).await
     }

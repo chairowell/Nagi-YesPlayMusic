@@ -272,6 +272,8 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
         ("s", Key::Shuffle),
         ("r", Key::Repeat),
         ("*", Key::LabelLike),
+        ("f", Key::CommandPersonalFm),
+        ("x", Key::CommandFmTrash),
         ("/", Key::Filter),
         ("z", Key::Zen),
         ("v", Key::Spectrum),

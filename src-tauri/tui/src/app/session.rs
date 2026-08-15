@@ -325,9 +325,24 @@ impl AppState {
         }
         if self.pending_fm_next && self.queue_source == Source::Fm {
             self.pending_fm_next = false;
-            self.step_queue(fx, 1, true, true);
+            // The first batch of a fresh FM session has nothing to step from:
+            // adopt its head instead of advancing past it.
+            match self.queue_pos {
+                Some(_) => {
+                    self.step_queue(fx, 1, true, true);
+                }
+                None => self.start_fm_head(fx),
+            }
         } else if self.queue_source != Source::Fm {
             self.pending_fm_next = false;
+        }
+    }
+
+    fn start_fm_head(&mut self, fx: &Effects) {
+        if let Some(row) = self.queue.first().cloned() {
+            self.queue_pos = Some(0);
+            self.reset_shuffle_order();
+            self.play_row(fx, row);
         }
     }
 
@@ -345,6 +360,87 @@ impl AppState {
         if self.session.matches(session) {
             self.fm_request_pending = false;
             self.pending_fm_next = false;
+            self.status = Some(message);
+        }
+    }
+
+    /// Enter FM mode: drop the old queue, pull a batch, play its head.
+    pub(super) fn start_personal_fm(&mut self, fx: &Effects) {
+        if self.personal_request(fx).is_none() {
+            self.status = Some(i18n::t(Key::FmSignInRequired).into());
+            return;
+        }
+        self.dashboard_hold = false;
+        self.queue.clear();
+        self.queue_pos = None;
+        self.queue_source = Source::Fm;
+        self.reset_shuffle_order();
+        self.prefetched = None;
+        self.pending_fm_next = true;
+        self.status = Some(i18n::t(Key::FmStarting).into());
+        self.view = View::NowPlaying;
+        self.fetch_fm_more(fx);
+    }
+
+    /// FM trash: tell the server, then move on without awaiting the answer.
+    pub(super) fn trash_current_fm_track(&mut self, fx: &Effects) {
+        if self.queue_source != Source::Fm {
+            self.status = Some(i18n::t(Key::FmOnlyInFm).into());
+            return;
+        }
+        let (Some(id), Some(trashed)) = (self.current_track_id, self.queue_pos) else {
+            return;
+        };
+        let Some((stamp, session)) = self.personal_request(fx) else {
+            self.status = Some(i18n::t(Key::FmSignInRequired).into());
+            return;
+        };
+        spawn_fm_trash(fx, stamp, session, id);
+        self.dashboard_hold = false;
+        // Pick the successor first — shuffle decides it, not the index order.
+        self.step_queue(fx, 1, false, false);
+        self.drop_trashed_row(fx, trashed);
+        // Set last: the skip itself overwrites status with "resolving".
+        self.status = Some(i18n::t(Key::FmTrashed).into());
+    }
+
+    /// Evict the banned row so no back-step or reshuffle can reach it again.
+    /// Called after the skip, so `queue_pos` already names the successor.
+    fn drop_trashed_row(&mut self, fx: &Effects, trashed: usize) {
+        if trashed >= self.queue.len() {
+            return;
+        }
+        let stayed = self.queue_pos == Some(trashed);
+        self.queue.remove(trashed);
+        if stayed {
+            // Nothing to advance to yet: the tail was trashed while its
+            // refill is still in flight. Park the cursor on the row before it
+            // so the batch that lands next becomes the successor — and the
+            // trashed row, still audible until then, is already unreachable.
+            self.queue_pos = trashed.checked_sub(1);
+        } else if let Some(position) = self.queue_pos.filter(|position| *position > trashed) {
+            self.queue_pos = Some(position - 1);
+        }
+        // Both orders indexed the pre-removal queue.
+        self.prefetched = None;
+        self.reset_shuffle_order();
+        // Shuffle can land before the trashed row, so the removal — not the
+        // skip — is what leaves the cursor on the tail. Re-arm the refill;
+        // an in-flight one makes this a no-op.
+        if self
+            .queue_pos
+            .is_some_and(|position| position + 1 >= self.queue.len())
+        {
+            self.fetch_fm_more(fx);
+        }
+    }
+
+    pub(super) fn apply_fm_trash_finished(
+        &mut self,
+        session: SessionStamp,
+        message: Option<String>,
+    ) {
+        if let (true, Some(message)) = (self.session.matches(session), message) {
             self.status = Some(message);
         }
     }
@@ -621,6 +717,22 @@ fn spawn_fm_more(fx: &Effects, stamp: SessionStamp, session: Session) {
             },
         };
         let _ = actions.send(action);
+    });
+}
+
+fn spawn_fm_trash(fx: &Effects, stamp: SessionStamp, session: Session, id: i64) {
+    let ncm = fx.ncm.clone();
+    let actions = fx.actions.clone();
+    tokio::spawn(async move {
+        let message = ncm
+            .fm_trash(id, Some(&session))
+            .await
+            .err()
+            .map(|error| error.to_string());
+        let _ = actions.send(Action::FmTrashFinished {
+            session: stamp,
+            message,
+        });
     });
 }
 

@@ -388,6 +388,8 @@ impl AppState {
             }
             Action::SetVolumeTo(ratio) => self.set_volume(fx, ratio.clamp(0.0, 1.0)),
             Action::ToggleLike => self.toggle_like(fx),
+            Action::StartPersonalFm => self.start_personal_fm(fx),
+            Action::TrashFmTrack => self.trash_current_fm_track(fx),
             Action::OpenSource(index) => self.open_source(fx, index),
             Action::SelectSetting(index) => self.select_setting(index),
             Action::AdjustSetting(delta) => self.adjust_setting(fx, delta),
@@ -404,6 +406,9 @@ impl AppState {
             Action::FmMore { session, rows } => self.apply_fm_more(fx, session, rows),
             Action::FmLoadFailed { session, message } => {
                 self.apply_fm_load_failed(session, message);
+            }
+            Action::FmTrashFinished { session, message } => {
+                self.apply_fm_trash_finished(session, message);
             }
             Action::SelectIndex(index) => {
                 let len = self.visible_len();
@@ -833,6 +838,14 @@ impl AppState {
             }
             CommandInvocation::Like => {
                 self.update(Action::ToggleLike, fx);
+                Ok(())
+            }
+            CommandInvocation::PersonalFm => {
+                self.update(Action::StartPersonalFm, fx);
+                Ok(())
+            }
+            CommandInvocation::FmTrash => {
+                self.update(Action::TrashFmTrack, fx);
                 Ok(())
             }
             CommandInvocation::Zen => {

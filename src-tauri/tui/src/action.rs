@@ -83,6 +83,10 @@ pub enum Action {
     ToggleLibraryFocus,
     ToggleHelp,
     ToggleLike,
+    /// Replace the queue with a fresh personal-FM batch and start playing.
+    StartPersonalFm,
+    /// "Never play again": trash the current FM track and skip on.
+    TrashFmTrack,
     SetVolumeTo(f32),
     OpenSource(usize),
     SelectSetting(usize),
@@ -203,6 +207,10 @@ pub enum Action {
     FmLoadFailed {
         session: SessionStamp,
         message: String,
+    },
+    FmTrashFinished {
+        session: SessionStamp,
+        message: Option<String>,
     },
     PrefetchReady {
         index: usize,

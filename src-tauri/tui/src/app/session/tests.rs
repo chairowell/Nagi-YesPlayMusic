@@ -648,3 +648,395 @@ async fn late_fm_page_cannot_advance_a_replaced_queue() {
     assert!(!state.pending_fm_next);
     assert!(!state.fm_request_pending);
 }
+
+/// Sign in and make the session cookie visible to the API façade, which is
+/// what `personal_request` needs before it will spawn anything.
+fn signed_in(state: &mut AppState, fx: &Effects) -> SessionStamp {
+    let attempt = state.session.begin_login();
+    let stamp = state
+        .session
+        .accept_login(attempt, 42, "listener".into())
+        .unwrap();
+    fx.ncm.commit_session(&candidate("listener")).unwrap();
+    stamp
+}
+
+#[tokio::test]
+async fn personal_fm_without_a_session_asks_for_a_sign_in_instead_of_failing() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    state.update(Action::StartPersonalFm, &fx);
+
+    assert_eq!(
+        state.status.as_deref(),
+        Some(i18n::t(Key::FmSignInRequired))
+    );
+    assert_ne!(state.queue_source, Source::Fm);
+    assert!(!state.pending_fm_next);
+    assert!(!state.fm_request_pending);
+
+    // Trashing is equally explicit rather than silent.
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1)];
+    state.queue_pos = Some(0);
+    state.current_track_id = Some(1);
+    state.update(Action::TrashFmTrack, &fx);
+
+    assert_eq!(
+        state.status.as_deref(),
+        Some(i18n::t(Key::FmSignInRequired))
+    );
+    assert_eq!(state.queue_pos, Some(0));
+}
+
+#[tokio::test]
+async fn entering_personal_fm_plays_the_head_of_its_first_batch() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let session = signed_in(&mut state, &fx);
+    state.queue = vec![row(90)];
+    state.queue_pos = Some(0);
+
+    state.update(Action::StartPersonalFm, &fx);
+
+    assert_eq!(state.queue_source, Source::Fm);
+    assert!(state.queue.is_empty(), "the old queue is dropped");
+    assert_eq!(state.queue_pos, None);
+    assert!(state.pending_fm_next);
+    assert!(state.fm_request_pending);
+    assert_eq!(state.view, View::NowPlaying);
+
+    state.update(
+        Action::FmMore {
+            session,
+            rows: vec![row(1), row(2)],
+        },
+        &fx,
+    );
+
+    assert_eq!(state.queue_pos, Some(0));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 1")
+    );
+    assert!(!state.pending_fm_next);
+}
+
+#[tokio::test]
+async fn the_next_fm_batch_is_pulled_when_the_last_queued_track_starts() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1), row(2), row(3)];
+    state.queue_pos = Some(0);
+
+    // Two tracks still queued behind this one: nothing to prefetch yet.
+    state.update(Action::NextTrack, &fx);
+    assert_eq!(state.queue_pos, Some(1));
+    assert!(!state.fm_request_pending);
+    assert!(!state.pending_fm_next);
+
+    // Starting the last one refills ahead of the gap.
+    state.update(Action::NextTrack, &fx);
+    assert_eq!(state.queue_pos, Some(2));
+    assert!(state.fm_request_pending);
+    assert!(
+        !state.pending_fm_next,
+        "the refill is a prefetch, not a queued skip"
+    );
+}
+
+#[tokio::test]
+async fn trashing_the_current_fm_track_skips_on_without_waiting_for_the_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let session = signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1), row(2), row(3)];
+    state.queue_pos = Some(1);
+    state.current_track_id = Some(2);
+
+    state.update(Action::TrashFmTrack, &fx);
+
+    assert_eq!(state.current_track_id, Some(3));
+    assert_eq!(state.status.as_deref(), Some(i18n::t(Key::FmTrashed)));
+    // The banned row is gone and the cursor followed the shift.
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    assert_eq!(state.queue_pos, Some(1));
+
+    // A failure that arrives afterwards surfaces; a success stays quiet.
+    state.update(
+        Action::FmTrashFinished {
+            session,
+            message: None,
+        },
+        &fx,
+    );
+    assert_eq!(state.status.as_deref(), Some(i18n::t(Key::FmTrashed)));
+    state.update(
+        Action::FmTrashFinished {
+            session,
+            message: Some("fm trash failed".into()),
+        },
+        &fx,
+    );
+    assert_eq!(state.status.as_deref(), Some("fm trash failed"));
+}
+
+#[tokio::test]
+async fn a_trashed_track_cannot_be_reached_again_by_stepping_back() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1), row(2), row(3)];
+    state.queue_pos = Some(1);
+    state.current_track_id = Some(2);
+
+    state.update(Action::TrashFmTrack, &fx);
+    assert_eq!(state.current_track_id, Some(3));
+
+    // "Never play again" has to survive the one gesture that would undo a skip.
+    state.update(Action::PrevTrack, &fx);
+
+    assert_eq!(state.current_track_id, Some(1));
+    assert_eq!(state.queue_pos, Some(0));
+    assert!(!state.queue.iter().any(|row| row.id == 2));
+    assert_eq!(
+        state.now.as_ref().map(|now| now.title.as_str()),
+        Some("Track 1")
+    );
+
+    // And it stays gone when playback walks forward over the gap again.
+    state.update(Action::NextTrack, &fx);
+    assert_eq!(state.current_track_id, Some(3));
+}
+
+#[tokio::test]
+async fn shuffled_trashing_rebuilds_an_order_that_cannot_reach_the_banned_row() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = (1..=5).map(row).collect();
+    state.queue_pos = Some(2);
+    state.current_track_id = Some(3);
+    state.shuffle = true;
+
+    state.update(Action::TrashFmTrack, &fx);
+
+    assert!(!state.queue.iter().any(|row| row.id == 3));
+    // The order indexed the old queue; every entry must still be addressable.
+    assert_eq!(state.shuffle_order.len(), state.queue.len());
+    assert!(state
+        .shuffle_order
+        .iter()
+        .all(|index| *index < state.queue.len()));
+    assert_eq!(
+        state
+            .queue_pos
+            .and_then(|position| state.queue.get(position)),
+        state.active_row.as_ref(),
+        "the cursor still names the row that is playing"
+    );
+
+    // Walking the whole shuffled queue never lands on the banned track.
+    for _ in 0..state.queue.len() * 2 {
+        state.update(Action::NextTrack, &fx);
+        assert_ne!(state.current_track_id, Some(3));
+    }
+}
+
+#[tokio::test]
+async fn trashing_the_queue_tail_hands_the_slot_to_the_batch_still_in_flight() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let session = signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(1);
+    state.current_track_id = Some(2);
+
+    state.update(Action::TrashFmTrack, &fx);
+
+    // Nothing left to advance to, so the refill is queued instead.
+    assert_eq!(
+        state.queue.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert_eq!(state.queue_pos, Some(0));
+    assert!(state.pending_fm_next);
+    assert!(state.fm_request_pending);
+
+    state.update(
+        Action::FmMore {
+            session,
+            rows: vec![row(8), row(9)],
+        },
+        &fx,
+    );
+
+    // The batch head takes the trashed row's slot rather than being skipped.
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(state.current_track_id, Some(8));
+    assert!(!state.pending_fm_next);
+    assert!(!state.queue.iter().any(|row| row.id == 2));
+}
+
+#[tokio::test]
+async fn trashing_the_only_queued_track_restarts_the_station_from_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let session = signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1)];
+    state.queue_pos = Some(0);
+    state.current_track_id = Some(1);
+
+    state.update(Action::TrashFmTrack, &fx);
+
+    assert!(state.queue.is_empty());
+    assert_eq!(state.queue_pos, None, "an empty queue has no cursor");
+    assert!(state.pending_fm_next);
+
+    state.update(
+        Action::FmMore {
+            session,
+            rows: vec![row(8), row(9)],
+        },
+        &fx,
+    );
+
+    assert_eq!(state.queue_pos, Some(0));
+    assert_eq!(state.current_track_id, Some(8));
+    assert!(!state.pending_fm_next);
+}
+
+#[tokio::test]
+async fn trashing_outside_fm_mode_explains_itself_and_keeps_playing() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    signed_in(&mut state, &fx);
+    state.queue_source = Source::Liked;
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(0);
+    state.current_track_id = Some(1);
+
+    state.update(Action::TrashFmTrack, &fx);
+
+    assert_eq!(state.status.as_deref(), Some(i18n::t(Key::FmOnlyInFm)));
+    assert_eq!(state.queue_pos, Some(0));
+    assert_eq!(state.current_track_id, Some(1));
+}
+
+#[tokio::test]
+async fn fm_replies_from_a_replaced_session_are_dropped_by_the_epoch_guard() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let stale = signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1)];
+    state.queue_pos = Some(0);
+    state.pending_fm_next = true;
+    state.fm_request_pending = true;
+    // Someone else signs in while the batch is still in flight.
+    let current = signed_in(&mut state, &fx);
+    assert_ne!(stale, current);
+
+    state.update(
+        Action::FmMore {
+            session: stale,
+            rows: vec![row(2)],
+        },
+        &fx,
+    );
+
+    assert_eq!(state.queue.len(), 1, "a late batch cannot extend the queue");
+    assert_eq!(state.queue_pos, Some(0));
+    assert!(state.pending_fm_next);
+    assert!(state.fm_request_pending);
+
+    state.status = None;
+    state.update(
+        Action::FmLoadFailed {
+            session: stale,
+            message: "stale failure".into(),
+        },
+        &fx,
+    );
+    state.update(
+        Action::FmTrashFinished {
+            session: stale,
+            message: Some("stale trash failure".into()),
+        },
+        &fx,
+    );
+    assert!(state.status.is_none(), "late errors stay off screen");
+    assert!(state.pending_fm_next);
+
+    // The live stamp is still accepted.
+    state.update(
+        Action::FmMore {
+            session: current,
+            rows: vec![row(3)],
+        },
+        &fx,
+    );
+    assert_eq!(state.queue_pos, Some(1));
+    assert_eq!(state.queue[1].id, 3);
+}
+
+#[tokio::test]
+async fn playing_a_library_track_leaves_fm_mode_and_its_auto_refill_behind() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let session = signed_in(&mut state, &fx);
+    state.queue_source = Source::Fm;
+    state.queue = vec![row(1)];
+    state.queue_pos = Some(0);
+    state.pending_fm_next = true;
+    state.fm_request_pending = true;
+    state.view = View::Library;
+    state.library_source = Source::Liked;
+    state.library = vec![row(9)];
+    state.selected = 0;
+
+    state.update(Action::Activate, &fx);
+
+    assert_eq!(state.queue_source, Source::Liked);
+    assert!(!state.pending_fm_next);
+    assert!(!state.fm_request_pending);
+
+    // Reaching the end of this queue must not pull another FM batch.
+    state.update(Action::NextTrack, &fx);
+    assert!(!state.pending_fm_next);
+    assert!(!state.fm_request_pending);
+
+    // Nor may the batch that was already in flight hijack playback.
+    state.update(
+        Action::FmMore {
+            session,
+            rows: vec![row(2)],
+        },
+        &fx,
+    );
+    assert_eq!(state.queue.len(), 1);
+    assert_eq!(state.queue[0].id, 9);
+    assert!(!state.pending_fm_next);
+}
