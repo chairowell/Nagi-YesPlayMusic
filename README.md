@@ -96,12 +96,15 @@ Apple Developer ID 无关。普通本地构建没有发布公钥，因此自动�
 
 ## ypm 终端版
 
-Homebrew Formula 的源文件位于本仓库 [`Formula/`](Formula/)。待
-`nagi-studio/homebrew-ypm` tap 仓库建立并同步后，可直接安装：
+macOS（Apple Silicon）和 Linux（x86_64）可通过 Homebrew 安装，
+formula 模板维护在本仓库 [`Formula/`](Formula/)，发版后同步到
+[`nagi-studio/homebrew-ypm`](https://github.com/nagi-studio/homebrew-ypm)：
 
 ```bash
 brew tap nagi-studio/ypm && brew install ypm
 ```
+
+较新版本的 Homebrew 会要求先 `brew trust nagi-studio/ypm` 信任第三方 tap。
 
 同一 Release 会提供 `ypm-macos-aarch64`、`ypm-linux-x64` 和 `ypm-windows-x64.exe`。
 macOS / Linux 下载后先赋予执行权限，再直接启动：
