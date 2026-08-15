@@ -171,6 +171,32 @@ test('published canaries advance a separate verified updater feed', () => {
       { version: '0.7.1-canary.2' }
     )
   ).toBe(true);
+  // Stables graduate the canary channel: same-triple stable outranks every
+  // canary, and the next canary line advances past the stable.
+  expect(
+    verifyCanaryUpdaterFeedAdvance(
+      { version: '0.8.0-canary.2' },
+      { version: '0.8.0' }
+    )
+  ).toBe(true);
+  expect(
+    verifyCanaryUpdaterFeedAdvance(
+      { version: '0.8.0' },
+      { version: '0.9.0-canary.1' }
+    )
+  ).toBe(true);
+  expect(() =>
+    verifyCanaryUpdaterFeedAdvance(
+      { version: '0.8.0' },
+      { version: '0.8.0-canary.9' }
+    )
+  ).toThrow('backwards');
+  expect(() =>
+    verifyCanaryUpdaterFeedAdvance(
+      { version: '0.8.0' },
+      { version: '0.8.1-rc.1' }
+    )
+  ).toThrow('Invalid updater feed version');
   expect(
     verifyCanaryUpdaterFeedAdvance(
       { version: '0.7.1-canary.2' },

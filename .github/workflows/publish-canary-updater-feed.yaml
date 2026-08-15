@@ -9,11 +9,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Stable releases advance this feed too: canary installs read only this
+  # channel, so a stable that supersedes their prerelease line must appear
+  # here or they strand until the next canary.
   publish-canary-feed:
     if: >-
-      github.event.release.prerelease &&
       startsWith(github.event.release.tag_name, 'v') &&
-      contains(github.event.release.tag_name, '-canary.')
+      ((github.event.release.prerelease &&
+        contains(github.event.release.tag_name, '-canary.')) ||
+       (!github.event.release.prerelease &&
+        !contains(github.event.release.tag_name, '-')))
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,12 +1,17 @@
 import { readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 
+// The canary feed also carries stable releases, so canary installs graduate
+// to the stable that supersedes their prerelease line instead of stranding
+// until the next canary. A stable outranks every canary of the same triple.
 function parseCanaryVersion(version) {
   const match = version.match(
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-canary\.(0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-canary\.(0|[1-9]\d*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
   );
-  if (!match) throw new Error(`Invalid canary updater version: ${version}`);
-  return match.slice(1, 5).map(BigInt);
+  if (!match) throw new Error(`Invalid updater feed version: ${version}`);
+  const [major, minor, patch, canary] = match.slice(1, 5);
+  const stable = canary === undefined;
+  return [major, minor, patch, stable ? '1' : '0', canary ?? '0'].map(BigInt);
 }
 
 export function compareCanaryUpdaterVersions(left, right) {
