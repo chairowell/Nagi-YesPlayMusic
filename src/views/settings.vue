@@ -210,16 +210,35 @@
           <div class="title"> {{ $t('settings.cacheLimit.text') }} </div>
         </div>
         <div class="right">
-          <select v-model="cacheLimit">
-            <option :value="null">
-              {{ $t('settings.cacheLimit.none') }}
+          <select v-model="cacheLimitSelection">
+            <option
+              v-for="preset in cacheLimitPresets"
+              :key="preset"
+              :value="preset"
+            >
+              {{ preset / 1024 }}GB
             </option>
-            <option :value="512"> 500MB </option>
-            <option :value="1024"> 1GB </option>
-            <option :value="2048"> 2GB </option>
-            <option :value="4096"> 4GB </option>
-            <option :value="8192"> 8GB </option>
+            <option value="custom">
+              {{ $t('settings.cacheLimit.custom') }}
+            </option>
           </select>
+          <template v-if="cacheLimitSelection === 'custom'">
+            <input
+              v-model.number="cacheLimitCustomGb"
+              class="cache-limit-input"
+              type="number"
+              min="1"
+              @input="cacheLimitConfirmPending = false"
+            />
+            <span>GB</span>
+            <button @click="applyCustomCacheLimit">
+              {{
+                cacheLimitConfirmPending
+                  ? $t('settings.cacheLimit.confirmLarge')
+                  : $t('settings.cacheLimit.apply')
+              }}
+            </button>
+          </template>
         </div>
       </div>
       <div v-if="isDesktop" class="item">
@@ -899,7 +918,14 @@ import {
   countDBSize,
   trimTrackSourceCache,
 } from '@/utils/db';
-import { normalizeCacheLimit } from '@/utils/cachePolicy';
+import {
+  CACHE_LIMIT_CONFIRM_MB,
+  normalizeCacheLimit,
+} from '@/utils/cachePolicy';
+
+const CACHE_LIMIT_PRESETS_MB = [
+  1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072,
+];
 import { stopInterval } from '@/utils/mediaLifecycle';
 import {
   isLinux as platformIsLinux,
@@ -997,6 +1023,9 @@ export default defineComponent({
       updaterNotes: '',
       updaterProgress: null as number | null,
       sharedCacheTerminalDetected: false,
+      cacheLimitCustomSelected: false,
+      cacheLimitCustomGb: 8,
+      cacheLimitConfirmPending: false,
       sharedCacheMigrationState: 'idle' as SharedCacheMigrationState,
       sharedCacheMigrationProgress: {
         completed: 0,
@@ -1456,12 +1485,35 @@ export default defineComponent({
       get() {
         return normalizeCacheLimit(this.settings.cacheLimit);
       },
-      set(value: number | null) {
+      set(value: number) {
         this.updateSettings({
           key: 'cacheLimit',
           value: normalizeCacheLimit(value),
         });
         trimTrackSourceCache().then(() => this.countDBSize());
+      },
+    },
+    cacheLimitPresets() {
+      return CACHE_LIMIT_PRESETS_MB;
+    },
+    cacheLimitSelection: {
+      get(): number | 'custom' {
+        if (this.cacheLimitCustomSelected) return 'custom';
+        const limit = normalizeCacheLimit(this.settings.cacheLimit);
+        return CACHE_LIMIT_PRESETS_MB.includes(limit) ? limit : 'custom';
+      },
+      set(value: number | 'custom') {
+        this.cacheLimitConfirmPending = false;
+        if (value === 'custom') {
+          this.cacheLimitCustomSelected = true;
+          this.cacheLimitCustomGb = Math.max(
+            1,
+            Math.round(normalizeCacheLimit(this.settings.cacheLimit) / 1024)
+          );
+          return;
+        }
+        this.cacheLimitCustomSelected = false;
+        this.cacheLimit = value;
       },
     },
     proxyProtocol: {
@@ -1704,9 +1756,24 @@ export default defineComponent({
         this.countDBSize();
       });
     },
+    applyCustomCacheLimit() {
+      const gigabytes = Math.floor(this.cacheLimitCustomGb);
+      if (!Number.isFinite(gigabytes) || gigabytes < 1) return;
+      const megabytes = gigabytes * 1024;
+      // Oversized limits need a second click on the "are you sure?" button.
+      if (megabytes > CACHE_LIMIT_CONFIRM_MB && !this.cacheLimitConfirmPending) {
+        this.cacheLimitConfirmPending = true;
+        return;
+      }
+      this.cacheLimitConfirmPending = false;
+      this.cacheLimit = megabytes;
+    },
     async refreshSharedCacheStatus() {
       try {
-        await syncSharedCacheSetting(this.settings.shareCacheWithYpm);
+        await syncSharedCacheSetting(
+          this.settings.shareCacheWithYpm,
+          normalizeCacheLimit(this.settings.cacheLimit)
+        );
         const status = await getSharedCacheStatus();
         this.sharedCacheTerminalDetected = status.terminalCacheDetected;
         if (
@@ -1722,7 +1789,10 @@ export default defineComponent({
     async changeSharedCacheSetting(value: boolean) {
       if (this.sharedCacheMigrationState === 'running') return;
       try {
-        await syncSharedCacheSetting(value);
+        await syncSharedCacheSetting(
+          value,
+          normalizeCacheLimit(this.settings.cacheLimit)
+        );
         this.updateSettings({ key: 'shareCacheWithYpm', value });
         if (!value) {
           this.sharedCacheMigrationState = 'idle';
@@ -1742,7 +1812,6 @@ export default defineComponent({
       try {
         this.sharedCacheMigrationProgress =
           await migrateIndexedDbTracksToSharedCache({
-            quality: this.settings.musicQuality,
             onProgress: progress => {
               this.sharedCacheMigrationProgress = progress;
             },

@@ -146,7 +146,9 @@ export default {
     },
     cacheLimit: {
       text: 'Songs Cache limit',
-      none: 'Unlimited',
+      custom: 'Custom…',
+      apply: 'Apply',
+      confirmLarge: 'Over 128GB — are you sure?',
     },
     lyricFontSize: {
       text: 'Lyric Font Size',

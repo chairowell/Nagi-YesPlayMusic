@@ -136,10 +136,15 @@ impl TrackCache {
         migrate(&mut conn)?;
         drop(initialization_lock);
 
-        let cache = Self { root, conn };
-        cache.reconcile()?;
-        cache.evict_to_cap()?;
-        Ok(cache)
+        Ok(Self { root, conn })
+    }
+
+    /// Sweep orphans and enforce the size cap. O(entries) with a full
+    /// directory scan, so callers run it once per process (or after a
+    /// policy change), not per operation — writes already evict on commit.
+    pub fn maintain(&self) -> Result<(), CacheError> {
+        self.reconcile()?;
+        self.evict_to_cap()
     }
 
     pub fn begin_write(&self, request: CacheWriteRequest) -> Result<CacheWriter<'_>, CacheError> {

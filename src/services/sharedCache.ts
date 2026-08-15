@@ -98,6 +98,20 @@ export function normalizeSharedCacheQuality(
   return SUPPORTED_QUALITIES.has(normalized) ? normalized : 320000;
 }
 
+/**
+ * Maps a record's measured bitrate to the canonical shared-cache tier. Returns
+ * null when the bitrate is unknown so callers skip instead of guessing a tier
+ * and clobbering a better entry under the wrong key.
+ */
+export function sharedCacheQualityFromBitrate(bitRate: number): number | null {
+  if (!Number.isFinite(bitRate) || bitRate <= 0) return null;
+  if (bitRate <= 128000) return 128000;
+  if (bitRate <= 192000) return 192000;
+  if (bitRate <= 320000) return 320000;
+  // Anything above 320k came from a lossless download.
+  return 350000;
+}
+
 export async function getSharedCacheStatus(
   fetcher: Fetcher = fetch
 ): Promise<SharedCacheStatus> {
@@ -119,23 +133,29 @@ export async function getSharedCacheStatus(
 
 async function configureSharedCache(
   enabled: boolean,
+  cacheLimitMib: number | null,
   fetcher: Fetcher
 ): Promise<void> {
+  const body: { enabled: boolean; cacheLimitMib?: number } = { enabled };
+  if (enabled && cacheLimitMib !== null) {
+    body.cacheLimitMib = cacheLimitMib;
+  }
   const response = await fetcher('/api/native/shared-cache/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) throw responseError(response, 'shared cache configuration');
 }
 
 export function syncSharedCacheSetting(
   enabled: boolean,
+  cacheLimitMib: number | null = null,
   fetcher: Fetcher = fetch
 ): Promise<void> {
   const sync = settingsQueue.then(async () => {
     try {
-      await configureSharedCache(enabled, fetcher);
+      await configureSharedCache(enabled, cacheLimitMib, fetcher);
       sharedCacheHealthy = true;
     } catch (error) {
       sharedCacheHealthy = false;
@@ -251,7 +271,7 @@ export async function deleteSharedCachedAudio(
 
 async function importSharedCacheRecord(
   record: SharedCacheImport,
-  quality: SettingsState['musicQuality'],
+  qualityTier: number,
   format: unknown,
   fetcher: Fetcher
 ): Promise<boolean> {
@@ -269,7 +289,7 @@ async function importSharedCacheRecord(
 
   const metadata = {
     trackId: record.id,
-    quality: normalizeSharedCacheQuality(quality),
+    quality: qualityTier,
     codec,
     actualBitrate: Math.round(record.bitRate),
     name: record.name || 'Unknown',
@@ -308,22 +328,24 @@ export async function importTrackIntoSharedCache(
       name: track.name ?? 'Unknown',
       artist: trackArtist(track),
     },
-    quality,
+    normalizeSharedCacheQuality(quality),
     format,
     fetcher
   );
 }
 
 export async function migrateIndexedDbTracksToSharedCache({
-  quality,
   onProgress,
   fetcher = fetch,
   storage = localStorage,
+  listIds = listTrackSourceMigrationIds,
+  readRecord = readTrackSourceForMigration,
 }: {
-  quality: SettingsState['musicQuality'];
   onProgress: (progress: SharedCacheMigrationProgress) => void;
   fetcher?: Fetcher;
   storage?: StorageLike;
+  listIds?: () => Promise<number[]>;
+  readRecord?: (id: number) => Promise<TrackSourceRecord | undefined>;
 }): Promise<SharedCacheMigrationProgress> {
   if (storage.getItem(MIGRATION_MARKER) === 'complete') {
     const completed = { completed: 0, total: 0, imported: 0, skipped: 0 };
@@ -331,7 +353,7 @@ export async function migrateIndexedDbTracksToSharedCache({
     return completed;
   }
 
-  const ids = await listTrackSourceMigrationIds();
+  const ids = await listIds();
   const progress: SharedCacheMigrationProgress = {
     completed: 0,
     total: ids.length,
@@ -340,14 +362,21 @@ export async function migrateIndexedDbTracksToSharedCache({
   };
   onProgress({ ...progress });
   for (const id of ids) {
-    const record: TrackSourceRecord | undefined =
-      await readTrackSourceForMigration(id);
-    const imported =
+    const record: TrackSourceRecord | undefined = await readRecord(id);
+    // The tier must come from the record's own bitrate: keying an old 128k
+    // blob under the current musicQuality setting used to overwrite the
+    // terminal edition's lossless entry for the same track (ON CONFLICT
+    // DO UPDATE on the sidecar side).
+    const qualityTier =
       record === undefined
+        ? null
+        : sharedCacheQualityFromBitrate(record.bitRate);
+    const imported =
+      record === undefined || qualityTier === null
         ? false
         : await importSharedCacheRecord(
             record,
-            quality,
+            qualityTier,
             sniffAudioFormat(record.source),
             fetcher
           );

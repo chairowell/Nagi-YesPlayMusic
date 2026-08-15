@@ -150,7 +150,9 @@ export default {
     },
     cacheLimit: {
       text: '歌曲快取上限',
-      none: '無上限',
+      custom: '自訂…',
+      apply: '套用',
+      confirmLarge: '超過 128GB，確定嗎？',
     },
     lyricFontSize: {
       text: '歌詞字體大小',

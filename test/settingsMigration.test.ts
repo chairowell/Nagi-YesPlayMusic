@@ -49,7 +49,7 @@ describe('设置版本迁移', () => {
       },
     ]);
     expect(settings.shortcuts.every(Boolean)).toBe(true);
-    expect(settings.cacheLimit).toBeNull();
+    expect(settings.cacheLimit).toBe(8192);
   });
 
   test('快捷键数量相同但 ID 不同也会补齐缺失项', () => {

@@ -21,7 +21,7 @@ describe('Electron → Tauri 设置迁移', () => {
     expect(migrated).toBe(true);
     expect(JSON.parse(requireStoredItem(storage, 'settings'))).toMatchObject({
       lang: 'zh-CN',
-      cacheLimit: null,
+      cacheLimit: 8192,
       enableGlobalShortcut: true,
     });
     expect(storage.getItem('data')).toBeNull();

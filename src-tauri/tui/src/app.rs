@@ -217,6 +217,11 @@ fn initialize_audio_cache(config: &Config) -> Option<std::path::PathBuf> {
             return None;
         }
     };
+    // Startup maintenance: per-operation opens stay cheap, this one sweep
+    // handles crash leftovers and the size cap.
+    if let Err(error) = cache.maintain() {
+        tracing::warn!(%error, "audio cache maintenance failed");
+    }
     if let Some(limit_mib) = config.cache_limit_mib {
         let Some(max_bytes) = limit_mib.checked_mul(1024 * 1024) else {
             tracing::warn!("audio cache limit is too large");

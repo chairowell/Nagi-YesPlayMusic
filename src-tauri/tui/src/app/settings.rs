@@ -24,6 +24,7 @@ pub(crate) enum SettingField {
     PixelDetail,
     QueueBehavior,
     Icons,
+    CacheLimit,
     TitleAccent,
     SpectrumEnabled,
     SpectrumStyle,
@@ -32,7 +33,7 @@ pub(crate) enum SettingField {
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::Theme,
         Self::ThemeMode,
         Self::Language,
@@ -45,6 +46,7 @@ impl SettingField {
         Self::PixelDetail,
         Self::QueueBehavior,
         Self::Icons,
+        Self::CacheLimit,
         Self::TitleAccent,
         Self::SpectrumEnabled,
         Self::SpectrumStyle,
@@ -66,6 +68,7 @@ impl SettingField {
             Self::PixelDetail => Key::SettingPixelDetail,
             Self::QueueBehavior => Key::SettingQueueBehavior,
             Self::Icons => Key::SettingIcons,
+            Self::CacheLimit => Key::SettingCacheLimit,
             Self::TitleAccent => Key::SettingTitleAccent,
             Self::SpectrumEnabled => Key::SettingSpectrumEnabled,
             Self::SpectrumStyle => Key::SettingSpectrumStyle,
@@ -237,6 +240,13 @@ impl AppState {
                 const VALUES: &[f32] = &[0.5, 1.0, 1.5, 2.0, 3.0, 4.0];
                 self.config.pixel_scale = cycle_f32(VALUES, self.config.pixel_scale, delta);
             }
+            SettingField::CacheLimit => {
+                // Presets stop at 128G; larger custom values live in the
+                // config file only.
+                const VALUES: &[u64] = &[1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
+                let current = self.config.cache_limit_mib.unwrap_or(8192);
+                self.config.cache_limit_mib = Some(cycle(VALUES, &current, delta));
+            }
             SettingField::TitleAccent => {
                 self.config.title_accent = !self.config.title_accent;
             }
@@ -355,6 +365,10 @@ impl AppState {
             }
             .to_owned(),
             SettingField::PixelDetail => format!("{:.1}×", self.config.pixel_scale),
+            SettingField::CacheLimit => match self.config.cache_limit_mib {
+                Some(limit_mib) => format!("{}G", limit_mib.div_ceil(1024)),
+                None => format!("8G ({})", i18n::t(Key::SettingDefaultTag)),
+            },
             SettingField::TitleAccent => self.on_off(self.config.title_accent),
             SettingField::SpectrumEnabled => self.on_off(self.config.spectrum_enabled),
             SettingField::SpectrumStyle => {
@@ -470,6 +484,23 @@ impl AppState {
         if before.quality != self.config.quality {
             fx.ncm.set_quality(self.config.quality);
             self.prefetched = None;
+        }
+        if before.cache_limit_mib != self.config.cache_limit_mib {
+            if let (Some(root), Some(limit_mib)) =
+                (fx.cache_root.clone(), self.config.cache_limit_mib)
+            {
+                // Eviction scans the store; keep it off the UI thread.
+                std::thread::spawn(move || {
+                    let updated = yesplaymusic_core::cache::TrackCache::open(root)
+                        .and_then(|cache| match limit_mib.checked_mul(1024 * 1024) {
+                            Some(max_bytes) => cache.set_max_bytes(max_bytes),
+                            None => Ok(()),
+                        });
+                    if let Err(error) = updated {
+                        tracing::warn!(%error, "cache limit update failed");
+                    }
+                });
+            }
         }
 
         if theme_changed {

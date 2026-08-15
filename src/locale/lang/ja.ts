@@ -146,7 +146,9 @@ export default {
     },
     cacheLimit: {
       text: '曲キャッシュの上限',
-      none: '無制限',
+      custom: 'カスタム…',
+      apply: '適用',
+      confirmLarge: '128GB超です。よろしいですか？',
     },
     lyricFontSize: {
       text: '歌詞の文字サイズ',

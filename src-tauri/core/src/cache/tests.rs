@@ -310,7 +310,7 @@ fn concurrent_commit_and_eviction_leave_the_cache_within_policy() {
 }
 
 #[test]
-fn reopen_reconciles_staging_and_published_files_left_by_process_crashes() {
+fn maintain_reconciles_staging_and_published_files_left_by_process_crashes() {
     if let Some(mode) = std::env::var_os(CHILD_MODE) {
         run_crashing_child(&mode.to_string_lossy());
     }
@@ -321,7 +321,7 @@ fn reopen_reconciles_staging_and_published_files_left_by_process_crashes() {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .arg("--exact")
-            .arg("cache::tests::reopen_reconciles_staging_and_published_files_left_by_process_crashes")
+            .arg("cache::tests::maintain_reconciles_staging_and_published_files_left_by_process_crashes")
             .arg("--nocapture")
             .env(CHILD_MODE, mode)
             .env(CHILD_ROOT, &root)
@@ -335,6 +335,7 @@ fn reopen_reconciles_staging_and_published_files_left_by_process_crashes() {
         let before_reopen = file_count(&root.join("tracks")) + file_count(&root.join("staging"));
         assert_eq!(before_reopen, 1);
         let cache = TrackCache::open(&root).unwrap();
+        cache.maintain().unwrap();
         assert!(cache
             .lookup(CacheKey::new(808, AudioQuality::High320))
             .unwrap()

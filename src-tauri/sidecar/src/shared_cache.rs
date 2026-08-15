@@ -73,8 +73,11 @@ struct SharedCacheStatus {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SharedCacheSettings {
     enabled: bool,
+    /// Size cap in MiB, stored in the shared index so the TUI honors it too.
+    cache_limit_mib: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -133,10 +136,29 @@ async fn settings_handler(
     State(state): State<SharedCacheState>,
     Json(settings): Json<SharedCacheSettings>,
 ) -> Response<Body> {
-    if settings.enabled && !state.is_enabled() {
+    if settings.enabled {
         let root = state.cache_root.as_ref().clone();
-        match tokio::task::spawn_blocking(move || TrackCache::open(root)).await {
-            Ok(Ok(_)) => {}
+        let run_maintenance = !state.is_enabled();
+        let limit_mib = settings.cache_limit_mib;
+        let opened = tokio::task::spawn_blocking(move || {
+            let cache = TrackCache::open(root)?;
+            if let Some(limit_mib) = limit_mib {
+                match limit_mib.checked_mul(1024 * 1024) {
+                    Some(max_bytes) => cache.set_max_bytes(max_bytes)?,
+                    None => tracing::warn!("shared audio cache limit is too large"),
+                }
+            }
+            // One sweep per enable, not per request: reconcile is O(entries)
+            // and used to run on every open, stalling playback for users
+            // with a large terminal-side cache.
+            if run_maintenance {
+                cache.maintain()?;
+            }
+            Ok::<_, yesplaymusic_core::cache::CacheError>(())
+        })
+        .await;
+        match opened {
+            Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 tracing::warn!(%error, "shared audio cache initialization failed");
                 return json_error(
