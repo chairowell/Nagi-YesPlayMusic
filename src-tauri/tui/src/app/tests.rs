@@ -2497,7 +2497,7 @@ async fn spectrum_command_reports_a_persistence_failure_as_an_error() {
 // response channel and the event loop exited the whole app on the next poll.
 #[test]
 fn promoting_a_pending_cover_keeps_the_main_resize_channel_open() {
-    let picker = ratatui_image::picker::Picker::from_fontsize((8, 16).into());
+    let picker = ratatui_image::picker::Picker::halfblocks();
     let (main_tx, mut main_rx) = tokio::sync::mpsc::unbounded_channel();
     let (pending_tx, _pending_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut cover = OriginalCover::buffered(picker, main_tx, pending_tx);

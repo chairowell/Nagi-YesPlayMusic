@@ -491,10 +491,12 @@ impl AppState {
             {
                 // Eviction scans the store; keep it off the UI thread.
                 std::thread::spawn(move || {
-                    let updated = yesplaymusic_core::cache::TrackCache::open(root)
-                        .and_then(|cache| match limit_mib.checked_mul(1024 * 1024) {
-                            Some(max_bytes) => cache.set_max_bytes(max_bytes),
-                            None => Ok(()),
+                    let updated =
+                        yesplaymusic_core::cache::TrackCache::open(root).and_then(|cache| {
+                            match limit_mib.checked_mul(1024 * 1024) {
+                                Some(max_bytes) => cache.set_max_bytes(max_bytes),
+                                None => Ok(()),
+                            }
                         });
                     if let Err(error) = updated {
                         tracing::warn!(%error, "cache limit update failed");

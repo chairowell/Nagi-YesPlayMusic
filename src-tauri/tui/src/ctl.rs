@@ -131,7 +131,10 @@ fn report_status(target: Target, snapshot: &Snapshot, json: bool) {
             clock(duration),
             target.label()
         ),
-        None => println!("{mark} {title} — {artist} [{position}]（{}）", target.label()),
+        None => println!(
+            "{mark} {title} — {artist} [{position}]（{}）",
+            target.label()
+        ),
     }
 }
 
@@ -177,9 +180,7 @@ async fn status_gui() -> Result<Snapshot> {
 /// tracks use `ar`/`al`/`dt`.
 fn snapshot_from_gui(player: &Value) -> Snapshot {
     let track = player.get("currentTrack").and_then(Value::as_object);
-    let field = |names: [&str; 2]| {
-        track.and_then(|t| names.iter().find_map(|name| t.get(*name)))
-    };
+    let field = |names: [&str; 2]| track.and_then(|t| names.iter().find_map(|name| t.get(*name)));
     let artist = field(["ar", "artists"])
         .and_then(Value::as_array)
         .map(|list| {
@@ -190,7 +191,10 @@ fn snapshot_from_gui(player: &Value) -> Snapshot {
         })
         .filter(|joined| !joined.is_empty());
     Snapshot {
-        playing: player.get("playing").and_then(Value::as_bool).unwrap_or(false),
+        playing: player
+            .get("playing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         title: track
             .and_then(|t| t.get("name"))
             .and_then(Value::as_str)
@@ -200,8 +204,11 @@ fn snapshot_from_gui(player: &Value) -> Snapshot {
             .and_then(|album| album.get("name"))
             .and_then(Value::as_str)
             .map(str::to_owned),
-        position_ms: (player.get("progress").and_then(Value::as_f64).unwrap_or(0.0) * 1000.0)
-            as u64,
+        position_ms: (player
+            .get("progress")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+            * 1000.0) as u64,
         duration_ms: field(["dt", "duration"]).and_then(Value::as_u64),
     }
 }
@@ -240,7 +247,10 @@ mod tests {
 
     #[test]
     fn resolve_prefers_the_playing_instance() {
-        let playing = Some(Snapshot { playing: true, ..Snapshot::default() });
+        let playing = Some(Snapshot {
+            playing: true,
+            ..Snapshot::default()
+        });
         let idle = Some(Snapshot::default());
         assert_eq!(resolve(None, &idle, &playing).unwrap(), Target::Tui);
         assert_eq!(resolve(None, &playing, &idle).unwrap(), Target::Gui);

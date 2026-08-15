@@ -5,6 +5,7 @@ mod api;
 mod app;
 mod config;
 mod cover_cache;
+#[cfg(unix)]
 mod ctl;
 mod event;
 mod i18n;
@@ -13,6 +14,7 @@ mod lyrics;
 mod nerd_font;
 pub mod pixel;
 mod player;
+#[cfg(unix)]
 mod remote;
 mod spectrum;
 mod store;
@@ -61,6 +63,7 @@ enum Ctl {
     Prev,
 }
 
+#[cfg(unix)]
 impl From<Ctl> for remote::Command {
     fn from(command: Ctl) -> Self {
         match command {
@@ -77,15 +80,23 @@ impl From<Ctl> for remote::Command {
 fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(command) = args.command {
-        let forced = if args.gui {
-            Some(ctl::Target::Gui)
-        } else if args.tui {
-            Some(ctl::Target::Tui)
-        } else {
-            None
-        };
-        let runtime = tokio::runtime::Runtime::new()?;
-        return runtime.block_on(ctl::run(command.into(), forced, args.json));
+        #[cfg(unix)]
+        {
+            let forced = if args.gui {
+                Some(ctl::Target::Gui)
+            } else if args.tui {
+                Some(ctl::Target::Tui)
+            } else {
+                None
+            };
+            let runtime = tokio::runtime::Runtime::new()?;
+            return runtime.block_on(ctl::run(command.into(), forced, args.json));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = command;
+            anyhow::bail!("远程控制命令暂不支持此平台");
+        }
     }
     let _log_guard = init_logging(args.debug)?;
 

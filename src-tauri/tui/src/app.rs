@@ -30,11 +30,12 @@ use crate::action::{Action, CoverRenderRequest, CoverSurface, View};
 use crate::api::{self, Ncm, SongRow, Source};
 use crate::config::{self, Config, CoverMode, LoadedConfig};
 use crate::cover_cache::{CoverCache, PixelKeyInputs};
-use crate::remote;
 use crate::event;
 use crate::i18n::{self, Key};
 use crate::pixel::{self, PixelCover};
 use crate::player::{self, PlayerCommand, PlayerEvent, PlayerHandle};
+#[cfg(unix)]
+use crate::remote;
 use crate::spectrum::SpectrumView;
 use crate::theme::Theme;
 use crate::ui;
@@ -861,6 +862,7 @@ impl AppState {
         }
     }
 
+    #[cfg(unix)]
     fn remote_snapshot(&self) -> remote::Snapshot {
         remote::Snapshot {
             playing: self.now.is_some() && !self.paused,
@@ -2243,10 +2245,17 @@ async fn event_loop(
         covers: initialize_cover_cache(),
         config_path: config::config_dir().join("config.toml"),
     };
-    let (remote_publish, remote_snapshots) = tokio::sync::watch::channel(remote::Snapshot::default());
+    #[cfg(unix)]
+    let (remote_publish, remote_snapshots) =
+        tokio::sync::watch::channel(remote::Snapshot::default());
+    #[cfg(unix)]
     match remote::bind(&remote::socket_path()) {
         Ok(Some(listener)) => {
-            tokio::spawn(remote::serve(listener, fx.actions.clone(), remote_snapshots));
+            tokio::spawn(remote::serve(
+                listener,
+                fx.actions.clone(),
+                remote_snapshots,
+            ));
         }
         // Another live TUI owns the socket; it keeps remote control.
         Ok(None) => {}
@@ -2332,15 +2341,18 @@ async fn event_loop(
         if state.should_quit {
             break;
         }
-        let snapshot = state.remote_snapshot();
-        remote_publish.send_if_modified(|current| {
-            if *current == snapshot {
-                false
-            } else {
-                *current = snapshot;
-                true
-            }
-        });
+        #[cfg(unix)]
+        {
+            let snapshot = state.remote_snapshot();
+            remote_publish.send_if_modified(|current| {
+                if *current == snapshot {
+                    false
+                } else {
+                    *current = snapshot;
+                    true
+                }
+            });
+        }
         terminal.draw(|frame| ui::draw(frame, &mut state, &mut hits))?;
     }
     if let Err(error) = fx.store.save_playback(&state.playback_snapshot()) {
