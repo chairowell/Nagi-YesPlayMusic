@@ -242,6 +242,14 @@ impl AppState {
                 };
                 fx.player.send(PlayerCommand::SeekTo(target));
             }
+            Action::SeekToRatio(ratio) => {
+                if let Some(duration) = self.duration {
+                    let target = duration.mul_f64(ratio.clamp(0.0, 1.0));
+                    fx.player.send(PlayerCommand::SeekTo(target));
+                    // Show the jump immediately; the player event confirms it.
+                    self.position = target;
+                }
+            }
             Action::VolumeBy(delta) => self.set_volume(fx, self.volume + delta),
             Action::ToggleMute => self.toggle_mute(fx),
             Action::MoveSelection(delta) => {
@@ -881,6 +889,19 @@ impl AppState {
             CommandInvocation::Goto(view) => {
                 self.zen = false;
                 self.update(Action::SwitchView(view), fx);
+                Ok(())
+            }
+            CommandInvocation::GotoRow(index) => {
+                if index >= self.visible_len() {
+                    Err(crate::i18n::t(Key::CommandRowOutOfRange).to_owned())
+                } else {
+                    self.update(Action::SelectIndex(index), fx);
+                    Ok(())
+                }
+            }
+            CommandInvocation::Settings => {
+                self.zen = false;
+                self.update(Action::SwitchView(View::Settings), fx);
                 Ok(())
             }
             CommandInvocation::Quit => {

@@ -150,6 +150,7 @@ pub struct Hits {
     pub play: Vec<(Rect, ())>,
     pub playback_mode: Vec<(Rect, ())>,
     pub volume: Vec<(Rect, ())>,
+    pub progress: Vec<(Rect, ())>,
     /// Quit-confirm buttons: true = 确定退出, false = 点错了.
     pub confirm: Vec<(Rect, bool)>,
     pub settings_rows: Vec<(Rect, usize)>,

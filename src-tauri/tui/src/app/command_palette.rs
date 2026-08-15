@@ -20,6 +20,7 @@ enum CommandKind {
     Quality,
     Mouse,
     Goto,
+    Settings,
     PersonalFm,
     FmTrash,
     Quit,
@@ -132,9 +133,15 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         kind: CommandKind::Goto,
-        usage: "goto <view>",
+        usage: "goto <view|N>",
         alias: Key::CommandGoto,
-        keywords: &["goto", "go", "前往", "转到", "视图"],
+        keywords: &["goto", "go", "前往", "转到", "视图", "跳转"],
+    },
+    CommandSpec {
+        kind: CommandKind::Settings,
+        usage: "settings",
+        alias: Key::CommandSettings,
+        keywords: &["settings", "config", "preferences", "设置", "偏好", "配置"],
     },
     CommandSpec {
         kind: CommandKind::Quit,
@@ -163,6 +170,8 @@ pub(crate) enum CommandInvocation {
     Quality(AudioQuality),
     Mouse,
     Goto(View),
+    GotoRow(usize),
+    Settings,
     Quit,
 }
 
@@ -186,6 +195,8 @@ impl CommandInvocation {
             Self::Quality(_) => "quality",
             Self::Mouse => "mouse",
             Self::Goto(_) => "goto",
+            Self::GotoRow(_) => "goto",
+            Self::Settings => "settings",
             Self::Quit => "quit",
         }
     }
@@ -432,14 +443,27 @@ fn invocation_for(
             Ok(CommandInvocation::Quality(quality))
         }
         CommandKind::Goto => {
-            let value = one_argument(spec, arguments, "<view>")?;
+            let value = one_argument(spec, arguments, "<view|N>")?;
+            // A bare number jumps to that row in the current list (1-based),
+            // because the digit keys themselves are taken by view switching.
+            if let Ok(row) = value.parse::<usize>() {
+                if row == 0 {
+                    return Err(CommandError::InvalidArgument {
+                        command: spec.usage,
+                        value: value.to_owned(),
+                        expected: "row numbers start at 1",
+                    });
+                }
+                return Ok(CommandInvocation::GotoRow(row - 1));
+            }
             let view = parse_view(value).ok_or_else(|| CommandError::InvalidArgument {
                 command: spec.usage,
                 value: value.to_owned(),
-                expected: "playing, library, search, queue, login, or settings",
+                expected: "playing, library, search, queue, login, settings, or a row number",
             })?;
             Ok(CommandInvocation::Goto(view))
         }
+        CommandKind::Settings => no_arguments(spec, arguments, CommandInvocation::Settings),
     }
 }
 
@@ -623,6 +647,18 @@ mod tests {
         assert_eq!(
             palette("前往 曲库").invocation(),
             Ok(CommandInvocation::Goto(View::Library))
+        );
+        assert_eq!(
+            palette("goto 12").invocation(),
+            Ok(CommandInvocation::GotoRow(11))
+        );
+        assert!(matches!(
+            palette("goto 0").invocation(),
+            Err(CommandError::InvalidArgument { .. })
+        ));
+        assert_eq!(
+            palette("config").invocation(),
+            Ok(CommandInvocation::Settings)
         );
         assert!(matches!(
             palette("theme unknown").invocation(),

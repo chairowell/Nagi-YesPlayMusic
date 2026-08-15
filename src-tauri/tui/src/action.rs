@@ -66,6 +66,8 @@ pub enum Action {
     NextTrack,
     PrevTrack,
     SeekBy(i64),
+    /// Seek to a fraction of the track, from the progress-bar mouse hit.
+    SeekToRatio(f64),
     VolumeBy(f32),
     ToggleMute,
     MoveSelection(i32),

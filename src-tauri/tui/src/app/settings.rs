@@ -24,6 +24,7 @@ pub(crate) enum SettingField {
     PixelDetail,
     QueueBehavior,
     Icons,
+    TitleAccent,
     SpectrumEnabled,
     SpectrumStyle,
     SpectrumGlow,
@@ -31,7 +32,7 @@ pub(crate) enum SettingField {
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 17] = [
         Self::Theme,
         Self::ThemeMode,
         Self::Language,
@@ -44,6 +45,7 @@ impl SettingField {
         Self::PixelDetail,
         Self::QueueBehavior,
         Self::Icons,
+        Self::TitleAccent,
         Self::SpectrumEnabled,
         Self::SpectrumStyle,
         Self::SpectrumGlow,
@@ -64,6 +66,7 @@ impl SettingField {
             Self::PixelDetail => Key::SettingPixelDetail,
             Self::QueueBehavior => Key::SettingQueueBehavior,
             Self::Icons => Key::SettingIcons,
+            Self::TitleAccent => Key::SettingTitleAccent,
             Self::SpectrumEnabled => Key::SettingSpectrumEnabled,
             Self::SpectrumStyle => Key::SettingSpectrumStyle,
             Self::SpectrumGlow => Key::SettingSpectrumGlow,
@@ -234,6 +237,9 @@ impl AppState {
                 const VALUES: &[f32] = &[0.5, 1.0, 1.5, 2.0, 3.0, 4.0];
                 self.config.pixel_scale = cycle_f32(VALUES, self.config.pixel_scale, delta);
             }
+            SettingField::TitleAccent => {
+                self.config.title_accent = !self.config.title_accent;
+            }
             SettingField::SpectrumEnabled => {
                 self.config.spectrum_enabled = !self.config.spectrum_enabled;
             }
@@ -349,6 +355,7 @@ impl AppState {
             }
             .to_owned(),
             SettingField::PixelDetail => format!("{:.1}×", self.config.pixel_scale),
+            SettingField::TitleAccent => self.on_off(self.config.title_accent),
             SettingField::SpectrumEnabled => self.on_off(self.config.spectrum_enabled),
             SettingField::SpectrumStyle => {
                 i18n::t_spectrum_style(self.config.spectrum_style).to_owned()

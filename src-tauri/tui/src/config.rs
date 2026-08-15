@@ -80,6 +80,8 @@ pub struct Config {
     /// Pixel sampling detail (0.5 chunky … 4.0 fine). The final cell
     /// footprint is unchanged.
     pub pixel_scale: f32,
+    /// Paint the now-playing title in the theme accent instead of fg.
+    pub title_accent: bool,
     /// Retro spectrum visibility, renderer, and phosphor afterglow.
     pub spectrum_enabled: bool,
     pub spectrum_style: SpectrumKind,
@@ -125,6 +127,7 @@ impl Default for Config {
             cover_palette: CoverPalette::Original,
             cover_detail: CoverDetail::Half,
             pixel_scale: 1.0,
+            title_accent: false,
             spectrum_enabled: false,
             spectrum_style: SpectrumKind::Blocks,
             spectrum_glow: false,
@@ -232,6 +235,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # idle_art = "~/my-art.png"   # 开屏像素画（png/jpg/webp/gif，自动像素化）
 # cache_limit_mib = 8192       # 仅显式设置时更新 ypm 进程共享的上限
 # pixel_scale = 1.0            # 像素细腻度：0.5 更复古块状，4.0 更细腻
+# title_accent = false         # 歌名使用主题强调色
 # spectrum_enabled = false     # v 键也可全局开关
 # spectrum_style = "blocks"   # blocks | mirror | led | braille | shade | scope | fire | waterfall | vu | reflect
 # spectrum_glow = false        # 荧光余辉残影
@@ -533,6 +537,7 @@ idle_art = "~/art.png"
                 cover_palette: CoverPalette::Theme,
                 cover_detail: CoverDetail::Quad,
                 pixel_scale: 1.5,
+                title_accent: true,
                 spectrum_enabled: true,
                 spectrum_style: SpectrumKind::Fire,
                 spectrum_glow: true,

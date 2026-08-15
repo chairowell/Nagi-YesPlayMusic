@@ -302,9 +302,14 @@ fn draw_meta(frame: &mut Frame, state: &mut AppState, area: Rect, centered_text:
         lines.push(Line::default());
     }
     if let Some(now) = &state.now {
+        let title_color = if state.config.title_accent {
+            theme.accent
+        } else {
+            theme.fg
+        };
         lines.push(Line::from(Span::styled(
             format!("{indent}{}", now.title),
-            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD),
+            Style::new().fg(title_color).add_modifier(Modifier::BOLD),
         )));
         // The FM badge rides the artist line: no extra row, but the queue's
         // origin stays visible while a station track plays.
@@ -598,6 +603,20 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         Span::styled(elapsed, Style::new().fg(theme.faint)),
         Span::raw(" "),
     ];
+    let bar_x = area.x
+        + spans
+            .iter()
+            .map(|span| display_width(&span.content) as u16)
+            .sum::<u16>();
+    hits.progress.push((
+        Rect {
+            x: bar_x,
+            y: area.y,
+            width: bar_width as u16,
+            height: 1,
+        },
+        (),
+    ));
     spans.extend(bar_spans);
     spans.push(Span::raw(" "));
     spans.push(Span::styled(total, Style::new().fg(theme.faint)));
