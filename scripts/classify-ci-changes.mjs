@@ -22,11 +22,15 @@ const RUST_PATTERNS = [
 ];
 
 // These files are documentation only: no packaging, no Rust, cheap gates run.
+// tauriRelease.test.ts asserts on README wording, so every README edit drags it
+// along; treating it as docs keeps those commits off the packaging matrix. The
+// assertions still run — docs-gates runs the whole `bun test` suite.
 const DOCS_PATTERNS = [
   /^docs\//,
   /^images\//,
   /^(?:AGENTS|CLAUDE|README)\.md$/,
   /^\.github\/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)/,
+  /^test\/tauriRelease\.test\.ts$/,
 ];
 
 // These are known packaging/renderer inputs that do not require Cargo gates.

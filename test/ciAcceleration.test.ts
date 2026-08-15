@@ -282,6 +282,27 @@ test('纯文档改动跳打包，但门禁照跑', () => {
   }
 });
 
+test('README 断言所在的测试文件跟着 README 走，其余 test/ 不算文档', () => {
+  expect(
+    classifyChangedFiles([
+      'README.md',
+      'images/tui-library.png',
+      'test/tauriRelease.test.ts',
+    ])
+  ).toEqual({ docsOnly: true, rust: false, tuiOnly: false });
+  expect(classifyChangedFiles(['test/appUpdater.test.ts'])).toEqual({
+    docsOnly: false,
+    rust: false,
+    tuiOnly: false,
+  });
+  // Rust integration tests read this fixture, so it must keep the Rust gates.
+  expect(classifyChangedFiles(['test/fixtures/proxy-ca.pem'])).toEqual({
+    docsOnly: false,
+    rust: true,
+    tuiOnly: false,
+  });
+});
+
 test('嵌入 ypm 的 logo 改动触发 TUI 构建', () => {
   expect(classifyChangedFiles(['images/logo.png'])).toEqual({
     docsOnly: false,
