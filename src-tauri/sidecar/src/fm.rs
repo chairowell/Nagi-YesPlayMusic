@@ -172,6 +172,7 @@ mod tests {
                 fee: Some(8),
                 no_copyright_rcmd: false,
                 privilege: None,
+                cd: None,
             }]))),
             seen_query: Mutex::new(None),
         });

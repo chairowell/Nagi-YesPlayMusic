@@ -99,6 +99,8 @@ export function adaptTrackItems(items: Record<string, unknown>[]): Track[] {
         ...(typeof item['privilege'] === 'object' && item['privilege'] !== null
           ? { privilege: item['privilege'] as TrackPrivilege }
           : {}),
+        // Album pages group their track list by disc via this field.
+        ...(typeof item['cd'] === 'string' ? { cd: item['cd'] } : {}),
       };
       return track;
     });

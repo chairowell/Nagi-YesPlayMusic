@@ -1,16 +1,5 @@
 [
   {
-    "id": "album",
-    "method": "GET",
-    "path": "/album",
-    "requestBuilder": "src/api/album.ts#getAlbum",
-    "nodeAdapter": "@neteaseapireborn/api/module/album",
-    "rustAdapter": "ncm::album",
-    "decoder": "src/api/album.ts#decodeAlbumResponse",
-    "comparator": ["album.id", "songs[].id", "privileges[].id"],
-    "idempotent": true
-  },
-  {
     "id": "album_detail_dynamic",
     "method": "GET",
     "path": "/album/detail/dynamic",
@@ -111,17 +100,6 @@
     "rustAdapter": "ncm::artist_sublist",
     "decoder": "src/api/user.ts#decodeOptionalArtistsResponse",
     "comparator": ["code", "data[].id"],
-    "idempotent": true
-  },
-  {
-    "id": "artists",
-    "method": "GET",
-    "path": "/artists",
-    "requestBuilder": "src/api/artist.ts#getArtist",
-    "nodeAdapter": "@neteaseapireborn/api/module/artists",
-    "rustAdapter": "ncm::artists",
-    "decoder": "src/api/artist.ts#decodeArtistDetailResponse",
-    "comparator": ["code", "artist.id", "hotSongs[].id"],
     "idempotent": true
   },
   {
@@ -310,22 +288,6 @@
     "decoder": "src/api/decoders.ts#decodeCodeResponse",
     "comparator": ["code"],
     "idempotent": false
-  },
-  {
-    "id": "playlist_detail",
-    "method": "GET",
-    "path": "/playlist/detail",
-    "requestBuilder": "src/api/playlist.ts#getPlaylistDetail",
-    "nodeAdapter": "@neteaseapireborn/api/module/playlist_detail",
-    "rustAdapter": "ncm::playlist_detail",
-    "decoder": "src/api/playlist.ts#decodePlaylistDetailResponse",
-    "comparator": [
-      "code",
-      "playlist.id",
-      "playlist.trackIds[].id",
-      "privileges[].id"
-    ],
-    "idempotent": true
   },
   {
     "id": "playlist_subscribe",

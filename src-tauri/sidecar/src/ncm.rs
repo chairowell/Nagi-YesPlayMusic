@@ -17,7 +17,7 @@ use crate::{
     session::desktop_session_expiry_cookies,
 };
 
-const FRONTEND_ROUTE_COUNT: usize = 49;
+const FRONTEND_ROUTE_COUNT: usize = 46;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const CLOUD_MULTIPART_BODY_LIMIT_BYTES: usize = 513 * 1024 * 1024;
 const NCM_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -114,7 +114,6 @@ macro_rules! define_production_dispatch {
 }
 
 define_production_dispatch!(
-    album,
     album_detail_dynamic,
     album_new,
     album_sub,
@@ -124,7 +123,6 @@ define_production_dispatch!(
     artist_mv,
     artist_sub,
     artist_sublist,
-    artists,
     daily_signin,
     login,
     login_cellphone,
@@ -141,7 +139,6 @@ define_production_dispatch!(
     playlist_catlist,
     playlist_create,
     playlist_delete,
-    playlist_detail,
     playlist_subscribe,
     playlist_tracks,
     playmode_intelligence_list,

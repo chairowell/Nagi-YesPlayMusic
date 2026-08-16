@@ -1,5 +1,6 @@
 import request from '@/utils/request';
 import { mapTrackPlayableStatus } from '@/utils/common';
+import { fetchPlaylistDetail } from '@/services/detailSource';
 import type {
   Playlist,
   Track,
@@ -13,15 +14,12 @@ import {
   decodeBoolean,
   decodeCodeResponse,
   decodeNumber,
-  decodeOptionalArray,
   decodeOptionalString,
   decodePlaylist,
   decodeRecord,
   decodeTrack,
-  decodeTrackPrivilege,
-  decodeUserProfile,
 } from './decoders';
-import type { Decoder, ValueDecoder } from './decoders';
+import type { Decoder } from './decoders';
 
 export interface DetailedPlaylist extends Playlist {
   creator: UserProfile;
@@ -45,61 +43,6 @@ export interface CreatePlaylistResponse extends ApiResponse {
   code: number;
   id: number;
 }
-
-const decodeTrackId: ValueDecoder<{ id: number }> = (input, context, field) => {
-  const trackId = decodeRecord(input, context, field);
-  return { id: decodeNumber(trackId['id'], context, `${field}.id`) };
-};
-
-const decodeDetailedPlaylist: ValueDecoder<DetailedPlaylist> = (
-  input,
-  context,
-  field
-) => {
-  const playlist = decodePlaylist(input, context, field);
-  return {
-    ...playlist,
-    creator: decodeUserProfile(
-      playlist['creator'],
-      context,
-      `${field}.creator`
-    ),
-    trackIds: decodeArray(
-      playlist['trackIds'],
-      context,
-      `${field}.trackIds`,
-      decodeTrackId
-    ),
-    tracks: decodeArray(
-      playlist['tracks'],
-      context,
-      `${field}.tracks`,
-      decodeTrack
-    ),
-  };
-};
-
-const decodePlaylistDetailResponse: Decoder<PlaylistDetailResponse> = (
-  input,
-  context
-) => {
-  const response = decodeRecord(input, context);
-  const playlist =
-    response['playlist'] === undefined
-      ? undefined
-      : decodeDetailedPlaylist(response['playlist'], context, '$.playlist');
-  const privileges = decodeOptionalArray(
-    response['privileges'],
-    context,
-    '$.privileges',
-    decodeTrackPrivilege
-  );
-  return {
-    ...response,
-    ...(playlist === undefined ? {} : { playlist }),
-    ...(privileges === undefined ? {} : { privileges }),
-  };
-};
 
 const decodePlaylistResultResponse: Decoder<
   ApiResponse & { result: Playlist[] }
@@ -228,21 +171,13 @@ export function getPlaylistDetail(
   id: number,
   noCache = false
 ): Promise<PlaylistDetailResponse> {
-  const params: { id: number; timestamp?: number } = { id };
-  if (noCache) params.timestamp = new Date().getTime();
-  return request<PlaylistDetailResponse>(
-    {
-      url: '/playlist/detail',
-      method: 'get',
-      params,
-    },
-    decodePlaylistDetailResponse
-  ).then(data => {
+  // Typed sidecar endpoint (core::ncm), never cached, so the old
+  // timestamp cache-buster flag has nothing left to bust.
+  void noCache;
+  return fetchPlaylistDetail(id).then(data => {
     if (data.playlist) {
-      data.playlist.tracks = mapTrackPlayableStatus(
-        data.playlist.tracks ?? [],
-        data.privileges || []
-      );
+      // Privileges arrive merged into each track by the core.
+      data.playlist.tracks = mapTrackPlayableStatus(data.playlist.tracks ?? []);
     }
     return data;
   });

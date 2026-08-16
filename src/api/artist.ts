@@ -2,6 +2,7 @@ import request from '@/utils/request';
 import { mapTrackPlayableStatus } from '@/utils/common';
 import { isAccountLoggedIn } from '@/utils/auth';
 import { getTrackDetail } from '@/api/track';
+import { fetchArtistDetail } from '@/services/detailSource';
 import type { Album, Artist, MusicVideo, Track } from '@/types/domain';
 import type { ApiResponse } from './types';
 import {
@@ -12,7 +13,6 @@ import {
   decodeCodeResponse,
   decodeMusicVideo,
   decodeRecord,
-  decodeTrack,
 } from './decoders';
 import type { Decoder } from './decoders';
 
@@ -29,23 +29,6 @@ interface ArtistMvsResponse extends ApiResponse {
   mvs: MusicVideo[];
   hasMore: boolean;
 }
-
-const decodeArtistDetailResponse: Decoder<ArtistDetailResponse> = (
-  input,
-  context
-) => {
-  const response = decodeRecord(input, context);
-  return {
-    ...response,
-    artist: decodeArtist(response['artist'], context, '$.artist'),
-    hotSongs: decodeArray(
-      response['hotSongs'],
-      context,
-      '$.hotSongs',
-      decodeTrack
-    ),
-  };
-};
 
 const decodeArtistAlbumsResponse: Decoder<ArtistAlbumsResponse> = (
   input,
@@ -111,17 +94,8 @@ const decodeArtistsResponse: Decoder<ApiResponse & { artists: Artist[] }> = (
 };
 
 export function getArtist(id: number): Promise<ArtistDetailResponse> {
-  return request<ArtistDetailResponse>(
-    {
-      url: '/artists',
-      method: 'get',
-      params: {
-        id,
-        timestamp: new Date().getTime(),
-      },
-    },
-    decodeArtistDetailResponse
-  ).then(async data => {
+  // Typed sidecar endpoint (core::ncm), shared with the TUI.
+  return fetchArtistDetail(id).then(async (data: ArtistDetailResponse) => {
     if (!isAccountLoggedIn()) {
       const trackIDs = data.hotSongs.map(t => t.id);
       const tracks = await getTrackDetail(trackIDs.join(','));

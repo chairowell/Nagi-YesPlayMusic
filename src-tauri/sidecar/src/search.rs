@@ -175,6 +175,7 @@ pub(crate) fn song_item_body(song: &yesplaymusic_core::ncm::SongHit) -> Value {
             "fee": privilege.fee,
             "st": privilege.st,
         })),
+        "cd": song.cd,
     })
 }
 
@@ -325,6 +326,7 @@ mod tests {
                     fee: 1,
                     st: 0,
                 }),
+                cd: Some("01".into()),
             }],
             total: 240,
         })));

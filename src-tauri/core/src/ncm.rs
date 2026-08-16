@@ -165,6 +165,30 @@ pub struct SongHit {
     pub fee: Option<i64>,
     pub no_copyright_rcmd: bool,
     pub privilege: Option<SongPrivilege>,
+    /// Disc number as NCM sends it ("01", "02"); album pages group by it.
+    pub cd: Option<String>,
+}
+
+/// Detail-page payloads: the song list is parsed business data, while the
+/// container's metadata (title, cover, creator, description…) is view data
+/// passed through verbatim for whichever frontend renders it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlaylistDetailPayload {
+    /// The raw `playlist` object with its embedded `tracks` removed.
+    pub playlist: Value,
+    pub songs: Vec<SongHit>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AlbumDetailPayload {
+    pub album: Value,
+    pub songs: Vec<SongHit>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArtistDetailPayload {
+    pub artist: Value,
+    pub hot_songs: Vec<SongHit>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -465,18 +489,21 @@ impl NcmClient {
     }
 
     pub async fn album_songs(&self, album_id: i64) -> Result<Vec<SongRow>, NcmClientError> {
-        let query = self.query().param("id", &album_id.to_string());
-        let response = self.client.album(&query).await?;
-        parse_song_collection(&response.body, &["songs"])
+        let payload = album_with(&self.client, self.query(), album_id).await?;
+        Ok(payload.songs.into_iter().map(song_row_from_hit).collect())
     }
 
     pub async fn playlist_detail_songs(
         &self,
         playlist_id: i64,
     ) -> Result<Vec<SongRow>, NcmClientError> {
-        let query = self.query().param("id", &playlist_id.to_string());
-        let response = self.client.playlist_detail(&query).await?;
-        let (embedded, total) = parse_playlist_detail(&response.body)?;
+        let payload = playlist_detail_with(&self.client, self.query(), playlist_id).await?;
+        let total = required_usize(&payload.playlist, &["trackCount"])?;
+        let embedded = payload
+            .songs
+            .into_iter()
+            .map(song_row_from_hit)
+            .collect::<Vec<_>>();
         let session = self.session_snapshot();
         complete_playlist_detail(embedded, total, || {
             self.playlist_songs(playlist_id, session.as_ref())
@@ -691,12 +718,6 @@ fn parse_song_collection(body: &Value, path: &[&str]) -> Result<Vec<SongRow>, Nc
         .collect()
 }
 
-fn parse_playlist_detail(body: &Value) -> Result<(Vec<SongRow>, usize), NcmClientError> {
-    let rows = parse_song_collection(body, &["playlist", "tracks"])?;
-    let total = required_usize(body, &["playlist", "trackCount"])?;
-    Ok((rows, total))
-}
-
 async fn complete_playlist_detail<F, Fut>(
     embedded: Vec<SongRow>,
     total: usize,
@@ -764,6 +785,7 @@ fn parse_song_hit(song: &Value) -> Result<SongHit, NcmClientError> {
         fee: song["fee"].as_i64(),
         no_copyright_rcmd: !song["noCopyrightRcmd"].is_null(),
         privilege: parse_song_privilege(&song["privilege"]),
+        cd: song["cd"].as_str().map(str::to_owned),
     })
 }
 
@@ -1157,6 +1179,86 @@ fn overlay_privileges(hits: &mut [SongHit], privileges: &Value) {
     }
 }
 
+/// Playlist detail: verbatim metadata plus the embedded first page of songs
+/// (the GUI pages the remainder itself via track ids). The parallel
+/// `privileges` array is overlaid onto each song.
+pub async fn playlist_detail_with(
+    client: &ApiClient,
+    query: Query,
+    id: i64,
+) -> Result<PlaylistDetailPayload, NcmClientError> {
+    let query = query.param("id", &id.to_string());
+    let response = client.playlist_detail(&query).await?;
+    require_success(&response.body)?;
+    let mut playlist = response.body["playlist"].clone();
+    let Some(fields) = playlist.as_object_mut() else {
+        return Err(NcmClientError::MissingPayload("the playlist"));
+    };
+    let tracks = fields.remove("tracks").unwrap_or(Value::Null);
+    let mut songs = song_hits_from(&tracks);
+    overlay_privileges(&mut songs, &response.body["privileges"]);
+    Ok(PlaylistDetailPayload { playlist, songs })
+}
+
+/// Album detail: verbatim metadata plus its full song list (albums answer
+/// every track in one response, privileges embedded per song).
+pub async fn album_with(
+    client: &ApiClient,
+    query: Query,
+    id: i64,
+) -> Result<AlbumDetailPayload, NcmClientError> {
+    let query = query.param("id", &id.to_string());
+    let response = client.album(&query).await?;
+    require_success(&response.body)?;
+    let album = response.body["album"].clone();
+    if !album.is_object() {
+        return Err(NcmClientError::MissingPayload("the album"));
+    }
+    // Albums always embed their song list; a missing array means the payload
+    // is broken, not that the album is empty.
+    if !response.body["songs"].is_array() {
+        return Err(NcmClientError::MissingPayload("the album songs"));
+    }
+    Ok(AlbumDetailPayload {
+        album,
+        songs: song_hits_from(&response.body["songs"]),
+    })
+}
+
+/// Artist detail: verbatim metadata plus the hot-songs list.
+pub async fn artist_with(
+    client: &ApiClient,
+    query: Query,
+    id: i64,
+) -> Result<ArtistDetailPayload, NcmClientError> {
+    let query = query.param("id", &id.to_string());
+    let response = client.artists(&query).await?;
+    require_success(&response.body)?;
+    let artist = response.body["artist"].clone();
+    if !artist.is_object() {
+        return Err(NcmClientError::MissingPayload("the artist"));
+    }
+    Ok(ArtistDetailPayload {
+        artist,
+        hot_songs: song_hits_from(&response.body["hotSongs"]),
+    })
+}
+
+/// Song lists inside detail payloads degrade row-by-row: an id-less entry
+/// cannot be played and is dropped instead of failing the page.
+fn song_hits_from(tracks: &Value) -> Vec<SongHit> {
+    tracks
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(song_hit_flex)
+                .filter(|hit| hit.id > 0)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Search for frontends that carry their own cookie transport (the GUI
 /// sidecar forwards the browser cookie on every request).
 pub async fn search_with(
@@ -1286,6 +1388,7 @@ fn song_hit_flex(song: &Value) -> SongHit {
         fee: song["fee"].as_i64(),
         no_copyright_rcmd: !song["noCopyrightRcmd"].is_null(),
         privilege: parse_song_privilege(&song["privilege"]),
+        cd: song["cd"].as_str().map(str::to_owned),
     }
 }
 
@@ -1952,24 +2055,21 @@ mod tests {
     #[test]
     fn detail_payloads_narrow_artist_album_and_playlist_tracks() {
         let song = song_payload();
+        // Artist top songs keep the strict row parser…
         let artist = parse_song_collection(
             &serde_json::json!({ "code": 200, "songs": [song.clone()] }),
             &["songs"],
         )
         .unwrap();
-        let album = parse_song_collection(
-            &serde_json::json!({ "code": 200, "songs": [song.clone()] }),
-            &["songs"],
-        )
-        .unwrap();
-        let playlist = parse_song_collection(
-            &serde_json::json!({
-                "code": 200,
-                "playlist": { "tracks": [song] }
-            }),
-            &["playlist", "tracks"],
-        )
-        .unwrap();
+        // …while album/playlist detail folds flexible hits to the same rows.
+        let album: Vec<SongRow> = song_hits_from(&serde_json::json!([song.clone()]))
+            .into_iter()
+            .map(song_row_from_hit)
+            .collect();
+        let playlist: Vec<SongRow> = song_hits_from(&serde_json::json!([song]))
+            .into_iter()
+            .map(song_row_from_hit)
+            .collect();
 
         assert_eq!(artist, album);
         assert_eq!(album, playlist);
@@ -1981,15 +2081,21 @@ mod tests {
 
     #[test]
     fn playlist_detail_reports_when_embedded_tracks_need_paged_completion() {
-        let (rows, total) = parse_playlist_detail(&serde_json::json!({
+        let body = serde_json::json!({
             "code": 200,
             "playlist": {
                 "trackCount": 2,
-                "tracks": [song_payload()]
+                "tracks": [song_payload(), { "name": "no id" }]
             }
-        }))
-        .unwrap();
+        });
+        let rows: Vec<SongRow> = song_hits_from(&body["playlist"]["tracks"])
+            .into_iter()
+            .map(song_row_from_hit)
+            .collect();
+        let total = required_usize(&body, &["playlist", "trackCount"]).unwrap();
 
+        // The id-less entry is dropped, so the embedded page reads as
+        // incomplete and triggers the paged completion.
         assert_eq!(rows.len(), 1);
         assert_eq!(total, 2);
         assert!(rows.len() < total);
@@ -2030,7 +2136,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_payloads_reject_unknown_song_shapes_instead_of_defaulting() {
+    fn artist_top_songs_reject_unknown_song_shapes_while_detail_hits_degrade() {
         let missing_duration = serde_json::json!({
             "code": 200,
             "songs": [{
@@ -2051,13 +2157,15 @@ mod tests {
             }]
         });
 
+        // The strict artist-top-songs path still fails the whole answer…
         assert!(parse_song_collection(&missing_duration, &["songs"]).is_err());
         assert!(parse_song_collection(&wrong_artists, &["songs"]).is_err());
-        assert!(parse_song_collection(
-            &serde_json::json!({ "code": 200, "playlist": {} }),
-            &["playlist", "tracks"],
-        )
-        .is_err());
+        // …but detail-page hits degrade per row: a playable id survives with
+        // defaults, only id-less entries are dropped.
+        let degraded = song_hits_from(&missing_duration["songs"]);
+        assert_eq!(degraded.len(), 1);
+        assert_eq!(degraded[0].duration_ms, 0);
+        assert!(song_hits_from(&serde_json::json!([{ "name": "no id" }])).is_empty());
     }
 
     fn rows(range: std::ops::Range<usize>) -> Vec<SongRow> {

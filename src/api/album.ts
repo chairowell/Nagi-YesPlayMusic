@@ -1,18 +1,17 @@
 import request from '@/utils/request';
 import { mapTrackPlayableStatus } from '@/utils/common';
+import { fetchAlbumDetail } from '@/services/detailSource';
 import { cacheAlbum, getAlbumFromCache } from '@/utils/db';
 import type { Album, Artist } from '@/types/domain';
 import type { TrackCollectionResponse, ApiResponse } from './types';
 import {
   decodeAlbum,
   decodeArray,
-  decodeArtist,
   decodeBoolean,
   decodeCodeResponse,
   decodeRecord,
-  decodeTrackCollectionResponse,
 } from './decoders';
-import type { Decoder, ValueDecoder } from './decoders';
+import type { Decoder } from './decoders';
 
 interface NewAlbumsResponse extends ApiResponse {
   albums: Album[];
@@ -29,26 +28,6 @@ interface AlbumResponse extends TrackCollectionResponse {
 interface AlbumDynamicResponse extends ApiResponse {
   isSub: boolean;
 }
-
-const decodeDetailedAlbum: ValueDecoder<DetailedAlbum> = (
-  input,
-  context,
-  field
-) => {
-  const album = decodeAlbum(input, context, field);
-  return {
-    ...album,
-    artist: decodeArtist(album['artist'], context, `${field}.artist`),
-  };
-};
-
-const decodeAlbumResponse: Decoder<AlbumResponse> = (input, context) => {
-  const response = decodeTrackCollectionResponse(input, context);
-  return {
-    ...response,
-    album: decodeDetailedAlbum(response['album'], context, '$.album'),
-  };
-};
 
 const decodeNewAlbumsResponse: Decoder<NewAlbumsResponse> = (
   input,
@@ -74,16 +53,8 @@ const decodeAlbumDynamicResponse: Decoder<AlbumDynamicResponse> = (
 
 export function getAlbum(id: number): Promise<AlbumResponse> {
   const fetchLatest = () => {
-    return request<AlbumResponse>(
-      {
-        url: '/album',
-        method: 'get',
-        params: {
-          id,
-        },
-      },
-      decodeAlbumResponse
-    ).then(data => {
+    // Typed sidecar endpoint (core::ncm), shared with the TUI.
+    return fetchAlbumDetail(id).then((data: AlbumResponse) => {
       cacheAlbum(id, data);
       data.songs = mapTrackPlayableStatus(data.songs);
       return data;

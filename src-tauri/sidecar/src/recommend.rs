@@ -178,6 +178,7 @@ mod tests {
                     fee: 8,
                     st: 0,
                 }),
+                cd: None,
             }]))),
             seen_query: Mutex::new(None),
         });
