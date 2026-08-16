@@ -281,30 +281,3 @@ export const decodeTrackCollectionResponse: Decoder<TrackCollectionResponse> = (
   };
 };
 
-export const decodeDailyTracksResponse: Decoder<
-  ApiResponse & {
-    data: { dailySongs: Track[]; privileges?: TrackPrivilege[] };
-  }
-> = (input, context) => {
-  const response = decodeRecord(input, context);
-  const data = decodeRecord(response['data'], context, '$.data');
-  const privileges = decodeOptionalArray(
-    data['privileges'],
-    context,
-    '$.data.privileges',
-    decodeTrackPrivilege
-  );
-  return {
-    ...response,
-    data: {
-      ...data,
-      dailySongs: decodeArray(
-        data['dailySongs'],
-        context,
-        '$.data.dailySongs',
-        decodeTrack
-      ),
-      ...(privileges === undefined ? {} : { privileges }),
-    },
-  };
-};

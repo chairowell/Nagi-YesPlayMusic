@@ -65,12 +65,12 @@ function optionalText(field: string, value: unknown): Record<string, string> {
   return typeof value === 'string' ? { [field]: value } : {};
 }
 
-export async function searchTracks(
-  keywords: string,
-  options: SearchOptions = {}
-): Promise<SearchPageOf<Track>> {
-  const page = await fetchSearch(keywords, 1, options);
-  const items = page.items
+/**
+ * Map the flat song items every typed endpoint answers (search, daily
+ * recommendations) back onto the legacy `ar`/`al`/`dt` track shape.
+ */
+export function adaptTrackItems(items: Record<string, unknown>[]): Track[] {
+  return items
     .filter(item => typeof item['id'] === 'number')
     .map(item => {
       const album =
@@ -102,7 +102,17 @@ export async function searchTracks(
       };
       return track;
     });
-  return { items: mapTrackPlayableStatus(items), total: page.total };
+}
+
+export async function searchTracks(
+  keywords: string,
+  options: SearchOptions = {}
+): Promise<SearchPageOf<Track>> {
+  const page = await fetchSearch(keywords, 1, options);
+  return {
+    items: mapTrackPlayableStatus(adaptTrackItems(page.items)),
+    total: page.total,
+  };
 }
 
 export async function searchArtists(

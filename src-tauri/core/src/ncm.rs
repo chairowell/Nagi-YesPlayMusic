@@ -383,12 +383,8 @@ impl NcmClient {
         &self,
         session: Option<&Session>,
     ) -> Result<Vec<SongRow>, NcmClientError> {
-        let response = self
-            .client
-            .recommend_songs(&Self::query_with_session(session))
-            .await?;
-        let songs = response_array(&response.body, &["data", "dailySongs"])?;
-        Ok(songs.iter().map(song_row_flex).collect())
+        let hits = daily_songs_with(&self.client, Self::query_with_session(session)).await?;
+        Ok(hits.into_iter().map(song_row_from_hit).collect())
     }
 
     pub async fn personal_fm(
@@ -1125,6 +1121,40 @@ pub async fn personal_fm_with(
         .map(song_hit_flex)
         .filter(|hit| hit.id > 0)
         .collect())
+}
+
+/// Daily recommendations for frontends that carry their own cookie
+/// transport. The payload's parallel `data.privileges` array overrides each
+/// song's embedded privilege, matching the GUI's historical merge order.
+pub async fn daily_songs_with(
+    client: &ApiClient,
+    query: Query,
+) -> Result<Vec<SongHit>, NcmClientError> {
+    let response = client.recommend_songs(&query).await?;
+    let songs = response_array(&response.body, &["data", "dailySongs"])?;
+    let mut hits: Vec<SongHit> = songs
+        .iter()
+        .map(song_hit_flex)
+        .filter(|hit| hit.id > 0)
+        .collect();
+    overlay_privileges(&mut hits, &response.body["data"]["privileges"]);
+    Ok(hits)
+}
+
+/// The parallel privilege array is fresher than what's embedded per song, so
+/// a match replaces the embedded value; songs without a match keep theirs.
+fn overlay_privileges(hits: &mut [SongHit], privileges: &Value) {
+    let Some(privileges) = privileges.as_array() else {
+        return;
+    };
+    for hit in hits {
+        let matched = privileges
+            .iter()
+            .find(|privilege| privilege["id"].as_i64() == Some(hit.id));
+        if let Some(privilege) = matched.and_then(parse_song_privilege) {
+            hit.privilege = Some(privilege);
+        }
+    }
 }
 
 /// Search for frontends that carry their own cookie transport (the GUI
@@ -2236,6 +2266,42 @@ mod tests {
         assert_eq!(row.title, "?");
         assert_eq!(row.artist, "?");
         assert_eq!(row.album, "Album");
+    }
+
+    #[test]
+    fn daily_privilege_array_overrides_the_embedded_privilege() {
+        let body = serde_json::json!({
+            "code": 200,
+            "data": {
+                "dailySongs": [
+                    {
+                        "id": 1,
+                        "name": "A",
+                        "ar": [{ "id": 7, "name": "Artist" }],
+                        "al": { "id": 9, "name": "Album" },
+                        "dt": 1_000,
+                        "privilege": { "pl": 0, "fee": 1 }
+                    },
+                    {
+                        "id": 2,
+                        "name": "B",
+                        "ar": [{ "id": 7, "name": "Artist" }],
+                        "al": { "id": 9, "name": "Album" },
+                        "dt": 1_000,
+                        "privilege": { "pl": 999, "fee": 1 }
+                    }
+                ],
+                "privileges": [{ "id": 1, "pl": 320_000, "fee": 8 }]
+            }
+        });
+        let songs = response_array(&body, &["data", "dailySongs"]).unwrap();
+        let mut hits: Vec<SongHit> = songs.iter().map(song_hit_flex).collect();
+        overlay_privileges(&mut hits, &body["data"]["privileges"]);
+        assert_eq!(hits[0].privilege.unwrap().pl, 320_000);
+        assert_eq!(hits[0].privilege.unwrap().fee, 8);
+        // No array entry: the embedded privilege must survive untouched.
+        assert_eq!(hits[1].privilege.unwrap().pl, 999);
+        assert_eq!(hits[1].privilege.unwrap().fee, 1);
     }
 
     #[test]

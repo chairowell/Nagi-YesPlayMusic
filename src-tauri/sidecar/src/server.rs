@@ -18,6 +18,7 @@ use crate::{
     player_api::{self, PlayerApiState},
     precise_wav::{self, PreciseWavState},
     proxy_relay::{self, UpstreamProxy},
+    recommend,
     renderer::{self, ApiProxy},
     search,
     session::{self, RequestBoundary},
@@ -139,6 +140,9 @@ async fn build_api_router(
             client.clone(),
         )))
         .merge(fm::router(fm::FmState::production(client.clone())))
+        .merge(recommend::router(recommend::RecommendState::production(
+            client.clone(),
+        )))
         .merge(library::router(library::LibraryState::production(client)))
         .merge(unm::router(UnmState::new()))
         .merge(shared_cache::router(

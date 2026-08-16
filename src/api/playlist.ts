@@ -12,7 +12,6 @@ import {
   decodeArray,
   decodeBoolean,
   decodeCodeResponse,
-  decodeDailyTracksResponse,
   decodeNumber,
   decodeOptionalArray,
   decodeOptionalString,
@@ -360,27 +359,6 @@ export function addOrRemoveTrackFromPlaylist(params: {
     },
     decodePlaylistMutationResponse
   );
-}
-
-export function dailyRecommendTracks() {
-  return request<
-    ApiResponse & {
-      data: { dailySongs: Track[]; privileges?: TrackPrivilege[] };
-    }
-  >(
-    {
-      url: '/recommend/songs',
-      method: 'get',
-      params: { timestamp: new Date().getTime() },
-    },
-    decodeDailyTracksResponse
-  ).then(result => {
-    result.data.dailySongs = mapTrackPlayableStatus(
-      result.data.dailySongs,
-      result.data.privileges
-    );
-    return result;
-  });
 }
 
 export function intelligencePlaylist(params: {

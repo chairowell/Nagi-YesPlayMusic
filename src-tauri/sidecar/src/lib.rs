@@ -8,6 +8,7 @@ pub mod playback;
 pub mod player_api;
 pub mod precise_wav;
 pub mod proxy_relay;
+pub mod recommend;
 pub mod renderer;
 pub mod search;
 pub mod server;

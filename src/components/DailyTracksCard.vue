@@ -22,7 +22,7 @@ import { defineComponent } from 'vue';
 import locale from '@/locale';
 import { mapActions, mapState } from 'pinia';
 import { useAppStore } from '@/stores/app';
-import { dailyRecommendTracks } from '@/api/playlist';
+import { fetchDailyRecommendTracks } from '@/services/recommendSource';
 import { isAccountLoggedIn } from '@/utils/auth';
 import sample from 'lodash/sample';
 
@@ -55,9 +55,9 @@ export default defineComponent({
     ...mapActions(useAppStore, ['showToast', 'updateDailyTracks']),
     loadDailyTracks() {
       if (!isAccountLoggedIn()) return;
-      dailyRecommendTracks()
-        .then(result => {
-          this.updateDailyTracks(result.data.dailySongs);
+      fetchDailyRecommendTracks()
+        .then(tracks => {
+          this.updateDailyTracks(tracks);
         })
         .catch(() => {});
     },
