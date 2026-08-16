@@ -395,12 +395,8 @@ impl NcmClient {
         &self,
         session: Option<&Session>,
     ) -> Result<Vec<SongRow>, NcmClientError> {
-        let response = self
-            .client
-            .personal_fm(&Self::query_with_session(session))
-            .await?;
-        let songs = response_array(&response.body, &["data"])?;
-        Ok(songs.iter().map(song_row_flex).collect())
+        let hits = personal_fm_with(&self.client, Self::query_with_session(session)).await?;
+        Ok(hits.into_iter().map(song_row_from_hit).collect())
     }
 
     /// FM trash ("never play this again").
@@ -1115,6 +1111,22 @@ pub async fn fm_trash_with(
     }
 }
 
+/// Personal FM for frontends that carry their own cookie transport (the GUI
+/// sidecar forwards the browser cookie on every request). Rows without a
+/// usable id cannot be played and are dropped instead of failing the batch.
+pub async fn personal_fm_with(
+    client: &ApiClient,
+    query: Query,
+) -> Result<Vec<SongHit>, NcmClientError> {
+    let response = client.personal_fm(&query).await?;
+    let songs = response_array(&response.body, &["data"])?;
+    Ok(songs
+        .iter()
+        .map(song_hit_flex)
+        .filter(|hit| hit.id > 0)
+        .collect())
+}
+
 /// Search for frontends that carry their own cookie transport (the GUI
 /// sidecar forwards the browser cookie on every request).
 pub async fn search_with(
@@ -1202,6 +1214,78 @@ fn song_row_flex(song: &Value) -> SongRow {
         album,
         duration_ms,
         pic_url,
+    }
+}
+
+/// Rich variant of [`song_row_flex`]: same naming tolerance, but keeps the
+/// linkable ids and permission fields the GUI renders. Everything degrades
+/// instead of erroring — one odd FM row must not sink the batch.
+fn song_hit_flex(song: &Value) -> SongHit {
+    let row = song_row_flex(song);
+    let artists = song["ar"]
+        .as_array()
+        .or_else(|| song["artists"].as_array())
+        .map(|list| {
+            list.iter()
+                .map(|artist| ArtistRef {
+                    id: artist["id"].as_i64().unwrap_or(0),
+                    name: artist["name"].as_str().unwrap_or("").to_owned(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let album_id = song["al"]["id"]
+        .as_i64()
+        .or_else(|| song["album"]["id"].as_i64())
+        .unwrap_or(0);
+    SongHit {
+        id: row.id,
+        // No "?" placeholder here: that is TUI display semantics, restored
+        // in song_row_from_hit; the GUI must not render literal "?".
+        name: song["name"].as_str().unwrap_or("").to_owned(),
+        artists,
+        album: AlbumRef {
+            id: album_id,
+            name: row.album,
+            pic_url: row.pic_url,
+        },
+        duration_ms: row.duration_ms,
+        alias: string_list_flex(song, &["alia", "alias"]),
+        trans_names: string_list_flex(song, &["tns", "transNames"]),
+        mark: song["mark"].as_i64().unwrap_or(0),
+        fee: song["fee"].as_i64(),
+        no_copyright_rcmd: !song["noCopyrightRcmd"].is_null(),
+        privilege: parse_song_privilege(&song["privilege"]),
+    }
+}
+
+fn string_list_flex(value: &Value, fields: &[&str]) -> Vec<String> {
+    fields
+        .iter()
+        .find(|field| value[**field].is_array())
+        .map(|field| string_list(value, field))
+        .unwrap_or_default()
+}
+
+fn song_row_from_hit(hit: SongHit) -> SongRow {
+    let artist = hit
+        .artists
+        .first()
+        .map(|artist| artist.name.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "?".to_owned());
+    let title = if hit.name.is_empty() {
+        "?".to_owned()
+    } else {
+        hit.name
+    };
+    SongRow {
+        id: hit.id,
+        title,
+        artist,
+        album: hit.album.name,
+        duration_ms: hit.duration_ms,
+        pic_url: hit.album.pic_url,
     }
 }
 
@@ -2099,6 +2183,59 @@ mod tests {
 
         assert_eq!(standard.album, "Standard Album");
         assert_eq!(flexible.album, "Flexible Album");
+    }
+
+    #[test]
+    fn fm_hits_parse_legacy_naming_with_link_ids_and_permissions() {
+        let hit = song_hit_flex(&serde_json::json!({
+            "id": 42,
+            "name": "FM Track",
+            "artists": [{ "id": 7, "name": "Artist" }, { "id": 8, "name": "Guest" }],
+            "album": { "id": 9, "name": "Album", "picUrl": "http://cover" },
+            "duration": 180_000,
+            "alias": ["Alias"],
+            "transNames": ["译名"],
+            "fee": 8,
+            "privilege": { "pl": 128_000, "fee": 8 }
+        }));
+        assert_eq!(hit.id, 42);
+        assert_eq!(hit.artists.len(), 2);
+        assert_eq!(hit.artists[1].id, 8);
+        assert_eq!(hit.album.id, 9);
+        assert_eq!(hit.album.pic_url.as_deref(), Some("http://cover"));
+        assert_eq!(hit.alias, vec!["Alias"]);
+        assert_eq!(hit.trans_names, vec!["译名"]);
+        assert_eq!(hit.fee, Some(8));
+        assert_eq!(hit.privilege.unwrap().pl, 128_000);
+
+        // The standard naming feeds the same shape.
+        let standard = song_hit_flex(&serde_json::json!({
+            "id": 43,
+            "name": "Track",
+            "ar": [{ "id": 7, "name": "Artist" }],
+            "al": { "id": 9, "name": "Album" },
+            "dt": 200_000,
+            "alia": ["A"],
+            "tns": ["T"]
+        }));
+        assert_eq!(standard.album.id, 9);
+        assert_eq!(standard.alias, vec!["A"]);
+        assert_eq!(standard.trans_names, vec!["T"]);
+    }
+
+    #[test]
+    fn fm_row_fold_keeps_the_tui_placeholder_semantics() {
+        let hit = song_hit_flex(&serde_json::json!({
+            "id": 5,
+            "album": { "name": "Album" },
+            "duration": 1_000
+        }));
+        // The GUI payload carries the bare truth; only the TUI fold shows "?".
+        assert_eq!(hit.name, "");
+        let row = song_row_from_hit(hit);
+        assert_eq!(row.title, "?");
+        assert_eq!(row.artist, "?");
+        assert_eq!(row.album, "Album");
     }
 
     #[test]

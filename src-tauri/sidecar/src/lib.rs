@@ -1,5 +1,6 @@
 pub mod cloud;
 pub mod config;
+pub mod fm;
 pub mod health;
 pub mod library;
 pub mod ncm;

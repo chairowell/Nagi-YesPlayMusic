@@ -147,36 +147,40 @@ fn with_no_store(mut response: Response<Body>) -> Response<Body> {
     response
 }
 
+/// The flat song shape shared by every typed endpoint that answers songs
+/// (search, personal FM); the renderer adapts it back per component.
+pub(crate) fn song_item_body(song: &yesplaymusic_core::ncm::SongHit) -> Value {
+    json!({
+        "id": song.id,
+        "name": song.name,
+        "artists": song
+            .artists
+            .iter()
+            .map(|artist| json!({ "id": artist.id, "name": artist.name }))
+            .collect::<Vec<_>>(),
+        "album": {
+            "id": song.album.id,
+            "name": song.album.name,
+            "picUrl": song.album.pic_url,
+        },
+        "durationMs": song.duration_ms,
+        "alias": song.alias,
+        "transNames": song.trans_names,
+        "mark": song.mark,
+        "fee": song.fee,
+        "noCopyrightRcmd": song.no_copyright_rcmd,
+        "privilege": song.privilege.map(|privilege| json!({
+            "pl": privilege.pl,
+            "cs": privilege.cs,
+            "fee": privilege.fee,
+            "st": privilege.st,
+        })),
+    })
+}
+
 fn payload_body(payload: SearchPayload) -> Value {
     match payload {
-        SearchPayload::Songs(page) => page_body("songs", page, |song| {
-            json!({
-                "id": song.id,
-                "name": song.name,
-                "artists": song
-                    .artists
-                    .iter()
-                    .map(|artist| json!({ "id": artist.id, "name": artist.name }))
-                    .collect::<Vec<_>>(),
-                "album": {
-                    "id": song.album.id,
-                    "name": song.album.name,
-                    "picUrl": song.album.pic_url,
-                },
-                "durationMs": song.duration_ms,
-                "alias": song.alias,
-                "transNames": song.trans_names,
-                "mark": song.mark,
-                "fee": song.fee,
-                "noCopyrightRcmd": song.no_copyright_rcmd,
-                "privilege": song.privilege.map(|privilege| json!({
-                    "pl": privilege.pl,
-                    "cs": privilege.cs,
-                    "fee": privilege.fee,
-                    "st": privilege.st,
-                })),
-            })
-        }),
+        SearchPayload::Songs(page) => page_body("songs", page, song_item_body),
         SearchPayload::Artists(page) => page_body("artists", page, |artist| {
             json!({
                 "id": artist.id,

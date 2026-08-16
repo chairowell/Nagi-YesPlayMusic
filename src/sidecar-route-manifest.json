@@ -268,17 +268,6 @@
     "idempotent": true
   },
   {
-    "id": "personal_fm",
-    "method": "GET",
-    "path": "/personal_fm",
-    "requestBuilder": "src/api/others.ts#personalFM",
-    "nodeAdapter": "@neteaseapireborn/api/module/personal_fm",
-    "rustAdapter": "ncm::personal_fm",
-    "decoder": "src/api/others.ts#decodeTrackDataResponse",
-    "comparator": ["code", "data[].id"],
-    "idempotent": true
-  },
-  {
     "id": "personalized",
     "method": "GET",
     "path": "/personalized",

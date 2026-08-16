@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::SidecarConfig,
+    fm,
     health::{self, HealthState},
     library,
     ncm::{self, NcmState},
@@ -137,6 +138,7 @@ async fn build_api_router(
         .merge(search::router(search::SearchState::production(
             client.clone(),
         )))
+        .merge(fm::router(fm::FmState::production(client.clone())))
         .merge(library::router(library::LibraryState::production(client)))
         .merge(unm::router(UnmState::new()))
         .merge(shared_cache::router(

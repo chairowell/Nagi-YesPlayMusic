@@ -1,7 +1,7 @@
 import { getAlbum } from '@/api/album';
 import { getArtist } from '@/api/artist';
 import { trackScrobble, trackUpdateNowPlaying } from '@/api/lastfm';
-import { personalFM } from '@/api/others';
+import { fetchPersonalFM } from '@/services/fmSource';
 import { trashFM } from '@/services/librarySource';
 import { getPlaylistDetail, intelligencePlaylist } from '@/api/playlist';
 import { getLyric, getTrackDetail, scrobble } from '@/api/track';
@@ -453,7 +453,7 @@ export default class Player {
       this._personalFMNextTrack?.id === 0 ||
       this._personalFMTrack.id === this._personalFMNextTrack?.id
     ) {
-      personalFM().then(result => {
+      fetchPersonalFM().then(result => {
         const currentTrack = result.data[0];
         if (currentTrack) this._personalFMTrack = currentTrack;
         this._personalFMNextTrack = result.data[1];
@@ -1216,7 +1216,7 @@ export default class Player {
     }
     this._personalFMNextLoading = true;
     try {
-      const result = await personalFM();
+      const result = await fetchPersonalFM();
       this._personalFMNextTrack = result.data[0];
       if (this._personalFMNextTrack) this._prefetchNextTrack();
       return [true, this._personalFMNextTrack] as const;
@@ -1266,7 +1266,7 @@ export default class Player {
       let result = null;
       let retryCount = 5;
       for (; retryCount >= 0; retryCount--) {
-        result = await personalFM().catch(() => null);
+        result = await fetchPersonalFM().catch(() => null);
         if (!result) {
           this._personalFMLoading = false;
           getAppStore().showToast('personal fm timeout');
