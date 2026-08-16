@@ -1,4 +1,5 @@
 import { getAppStore } from '@/stores/accessor';
+import { fetchNeteaseLyrics } from '@/services/playbackSource';
 import request from '@/utils/request';
 import { mapTrackPlayableStatus } from '@/utils/common';
 import {
@@ -72,29 +73,6 @@ function decodeLyricPayload(
   );
   return { ...payload, ...(lyric === undefined ? {} : { lyric }) };
 }
-
-const decodeLyricsResponse: Decoder<LyricsResponse> = (input, context) => {
-  const response = decodeRecord(input, context);
-  const lrc =
-    response['lrc'] === undefined
-      ? undefined
-      : decodeLyricPayload(response['lrc'], context, '$.lrc');
-  const tlyric =
-    response['tlyric'] === undefined
-      ? undefined
-      : decodeLyricPayload(response['tlyric'], context, '$.tlyric');
-  const romalrc =
-    response['romalrc'] === undefined
-      ? undefined
-      : decodeLyricPayload(response['romalrc'], context, '$.romalrc');
-  return {
-    ...(lrc === undefined ? {} : { lrc }),
-    ...(tlyric === undefined ? {} : { tlyric }),
-    ...(romalrc === undefined ? {} : { romalrc }),
-    ...('lyricUser' in response ? { lyricUser: response['lyricUser'] } : {}),
-    ...('transUser' in response ? { transUser: response['transUser'] } : {}),
-  };
-};
 
 const decodeCloudLyricResponse: Decoder<{
   lrc?: string | { lyric?: string };
@@ -185,16 +163,8 @@ export function getTrackDetail(
 
 export function getLyric(id: number): Promise<LyricsResponse> {
   const fetchLatest = () => {
-    return request<LyricsResponse>(
-      {
-        url: '/lyric',
-        method: 'get',
-        params: {
-          id,
-        },
-      },
-      decodeLyricsResponse
-    ).then(result => {
+    // Typed sidecar endpoint (core::ncm lyric_new), shared with the TUI.
+    return fetchNeteaseLyrics(id).then(result => {
       cacheLyric(id, result);
       return result;
     });

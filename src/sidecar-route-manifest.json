@@ -257,17 +257,6 @@
     "idempotent": false
   },
   {
-    "id": "lyric",
-    "method": "GET",
-    "path": "/lyric",
-    "requestBuilder": "src/api/track.ts#getLyric",
-    "nodeAdapter": "@neteaseapireborn/api/module/lyric",
-    "rustAdapter": "ncm::lyric",
-    "decoder": "src/api/track.ts#decodeLyricsResponse",
-    "comparator": ["lrc.lyric", "tlyric.lyric", "romalrc.lyric"],
-    "idempotent": true
-  },
-  {
     "id": "mv_detail",
     "method": "GET",
     "path": "/mv/detail",

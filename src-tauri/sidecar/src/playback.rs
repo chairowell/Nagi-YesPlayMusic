@@ -19,7 +19,9 @@ use axum::{
 use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::json;
-use yesplaymusic_core::ncm::{song_url_with, PlaybackSource, SongUrlError};
+use yesplaymusic_core::ncm::{
+    lyrics_with, song_url_with, LyricsPayload, NcmClientError, PlaybackSource, SongUrlError,
+};
 
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -49,6 +51,8 @@ trait PlaybackResolver: Send + Sync {
         track_id: i64,
         bitrate: u32,
     ) -> Result<PlaybackSource, SongUrlError>;
+
+    async fn lyrics(&self, query: Query, track_id: i64) -> Result<LyricsPayload, NcmClientError>;
 }
 
 struct ProductionResolver {
@@ -65,6 +69,10 @@ impl PlaybackResolver for ProductionResolver {
     ) -> Result<PlaybackSource, SongUrlError> {
         song_url_with(&self.client, query, track_id, bitrate).await
     }
+
+    async fn lyrics(&self, query: Query, track_id: i64) -> Result<LyricsPayload, NcmClientError> {
+        lyrics_with(&self.client, query, track_id).await
+    }
 }
 
 #[derive(Deserialize)]
@@ -78,10 +86,29 @@ struct SourceQuery {
     proxy: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct LyricsQuery {
+    #[serde(rename = "realIP")]
+    real_ip: Option<String>,
+    proxy: Option<String>,
+}
+
 pub fn router(state: PlaybackState) -> Router {
     Router::new()
         .route("/native/playback/source/{track_id}", get(source_handler))
+        .route("/native/playback/lyrics/{track_id}", get(lyrics_handler))
         .with_state(state)
+}
+
+fn ncm_query(headers: &HeaderMap, real_ip: Option<String>, proxy: Option<String>) -> Query {
+    let mut query = Query::new();
+    query.cookie = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    query.real_ip = real_ip;
+    query.proxy = proxy;
+    query
 }
 
 async fn source_handler(
@@ -90,16 +117,13 @@ async fn source_handler(
     UrlQuery(query): UrlQuery<SourceQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let mut ncm_query = Query::new();
-    ncm_query.cookie = headers
-        .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
-    ncm_query.real_ip = query.real_ip;
-    ncm_query.proxy = query.proxy;
     let resolved = tokio::time::timeout(
         RESOLVE_TIMEOUT,
-        state.resolver.song_url(ncm_query, track_id, query.bitrate),
+        state.resolver.song_url(
+            ncm_query(&headers, query.real_ip, query.proxy),
+            track_id,
+            query.bitrate,
+        ),
     )
     .await;
     let body = match resolved {
@@ -121,6 +145,51 @@ async fn source_handler(
             (
                 StatusCode::GATEWAY_TIMEOUT,
                 json!({ "status": "error", "message": "playback source resolution timed out" }),
+            )
+        }
+    };
+    let mut response = (body.0, Json(body.1)).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+async fn lyrics_handler(
+    State(state): State<PlaybackState>,
+    Path(track_id): Path<i64>,
+    UrlQuery(query): UrlQuery<LyricsQuery>,
+    headers: HeaderMap,
+) -> Response<Body> {
+    let resolved = tokio::time::timeout(
+        RESOLVE_TIMEOUT,
+        state
+            .resolver
+            .lyrics(ncm_query(&headers, query.real_ip, query.proxy), track_id),
+    )
+    .await;
+    let body = match resolved {
+        Ok(Ok(lyrics)) => (
+            StatusCode::OK,
+            json!({
+                "lrc": lyrics.lrc,
+                "tlyric": lyrics.tlyric,
+                "romalrc": lyrics.romalrc,
+                "yrc": lyrics.yrc,
+            }),
+        ),
+        Ok(Err(error)) => {
+            tracing::warn!(track_id, %error, "lyrics resolution failed");
+            (
+                StatusCode::BAD_GATEWAY,
+                json!({ "status": "error", "message": "could not resolve the lyrics" }),
+            )
+        }
+        Err(_) => {
+            tracing::warn!(track_id, "lyrics resolution timed out");
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                json!({ "status": "error", "message": "lyrics resolution timed out" }),
             )
         }
     };
@@ -163,8 +232,10 @@ mod tests {
 
     use super::*;
 
+    #[derive(Default)]
     struct FakeResolver {
         outcome: Mutex<Option<Result<PlaybackSource, SongUrlError>>>,
+        lyrics_outcome: Mutex<Option<Result<LyricsPayload, NcmClientError>>>,
         seen_query: Mutex<Option<Query>>,
         seen_request: Mutex<Option<(i64, u32)>>,
     }
@@ -173,8 +244,14 @@ mod tests {
         fn new(outcome: Result<PlaybackSource, SongUrlError>) -> Arc<Self> {
             Arc::new(Self {
                 outcome: Mutex::new(Some(outcome)),
-                seen_query: Mutex::new(None),
-                seen_request: Mutex::new(None),
+                ..Self::default()
+            })
+        }
+
+        fn with_lyrics(outcome: Result<LyricsPayload, NcmClientError>) -> Arc<Self> {
+            Arc::new(Self {
+                lyrics_outcome: Mutex::new(Some(outcome)),
+                ..Self::default()
             })
         }
     }
@@ -190,6 +267,20 @@ mod tests {
             *self.seen_query.lock().unwrap() = Some(query);
             *self.seen_request.lock().unwrap() = Some((track_id, bitrate));
             self.outcome.lock().unwrap().take().expect("single call")
+        }
+
+        async fn lyrics(
+            &self,
+            query: Query,
+            track_id: i64,
+        ) -> Result<LyricsPayload, NcmClientError> {
+            *self.seen_query.lock().unwrap() = Some(query);
+            *self.seen_request.lock().unwrap() = Some((track_id, 0));
+            self.lyrics_outcome
+                .lock()
+                .unwrap()
+                .take()
+                .expect("single call")
         }
     }
 
@@ -265,6 +356,43 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "rejected");
         assert_eq!(body["code"], 301);
+    }
+
+    #[tokio::test]
+    async fn lyrics_answer_every_timeline_kind_and_forward_the_cookie() {
+        let resolver = FakeResolver::with_lyrics(Ok(LyricsPayload {
+            lrc: "[00:01]line".into(),
+            tlyric: Some("[00:01]翻译".into()),
+            romalrc: Some("[00:01]ro-ma-ji".into()),
+            yrc: None,
+        }));
+        let (status, body) = request(
+            resolver.clone(),
+            "/native/playback/lyrics/186016?realIP=1.2.3.4",
+            Some("MUSIC_U=token"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["lrc"], "[00:01]line");
+        assert_eq!(body["tlyric"], "[00:01]翻译");
+        assert_eq!(body["romalrc"], "[00:01]ro-ma-ji");
+        assert_eq!(body["yrc"], serde_json::Value::Null);
+        let query = resolver.seen_query.lock().unwrap().take().unwrap();
+        assert_eq!(query.cookie.as_deref(), Some("MUSIC_U=token"));
+        assert_eq!(query.real_ip.as_deref(), Some("1.2.3.4"));
+    }
+
+    #[tokio::test]
+    async fn lyrics_upstream_failure_is_bad_gateway() {
+        let (status, body) = request(
+            FakeResolver::with_lyrics(Err(NcmClientError::InvalidPayload("$.code".into()))),
+            "/native/playback/lyrics/42",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["status"], "error");
     }
 
     #[tokio::test]

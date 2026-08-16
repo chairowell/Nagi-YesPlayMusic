@@ -17,7 +17,7 @@ use crate::{
     session::desktop_session_expiry_cookies,
 };
 
-const FRONTEND_ROUTE_COUNT: usize = 57;
+const FRONTEND_ROUTE_COUNT: usize = 56;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const CLOUD_MULTIPART_BODY_LIMIT_BYTES: usize = 513 * 1024 * 1024;
 const NCM_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -136,7 +136,6 @@ define_production_dispatch!(
     login_qr_key,
     login_refresh,
     logout,
-    lyric,
     mv_detail,
     mv_sub,
     mv_sublist,

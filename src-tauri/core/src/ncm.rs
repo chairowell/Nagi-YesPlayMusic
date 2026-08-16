@@ -78,6 +78,8 @@ pub struct SongRow {
 pub struct LyricsPayload {
     pub lrc: String,
     pub tlyric: Option<String>,
+    /// Romanized lines — only the GUI renders these today.
+    pub romalrc: Option<String>,
     pub yrc: Option<String>,
 }
 
@@ -399,10 +401,7 @@ impl NcmClient {
 
     /// Raw line-, translation-, and word-synchronised lyrics for a song.
     pub async fn lyrics(&self, id: i64) -> Result<LyricsPayload, NcmClientError> {
-        let query = self.query().param("id", &id.to_string());
-        // `lyric_new` sends yv/ytv/yrv, the API's YRC request flags.
-        let response = self.client.lyric_new(&query).await?;
-        parse_lyrics_payload(&response.body)
+        lyrics_with(&self.client, self.query(), id).await
     }
 
     pub async fn search_channel(
@@ -884,11 +883,25 @@ fn parse_md5(value: Option<&str>) -> Result<Option<[u8; 16]>, NcmClientError> {
     Ok(Some(digest))
 }
 
+/// Lyrics for frontends that carry their own cookie transport (the GUI
+/// sidecar forwards the browser cookie on every request).
+pub async fn lyrics_with(
+    client: &ApiClient,
+    query: Query,
+    id: i64,
+) -> Result<LyricsPayload, NcmClientError> {
+    let query = query.param("id", &id.to_string());
+    // `lyric_new` sends yv/ytv/yrv, the API's YRC request flags.
+    let response = client.lyric_new(&query).await?;
+    parse_lyrics_payload(&response.body)
+}
+
 fn parse_lyrics_payload(body: &Value) -> Result<LyricsPayload, NcmClientError> {
     require_success(body)?;
     Ok(LyricsPayload {
         lrc: lyric_text(body, "lrc")?.unwrap_or_default(),
         tlyric: lyric_text(body, "tlyric")?,
+        romalrc: lyric_text(body, "romalrc")?,
         yrc: lyric_text(body, "yrc")?,
     })
 }
@@ -1151,12 +1164,14 @@ mod tests {
             "code": 200,
             "lrc": { "lyric": "[00:01]line" },
             "tlyric": { "lyric": "[00:01]翻译" },
+            "romalrc": { "lyric": "[00:01]ro-ma-ji" },
             "yrc": { "lyric": "[1000,500](1000,500,0)line" }
         }))
         .unwrap();
 
         assert_eq!(payload.lrc, "[00:01]line");
         assert_eq!(payload.tlyric.as_deref(), Some("[00:01]翻译"));
+        assert_eq!(payload.romalrc.as_deref(), Some("[00:01]ro-ma-ji"));
         assert_eq!(payload.yrc.as_deref(), Some("[1000,500](1000,500,0)line"));
     }
 

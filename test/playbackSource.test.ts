@@ -24,9 +24,8 @@ mock.module('@/utils/runtime', () => ({
   isTauriRuntime: true,
 }));
 
-const { playbackBitrate, resolveNeteasePlaybackSource } = await import(
-  '../src/services/playbackSource'
-);
+const { fetchNeteaseLyrics, playbackBitrate, resolveNeteasePlaybackSource } =
+  await import('../src/services/playbackSource');
 
 const originalFetch = globalThis.fetch;
 let fetchCalls: string[] = [];
@@ -124,6 +123,31 @@ describe('播放源解析服务', () => {
 
     answerWith({ status: 'rejected', code: 301 });
     expect(await resolveNeteasePlaybackSource(42)).toBeNull();
+  });
+
+  test('歌词映射回 LyricsResponse 老形状，空段落省略', async () => {
+    answerWith({
+      lrc: '[00:01]line',
+      tlyric: '[00:01]翻译',
+      romalrc: null,
+      yrc: null,
+    });
+
+    const lyrics = await fetchNeteaseLyrics(186016);
+
+    expect(fetchCalls[0]).toBe('/api/native/playback/lyrics/186016');
+    expect(lyrics).toEqual({
+      lrc: { lyric: '[00:01]line' },
+      tlyric: { lyric: '[00:01]翻译' },
+    });
+
+    answerWith({ lrc: '', tlyric: null, romalrc: null, yrc: null });
+    expect(await fetchNeteaseLyrics(42)).toEqual({});
+  });
+
+  test('歌词请求失败会抛错，保持 axios 时代的调用方语义', async () => {
+    answerWith({ status: 'error' }, false);
+    await expect(fetchNeteaseLyrics(42)).rejects.toThrow('歌词请求失败');
   });
 
   test('传输失败与畸形响应都降级为 null', async () => {
