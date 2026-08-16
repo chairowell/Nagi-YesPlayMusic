@@ -19,9 +19,61 @@ use yesplaymusic_core::ncm::{
 use yesplaymusic_core::unm::UnmState;
 
 pub use yesplaymusic_core::ncm::{
-    AlbumHit, ArtistHit, LyricsPayload, PlaylistHit, QrStatus, SearchChannel, SearchPage,
-    SearchPayload, SongRow,
+    AlbumHit, ArtistHit, LyricsPayload, PlaylistHit, QrStatus, SearchChannel, SearchPage, SongRow,
 };
+
+use yesplaymusic_core::ncm::{SearchPayload as CoreSearchPayload, SongHit};
+
+/// Tab order for the TUI's search view; the MV/user channels core also
+/// models have no TUI tab.
+pub trait SearchChannelTabs: Sized + Copy + PartialEq {
+    const TABS: [SearchChannel; 4];
+    fn index(self) -> usize;
+    fn cycle(self, delta: i32) -> Self;
+}
+
+impl SearchChannelTabs for SearchChannel {
+    const TABS: [SearchChannel; 4] = [
+        SearchChannel::Songs,
+        SearchChannel::Artists,
+        SearchChannel::Albums,
+        SearchChannel::Playlists,
+    ];
+
+    fn index(self) -> usize {
+        Self::TABS.iter().position(|tab| *tab == self).unwrap_or(0)
+    }
+
+    fn cycle(self, delta: i32) -> Self {
+        let index = (SearchChannelTabs::index(self) as i32 + delta)
+            .rem_euclid(Self::TABS.len() as i32) as usize;
+        Self::TABS[index]
+    }
+}
+
+/// TUI-facing search payload: song hits collapsed to plain render rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SearchPayload {
+    Songs(SearchPage<SongRow>),
+    Artists(SearchPage<ArtistHit>),
+    Albums(SearchPage<AlbumHit>),
+    Playlists(SearchPage<PlaylistHit>),
+}
+
+fn song_row_from_hit(hit: SongHit) -> SongRow {
+    SongRow {
+        id: hit.id,
+        title: hit.name,
+        artist: hit
+            .artists
+            .first()
+            .map(|artist| artist.name.clone())
+            .unwrap_or_else(|| "?".to_owned()),
+        album: hit.album.name,
+        duration_ms: hit.duration_ms,
+        pic_url: hit.album.pic_url,
+    }
+}
 
 use crate::i18n::{self, Key};
 
@@ -379,13 +431,27 @@ impl Ncm {
         channel: SearchChannel,
         limit: u32,
     ) -> Result<SearchPayload> {
-        self.core
-            .search_channel(keywords, channel, limit)
+        let payload = self
+            .core
+            .search_channel(keywords, channel, limit, 0)
             .await
             .map_err(|error| match error {
                 NcmClientError::Api(error) => anyhow!(i18n::t_api_failed(Key::OpSearch, error)),
                 other => anyhow!(other),
-            })
+            })?;
+        Ok(match payload {
+            CoreSearchPayload::Songs(page) => SearchPayload::Songs(SearchPage {
+                items: page.items.into_iter().map(song_row_from_hit).collect(),
+                total: page.total,
+            }),
+            CoreSearchPayload::Artists(page) => SearchPayload::Artists(page),
+            CoreSearchPayload::Albums(page) => SearchPayload::Albums(page),
+            CoreSearchPayload::Playlists(page) => SearchPayload::Playlists(page),
+            // The TUI's four tabs never request these channels.
+            CoreSearchPayload::MusicVideos(_) | CoreSearchPayload::Users(_) => {
+                return Err(anyhow!(i18n::t(Key::ApiLibraryPayloadMissing)))
+            }
+        })
     }
 
     pub async fn artist_top_songs(&self, artist_id: i64) -> Result<Vec<SongRow>> {

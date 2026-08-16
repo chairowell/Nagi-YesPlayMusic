@@ -1294,6 +1294,7 @@ mod tests {
         assert!(!results.iter().any(|(key, _)| *key == "/"));
 
         state.search.artists.items.push(ArtistHit {
+            img1v1_url: None,
             id: 1,
             name: "Artist".into(),
             pic_url: None,

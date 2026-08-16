@@ -1750,6 +1750,7 @@ async fn search_entity_activation_pushes_and_back_pops_the_detail_page() {
     state.search.channel = crate::api::SearchChannel::Artists;
     state.search.artists.items = vec![
         crate::api::ArtistHit {
+            img1v1_url: None,
             id: 1,
             name: "First".into(),
             pic_url: None,
@@ -1757,6 +1758,7 @@ async fn search_entity_activation_pushes_and_back_pops_the_detail_page() {
             song_count: 2,
         },
         crate::api::ArtistHit {
+            img1v1_url: None,
             id: 2,
             name: "Second".into(),
             pic_url: None,
@@ -1789,9 +1791,13 @@ async fn detail_tracks_support_enqueue_and_context_playback() {
     state.search.input = false;
     state.search.channel = crate::api::SearchChannel::Albums;
     state.search.albums.items.push(crate::api::AlbumHit {
+        mark: 0,
         id: 7,
         name: "Album".into(),
-        artist: "Artist".into(),
+        artist: yesplaymusic_core::ncm::ArtistRef {
+            id: 0,
+            name: "Artist".into(),
+        },
         pic_url: None,
         song_count: 2,
     });
@@ -1835,9 +1841,13 @@ async fn detail_tracks_support_local_filtering() {
     state.search.input = false;
     state.search.channel = crate::api::SearchChannel::Albums;
     state.search.albums.items.push(crate::api::AlbumHit {
+        mark: 0,
         id: 7,
         name: "Album".into(),
-        artist: "Artist".into(),
+        artist: yesplaymusic_core::ncm::ArtistRef {
+            id: 0,
+            name: "Artist".into(),
+        },
         pic_url: None,
         song_count: 2,
     });
@@ -1883,6 +1893,7 @@ async fn detail_track_is_used_for_the_selection_cover_preview() {
     state.search.input = false;
     state.search.channel = crate::api::SearchChannel::Playlists;
     state.search.playlists.items.push(crate::api::PlaylistHit {
+        privacy: 0,
         id: 8,
         name: "Playlist".into(),
         creator: "Listener".into(),
@@ -1914,6 +1925,7 @@ async fn late_detail_result_does_not_move_another_views_selection() {
     let mut state = AppState::new(&Config::default());
     state.search.channel = crate::api::SearchChannel::Playlists;
     state.search.playlists.items.push(crate::api::PlaylistHit {
+        privacy: 0,
         id: 8,
         name: "Playlist".into(),
         creator: "Listener".into(),
@@ -1952,9 +1964,13 @@ async fn search_detail_selection_survives_a_round_trip_through_another_view() {
     state.view = View::Search;
     state.search.channel = crate::api::SearchChannel::Albums;
     state.search.albums.items.push(crate::api::AlbumHit {
+        mark: 0,
         id: 7,
         name: "Album".into(),
-        artist: "Artist".into(),
+        artist: yesplaymusic_core::ncm::ArtistRef {
+            id: 0,
+            name: "Artist".into(),
+        },
         pic_url: None,
         song_count: 3,
     });

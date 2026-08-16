@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::api::{AlbumHit, ArtistHit, PlaylistHit, SearchChannel, SongRow};
+use crate::api::{AlbumHit, ArtistHit, PlaylistHit, SearchChannel, SearchChannelTabs, SongRow};
 use crate::app::AppState;
 use crate::i18n::{self, Key};
 use crate::ui::text::{needs_marquee, pad_display, pad_display_right, pad_or_marquee};
@@ -170,16 +170,16 @@ fn draw_input(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 fn draw_channel_bar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
-    let widths = SearchChannel::ALL.map(|channel| {
+    let widths = SearchChannel::TABS.map(|channel| {
         super::text::display_width(channel_label(channel))
             + usize::from(channel == state.search.channel) * 2
     });
     let labels_width: usize = widths.iter().sum();
-    let gap = if labels_width + CHANNEL_GAP as usize * (SearchChannel::ALL.len() - 1)
+    let gap = if labels_width + CHANNEL_GAP as usize * (SearchChannel::TABS.len() - 1)
         <= area.width as usize
     {
         CHANNEL_GAP
-    } else if labels_width + SearchChannel::ALL.len() - 1 <= area.width as usize {
+    } else if labels_width + SearchChannel::TABS.len() - 1 <= area.width as usize {
         1
     } else {
         0
@@ -190,7 +190,7 @@ fn draw_channel_bar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut 
     }
 
     let mut x = area.x;
-    for (channel, width) in SearchChannel::ALL.into_iter().zip(widths) {
+    for (channel, width) in SearchChannel::TABS.into_iter().zip(widths) {
         let width = width as u16;
         if x.saturating_add(width) > area.right() {
             break;
@@ -234,7 +234,9 @@ fn draw_channel_chip(
 
 fn channel_label(channel: SearchChannel) -> &'static str {
     i18n::t(match channel {
-        SearchChannel::Songs => Key::SearchSongs,
+        SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+            Key::SearchSongs
+        }
         SearchChannel::Artists => Key::SearchArtists,
         SearchChannel::Albums => Key::SearchAlbums,
         SearchChannel::Playlists => Key::SearchPlaylists,
@@ -247,7 +249,7 @@ fn draw_results(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits
     }
 
     match state.search.channel {
-        SearchChannel::Songs => {
+        SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
             if let Some(rows) = state.search.song_rows() {
                 draw_song_rows(frame, state, area, rows, !state.search.input, hits);
             }
@@ -437,7 +439,7 @@ impl<'a> EntityRow<'a> {
     fn from_album(album: &'a AlbumHit) -> Self {
         Self {
             name: &album.name,
-            secondary: &album.artist,
+            secondary: &album.artist.name,
             count: format!(
                 "{} {}",
                 album.song_count,
@@ -646,9 +648,13 @@ mod tests {
         state.search.query = "matrix".into();
         state.search.channel = SearchChannel::Albums;
         state.search.albums.items = vec![AlbumHit {
+            mark: 0,
             id: 42,
             name: "Matrix Album".into(),
-            artist: "Matrix Artist".into(),
+            artist: yesplaymusic_core::ncm::ArtistRef {
+                id: 0,
+                name: "Matrix Artist".into(),
+            },
             pic_url: None,
             song_count: 1,
         }];
@@ -695,6 +701,7 @@ mod tests {
         assert_eq!(page_size(&state, 6), 0);
 
         state.search.artists.items.push(ArtistHit {
+            img1v1_url: None,
             id: 1,
             name: "Artist".into(),
             pic_url: None,
@@ -717,7 +724,7 @@ mod tests {
             .draw(|frame| draw_channel_bar(frame, &state, frame.area(), &mut hits))
             .unwrap();
 
-        assert_eq!(hits.search_channels.len(), SearchChannel::ALL.len());
+        assert_eq!(hits.search_channels.len(), SearchChannel::TABS.len());
         let album = hits
             .search_channels
             .iter()
@@ -837,6 +844,7 @@ mod tests {
         state.search.input = false;
         state.search.query = "jay".into();
         state.search.artists.items = vec![ArtistHit {
+            img1v1_url: None,
             id: 1,
             name: "Jay Chou".into(),
             pic_url: None,

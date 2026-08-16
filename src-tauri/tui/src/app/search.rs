@@ -4,7 +4,8 @@ use tokio::task::AbortHandle;
 
 use crate::action::Action;
 use crate::api::{
-    AlbumHit, ArtistHit, PlaylistHit, SearchChannel, SearchPage, SearchPayload, SongRow,
+    AlbumHit, ArtistHit, PlaylistHit, SearchChannel, SearchChannelTabs, SearchPage, SearchPayload,
+    SongRow,
 };
 use crate::i18n::{self, Key};
 
@@ -295,7 +296,9 @@ impl SearchState {
             return detail.rows.len();
         }
         match self.channel {
-            SearchChannel::Songs => self.songs.items.len(),
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                self.songs.items.len()
+            }
             SearchChannel::Artists => self.artists.items.len(),
             SearchChannel::Albums => self.albums.items.len(),
             SearchChannel::Playlists => self.playlists.items.len(),
@@ -307,7 +310,9 @@ impl SearchState {
             return detail.rows.len();
         }
         match self.channel {
-            SearchChannel::Songs => self.songs.total,
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                self.songs.total
+            }
             SearchChannel::Artists => self.artists.total,
             SearchChannel::Albums => self.albums.total,
             SearchChannel::Playlists => self.playlists.total,
@@ -326,7 +331,9 @@ impl SearchState {
             return detail.error.as_deref();
         }
         match self.channel {
-            SearchChannel::Songs => self.songs.error.as_deref(),
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                self.songs.error.as_deref()
+            }
             SearchChannel::Artists => self.artists.error.as_deref(),
             SearchChannel::Albums => self.albums.error.as_deref(),
             SearchChannel::Playlists => self.playlists.error.as_deref(),
@@ -423,7 +430,9 @@ impl SearchState {
             channel,
         };
         match channel {
-            SearchChannel::Songs => self.songs.begin(request.clone()),
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                self.songs.begin(request.clone())
+            }
             SearchChannel::Artists => self.artists.begin(request.clone()),
             SearchChannel::Albums => self.albums.begin(request.clone()),
             SearchChannel::Playlists => self.playlists.begin(request.clone()),
@@ -438,7 +447,9 @@ impl SearchState {
         task: AbortHandle,
     ) {
         let active_seq = match channel {
-            SearchChannel::Songs => self.songs.active.as_ref().map(|request| request.seq),
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                self.songs.active.as_ref().map(|request| request.seq)
+            }
             SearchChannel::Artists => self.artists.active.as_ref().map(|request| request.seq),
             SearchChannel::Albums => self.albums.active.as_ref().map(|request| request.seq),
             SearchChannel::Playlists => self.playlists.active.as_ref().map(|request| request.seq),
@@ -462,7 +473,7 @@ impl SearchState {
 
     fn bucket_loaded_or_loading(&self, channel: SearchChannel, query: &str) -> bool {
         match channel {
-            SearchChannel::Songs => {
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
                 self.songs.is_loaded_for(query) || self.songs.is_loading_for(query)
             }
             SearchChannel::Artists => {
@@ -479,7 +490,9 @@ impl SearchState {
 
     fn bucket_searching(&self, channel: SearchChannel) -> bool {
         match channel {
-            SearchChannel::Songs => self.songs.searching,
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                self.songs.searching
+            }
             SearchChannel::Artists => self.artists.searching,
             SearchChannel::Albums => self.albums.searching,
             SearchChannel::Playlists => self.playlists.searching,
@@ -488,7 +501,9 @@ impl SearchState {
 
     fn bucket_is_loading(&self, channel: SearchChannel, query: &str) -> bool {
         match channel {
-            SearchChannel::Songs => self.songs.is_loading_for(query),
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                self.songs.is_loading_for(query)
+            }
             SearchChannel::Artists => self.artists.is_loading_for(query),
             SearchChannel::Albums => self.albums.is_loading_for(query),
             SearchChannel::Playlists => self.playlists.is_loading_for(query),
@@ -596,7 +611,7 @@ impl SearchState {
                 .items
                 .get(selected)
                 .map(|item| (item.id, item.name.clone(), item.cover_url.clone())),
-            SearchChannel::Songs => None,
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => None,
         }?;
         self.cancel_detail_task();
         self.remember_selection(selected);
@@ -662,7 +677,9 @@ impl SearchState {
                     .position(|item| item.id == detail.id),
                 self.playlists.items.len(),
             ),
-            SearchChannel::Songs => (None, self.songs.items.len()),
+            SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                (None, self.songs.items.len())
+            }
         };
         let selected =
             matching.unwrap_or_else(|| detail.parent_selected.min(len.saturating_sub(1)));
@@ -792,7 +809,9 @@ pub(super) fn spawn_search_detail(fx: &Effects, request: DetailRequest) -> Abort
                 SearchChannel::Artists => ncm.artist_top_songs(request.id).await,
                 SearchChannel::Albums => ncm.album_songs(request.id).await,
                 SearchChannel::Playlists => ncm.playlist_detail_songs(request.id).await,
-                SearchChannel::Songs => Ok(Vec::new()),
+                SearchChannel::Songs | SearchChannel::MusicVideos | SearchChannel::Users => {
+                    Ok(Vec::new())
+                }
             }
         })
         .await;
@@ -884,6 +903,7 @@ mod tests {
         let (_, request) = state.select_channel(SearchChannel::Artists, 0);
         assert!(request.is_none());
         state.artists.items.push(ArtistHit {
+            img1v1_url: None,
             id: 7,
             name: "Artist".into(),
             pic_url: None,
@@ -902,16 +922,24 @@ mod tests {
         state.channel = SearchChannel::Albums;
         state.albums.items = vec![
             AlbumHit {
+                mark: 0,
                 id: 1,
                 name: "First".into(),
-                artist: "Artist".into(),
+                artist: yesplaymusic_core::ncm::ArtistRef {
+                    id: 0,
+                    name: "Artist".into(),
+                },
                 pic_url: None,
                 song_count: 1,
             },
             AlbumHit {
+                mark: 0,
                 id: 2,
                 name: "Second".into(),
-                artist: "Artist".into(),
+                artist: yesplaymusic_core::ncm::ArtistRef {
+                    id: 0,
+                    name: "Artist".into(),
+                },
                 pic_url: None,
                 song_count: 2,
             },
@@ -929,6 +957,7 @@ mod tests {
         state.channel = SearchChannel::Artists;
         state.artists.items = vec![
             ArtistHit {
+                img1v1_url: None,
                 id: 1,
                 name: "First".into(),
                 pic_url: None,
@@ -936,6 +965,7 @@ mod tests {
                 song_count: 1,
             },
             ArtistHit {
+                img1v1_url: None,
                 id: 2,
                 name: "Second".into(),
                 pic_url: None,
@@ -946,6 +976,7 @@ mod tests {
         state.open_detail(1).unwrap();
         state.artists.items = vec![
             ArtistHit {
+                img1v1_url: None,
                 id: 2,
                 name: "Second".into(),
                 pic_url: None,
@@ -953,6 +984,7 @@ mod tests {
                 song_count: 1,
             },
             ArtistHit {
+                img1v1_url: None,
                 id: 3,
                 name: "Third".into(),
                 pic_url: None,
@@ -974,6 +1006,7 @@ mod tests {
         state.channel = SearchChannel::Artists;
         state.artists.items = vec![
             ArtistHit {
+                img1v1_url: None,
                 id: 1,
                 name: "First".into(),
                 pic_url: None,
@@ -981,6 +1014,7 @@ mod tests {
                 song_count: 1,
             },
             ArtistHit {
+                img1v1_url: None,
                 id: 2,
                 name: "Second".into(),
                 pic_url: Some("https://example.test/cover.jpg".into()),
@@ -1007,6 +1041,7 @@ mod tests {
         let mut state = SearchState::new();
         state.channel = SearchChannel::Artists;
         state.artists.items.push(ArtistHit {
+            img1v1_url: None,
             id: 7,
             name: "Artist".into(),
             pic_url: None,

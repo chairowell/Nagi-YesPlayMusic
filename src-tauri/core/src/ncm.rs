@@ -83,6 +83,8 @@ pub struct LyricsPayload {
     pub yrc: Option<String>,
 }
 
+/// The cloudsearch channels both frontends can request. Tab order and
+/// cycling are view concerns and live with each frontend.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum SearchChannel {
     #[default]
@@ -90,31 +92,31 @@ pub enum SearchChannel {
     Artists,
     Albums,
     Playlists,
+    MusicVideos,
+    Users,
 }
 
 impl SearchChannel {
-    pub const ALL: [Self; 4] = [Self::Songs, Self::Artists, Self::Albums, Self::Playlists];
-
-    pub const fn index(self) -> usize {
-        match self {
-            Self::Songs => 0,
-            Self::Artists => 1,
-            Self::Albums => 2,
-            Self::Playlists => 3,
-        }
-    }
-
-    pub fn cycle(self, delta: i32) -> Self {
-        let index = (self.index() as i32 + delta).rem_euclid(Self::ALL.len() as i32) as usize;
-        Self::ALL[index]
-    }
-
-    const fn api_type(self) -> &'static str {
+    pub const fn api_type(self) -> &'static str {
         match self {
             Self::Songs => "1",
             Self::Artists => "100",
             Self::Albums => "10",
             Self::Playlists => "1000",
+            Self::MusicVideos => "1004",
+            Self::Users => "1002",
+        }
+    }
+
+    pub fn from_api_type(code: &str) -> Option<Self> {
+        match code {
+            "1" => Some(Self::Songs),
+            "100" => Some(Self::Artists),
+            "10" => Some(Self::Albums),
+            "1000" => Some(Self::Playlists),
+            "1004" => Some(Self::MusicVideos),
+            "1002" => Some(Self::Users),
+            _ => None,
         }
     }
 }
@@ -126,10 +128,53 @@ pub struct SearchPage<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistRef {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlbumRef {
+    pub id: i64,
+    pub name: String,
+    pub pic_url: Option<String>,
+}
+
+/// Per-song play permission bits, carried verbatim so frontends can apply
+/// their account-aware playability policy (VIP tier lives client-side).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SongPrivilege {
+    pub pl: i64,
+    pub cs: bool,
+    pub fee: i64,
+    pub st: i64,
+}
+
+/// One song search result with everything the richest frontend renders:
+/// linkable artist/album ids, subtitle aliases, the explicit-content mark
+/// and raw permission fields.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SongHit {
+    pub id: i64,
+    pub name: String,
+    pub artists: Vec<ArtistRef>,
+    pub album: AlbumRef,
+    pub duration_ms: i64,
+    pub alias: Vec<String>,
+    pub trans_names: Vec<String>,
+    pub mark: i64,
+    pub fee: Option<i64>,
+    pub no_copyright_rcmd: bool,
+    pub privilege: Option<SongPrivilege>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArtistHit {
     pub id: i64,
     pub name: String,
     pub pic_url: Option<String>,
+    /// The square avatar variant the GUI prefers over `pic_url`.
+    pub img1v1_url: Option<String>,
     pub album_count: usize,
     pub song_count: usize,
 }
@@ -138,9 +183,10 @@ pub struct ArtistHit {
 pub struct AlbumHit {
     pub id: i64,
     pub name: String,
-    pub artist: String,
+    pub artist: ArtistRef,
     pub pic_url: Option<String>,
     pub song_count: usize,
+    pub mark: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,14 +196,34 @@ pub struct PlaylistHit {
     pub creator: String,
     pub cover_url: Option<String>,
     pub track_count: usize,
+    /// `10` means a private playlist (the GUI shows a lock badge).
+    pub privacy: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MvHit {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: Option<String>,
+    pub artist_id: i64,
+    pub artist_name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserHit {
+    pub user_id: i64,
+    pub nickname: String,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SearchPayload {
-    Songs(SearchPage<SongRow>),
+    Songs(SearchPage<SongHit>),
     Artists(SearchPage<ArtistHit>),
     Albums(SearchPage<AlbumHit>),
     Playlists(SearchPage<PlaylistHit>),
+    MusicVideos(SearchPage<MvHit>),
+    Users(SearchPage<UserHit>),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -409,14 +475,9 @@ impl NcmClient {
         keywords: &str,
         channel: SearchChannel,
         limit: u32,
+        offset: u32,
     ) -> Result<SearchPayload, NcmClientError> {
-        let query = self
-            .query()
-            .param("keywords", keywords)
-            .param("type", channel.api_type())
-            .param("limit", &limit.to_string());
-        let response = self.client.cloudsearch(&query).await?;
-        parse_search_payload(&response.body, channel)
+        search_with(&self.client, self.query(), keywords, channel, limit, offset).await
     }
 
     pub async fn artist_top_songs(&self, artist_id: i64) -> Result<Vec<SongRow>, NcmClientError> {
@@ -570,7 +631,7 @@ fn parse_search_payload(
             Ok(SearchPayload::Songs(SearchPage {
                 items: search_result_array(body, &["result", "songs"], total)?
                     .iter()
-                    .map(parse_song_row)
+                    .map(parse_song_hit)
                     .collect::<Result<_, _>>()?,
                 total,
             }))
@@ -601,6 +662,26 @@ fn parse_search_payload(
                 items: search_result_array(body, &["result", "playlists"], total)?
                     .iter()
                     .map(parse_playlist_hit)
+                    .collect::<Result<_, _>>()?,
+                total,
+            }))
+        }
+        SearchChannel::MusicVideos => {
+            let total = required_usize(body, &["result", "mvCount"])?;
+            Ok(SearchPayload::MusicVideos(SearchPage {
+                items: search_result_array(body, &["result", "mvs"], total)?
+                    .iter()
+                    .map(parse_mv_hit)
+                    .collect::<Result<_, _>>()?,
+                total,
+            }))
+        }
+        SearchChannel::Users => {
+            let total = required_usize(body, &["result", "userprofileCount"])?;
+            Ok(SearchPayload::Users(SearchPage {
+                items: search_result_array(body, &["result", "userprofiles"], total)?
+                    .iter()
+                    .map(parse_user_hit)
                     .collect::<Result<_, _>>()?,
                 total,
             }))
@@ -677,19 +758,72 @@ fn parse_song_row(song: &Value) -> Result<SongRow, NcmClientError> {
     })
 }
 
+fn parse_song_hit(song: &Value) -> Result<SongHit, NcmClientError> {
+    let row = parse_song_row(song)?;
+    let artists = required_array(song, &["ar"])?
+        .iter()
+        .map(|artist| {
+            Ok(ArtistRef {
+                // Some catalog entries carry id 0 artists; the row parser
+                // already guaranteed at least one named entry exists.
+                id: artist["id"].as_i64().unwrap_or(0),
+                name: required_string(artist, &["name"])?,
+            })
+        })
+        .collect::<Result<_, NcmClientError>>()?;
+    Ok(SongHit {
+        id: row.id,
+        name: row.title,
+        artists,
+        album: AlbumRef {
+            id: song["al"]["id"].as_i64().unwrap_or(0),
+            name: row.album,
+            pic_url: row.pic_url,
+        },
+        duration_ms: row.duration_ms,
+        alias: string_list(song, "alia"),
+        trans_names: string_list(song, "tns"),
+        mark: song["mark"].as_i64().unwrap_or(0),
+        fee: song["fee"].as_i64(),
+        no_copyright_rcmd: !song["noCopyrightRcmd"].is_null(),
+        privilege: parse_song_privilege(&song["privilege"]),
+    })
+}
+
+fn parse_song_privilege(privilege: &Value) -> Option<SongPrivilege> {
+    privilege.as_object().map(|fields| SongPrivilege {
+        pl: fields.get("pl").and_then(Value::as_i64).unwrap_or(0),
+        cs: fields.get("cs").and_then(Value::as_bool).unwrap_or(false),
+        fee: fields.get("fee").and_then(Value::as_i64).unwrap_or(0),
+        st: fields.get("st").and_then(Value::as_i64).unwrap_or(0),
+    })
+}
+
+fn string_list(value: &Value, field: &str) -> Vec<String> {
+    value[field]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn parse_artist_hit(artist: &Value) -> Result<ArtistHit, NcmClientError> {
     let id = required_i64(artist, &["id"])?;
     if id <= 0 {
         return Err(invalid_payload("$.id"));
     }
-    let pic_url = match optional_string(artist, "picUrl")? {
-        Some(pic_url) => Some(pic_url),
-        None => optional_string(artist, "img1v1Url")?,
-    };
+    let pic_url = optional_string(artist, "picUrl")?;
+    let img1v1_url = optional_string(artist, "img1v1Url")?;
     Ok(ArtistHit {
         id,
         name: required_string(artist, &["name"])?,
-        pic_url,
+        pic_url: pic_url.clone().or_else(|| img1v1_url.clone()),
+        img1v1_url,
         album_count: required_usize(artist, &["albumSize"])?,
         song_count: required_usize(artist, &["musicSize"])?,
     })
@@ -703,9 +837,13 @@ fn parse_album_hit(album: &Value) -> Result<AlbumHit, NcmClientError> {
     Ok(AlbumHit {
         id,
         name: required_string(album, &["name"])?,
-        artist: required_string(album, &["artist", "name"])?,
+        artist: ArtistRef {
+            id: album["artist"]["id"].as_i64().unwrap_or(0),
+            name: required_string(album, &["artist", "name"])?,
+        },
         pic_url: optional_string(album, "picUrl")?,
         song_count: required_usize(album, &["size"])?,
+        mark: album["mark"].as_i64().unwrap_or(0),
     })
 }
 
@@ -720,6 +858,55 @@ fn parse_playlist_hit(playlist: &Value) -> Result<PlaylistHit, NcmClientError> {
         creator: required_string(playlist, &["creator", "nickname"])?,
         cover_url: optional_string(playlist, "coverImgUrl")?,
         track_count: required_usize(playlist, &["trackCount"])?,
+        privacy: playlist["privacy"].as_i64().unwrap_or(0),
+    })
+}
+
+fn parse_mv_hit(mv: &Value) -> Result<MvHit, NcmClientError> {
+    let id = mv["id"].as_i64().or_else(|| mv["vid"].as_i64());
+    let Some(id) = id.filter(|id| *id > 0) else {
+        return Err(invalid_payload("$.id"));
+    };
+    let name = mv["name"]
+        .as_str()
+        .or_else(|| mv["title"].as_str())
+        .ok_or_else(|| invalid_payload("$.name"))?
+        .to_owned();
+    // Same fallback chain the GUI has always used for MV covers/credits.
+    let cover_url = mv["imgurl16v9"]
+        .as_str()
+        .or_else(|| mv["cover"].as_str())
+        .or_else(|| mv["coverUrl"].as_str())
+        .filter(|url| !url.is_empty())
+        .map(str::to_owned);
+    let (artist_id, artist_name) = match mv["artistName"].as_str() {
+        Some(artist_name) => (mv["artistId"].as_i64().unwrap_or(0), artist_name.to_owned()),
+        None => (
+            mv["creator"][0]["userId"].as_i64().unwrap_or(0),
+            mv["creator"][0]["userName"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned(),
+        ),
+    };
+    Ok(MvHit {
+        id,
+        name,
+        cover_url,
+        artist_id,
+        artist_name,
+    })
+}
+
+fn parse_user_hit(user: &Value) -> Result<UserHit, NcmClientError> {
+    let user_id = required_i64(user, &["userId"])?;
+    if user_id <= 0 {
+        return Err(invalid_payload("$.userId"));
+    }
+    Ok(UserHit {
+        user_id,
+        nickname: required_string(user, &["nickname"])?,
+        avatar_url: optional_string(user, "avatarUrl")?,
     })
 }
 
@@ -881,6 +1068,25 @@ fn parse_md5(value: Option<&str>) -> Result<Option<[u8; 16]>, NcmClientError> {
         })?;
     }
     Ok(Some(digest))
+}
+
+/// Search for frontends that carry their own cookie transport (the GUI
+/// sidecar forwards the browser cookie on every request).
+pub async fn search_with(
+    client: &ApiClient,
+    query: Query,
+    keywords: &str,
+    channel: SearchChannel,
+    limit: u32,
+    offset: u32,
+) -> Result<SearchPayload, NcmClientError> {
+    let query = query
+        .param("keywords", keywords)
+        .param("type", channel.api_type())
+        .param("limit", &limit.to_string())
+        .param("offset", &offset.to_string());
+    let response = client.cloudsearch(&query).await?;
+    parse_search_payload(&response.body, channel)
 }
 
 /// Lyrics for frontends that carry their own cookie transport (the GUI
@@ -1227,13 +1433,19 @@ mod tests {
 
     #[test]
     fn search_channels_use_the_documented_ncm_types() {
-        assert_eq!(
-            SearchChannel::ALL.map(SearchChannel::api_type),
-            ["1", "100", "10", "1000"]
-        );
-        assert_eq!(SearchChannel::Songs.cycle(-1), SearchChannel::Playlists);
-        assert_eq!(SearchChannel::Playlists.cycle(1), SearchChannel::Songs);
-        assert_eq!(SearchChannel::Albums.index(), 2);
+        let channels = [
+            (SearchChannel::Songs, "1"),
+            (SearchChannel::Artists, "100"),
+            (SearchChannel::Albums, "10"),
+            (SearchChannel::Playlists, "1000"),
+            (SearchChannel::MusicVideos, "1004"),
+            (SearchChannel::Users, "1002"),
+        ];
+        for (channel, code) in channels {
+            assert_eq!(channel.api_type(), code);
+            assert_eq!(SearchChannel::from_api_type(code), Some(channel));
+        }
+        assert_eq!(SearchChannel::from_api_type("1006"), None);
     }
 
     #[test]
@@ -1250,8 +1462,16 @@ mod tests {
             panic!("song search returned the wrong variant");
         };
         assert_eq!(songs.total, 1);
-        assert_eq!(songs.items[0].title, "晴天");
-        assert_eq!(songs.items[0].album, "叶惠美");
+        assert_eq!(songs.items[0].name, "晴天");
+        assert_eq!(songs.items[0].album.name, "叶惠美");
+        assert_eq!(songs.items[0].album.id, 18_905);
+        assert_eq!(
+            songs.items[0].artists,
+            vec![ArtistRef {
+                id: 6_452,
+                name: "周杰伦".into()
+            }]
+        );
 
         let artists = parse_search_payload(
             &serde_json::json!({
@@ -1303,7 +1523,7 @@ mod tests {
             panic!("album search returned the wrong variant");
         };
         assert_eq!(albums.total, 12);
-        assert_eq!(albums.items[0].artist, "周杰伦");
+        assert_eq!(albums.items[0].artist.name, "周杰伦");
         assert_eq!(albums.items[0].song_count, 11);
 
         let playlists = parse_search_payload(
@@ -1329,6 +1549,93 @@ mod tests {
         assert_eq!(playlists.total, 9);
         assert_eq!(playlists.items[0].creator, "网易云音乐");
         assert_eq!(playlists.items[0].track_count, 100);
+        assert_eq!(playlists.items[0].privacy, 0);
+
+        let mvs = parse_search_payload(
+            &serde_json::json!({
+                "code": 200,
+                "result": {
+                    "mvCount": 4,
+                    "mvs": [{
+                        "id": 10_902_601,
+                        "name": "晴天 (MV)",
+                        "cover": "https://example.test/mv.jpg",
+                        "artistName": "周杰伦",
+                        "artistId": 6_452
+                    }]
+                }
+            }),
+            SearchChannel::MusicVideos,
+        )
+        .unwrap();
+        let SearchPayload::MusicVideos(mvs) = mvs else {
+            panic!("MV search returned the wrong variant");
+        };
+        assert_eq!(mvs.total, 4);
+        assert_eq!(
+            mvs.items[0].cover_url.as_deref(),
+            Some("https://example.test/mv.jpg")
+        );
+        assert_eq!(mvs.items[0].artist_id, 6_452);
+
+        let users = parse_search_payload(
+            &serde_json::json!({
+                "code": 200,
+                "result": {
+                    "userprofileCount": 2,
+                    "userprofiles": [{
+                        "userId": 32_953_014,
+                        "nickname": "圈圈",
+                        "avatarUrl": "https://example.test/avatar.jpg"
+                    }]
+                }
+            }),
+            SearchChannel::Users,
+        )
+        .unwrap();
+        let SearchPayload::Users(users) = users else {
+            panic!("user search returned the wrong variant");
+        };
+        assert_eq!(users.total, 2);
+        assert_eq!(users.items[0].nickname, "圈圈");
+    }
+
+    #[test]
+    fn song_hits_carry_link_ids_marks_and_raw_permission_fields() {
+        let hit = parse_song_hit(&serde_json::json!({
+            "id": 186_016,
+            "name": "晴天",
+            "ar": [
+                { "id": 6_452, "name": "周杰伦" },
+                { "id": 0, "name": "客串" }
+            ],
+            "al": { "id": 18_905, "name": "叶惠美", "picUrl": "https://example.test/cover.jpg" },
+            "dt": 269_000,
+            "alia": ["别名"],
+            "tns": ["Sunny Day"],
+            "mark": 1_048_576,
+            "fee": 1,
+            "noCopyrightRcmd": Value::Null,
+            "privilege": { "pl": 128_000, "fee": 1, "st": 0 }
+        }))
+        .unwrap();
+
+        assert_eq!(hit.artists.len(), 2);
+        assert_eq!(hit.album.id, 18_905);
+        assert_eq!(hit.alias, vec!["别名"]);
+        assert_eq!(hit.trans_names, vec!["Sunny Day"]);
+        assert_eq!(hit.mark, 1_048_576);
+        assert_eq!(hit.fee, Some(1));
+        assert!(!hit.no_copyright_rcmd);
+        assert_eq!(
+            hit.privilege,
+            Some(SongPrivilege {
+                pl: 128_000,
+                cs: false,
+                fee: 1,
+                st: 0
+            })
+        );
     }
 
     #[test]
@@ -1371,6 +1678,8 @@ mod tests {
                 SearchPayload::Artists(page) => (page.items.len(), page.total),
                 SearchPayload::Albums(page) => (page.items.len(), page.total),
                 SearchPayload::Playlists(page) => (page.items.len(), page.total),
+                SearchPayload::MusicVideos(page) => (page.items.len(), page.total),
+                SearchPayload::Users(page) => (page.items.len(), page.total),
             };
             assert_eq!((len, total), (0, 0));
         }
@@ -1404,6 +1713,8 @@ mod tests {
                 SearchPayload::Artists(page) => (page.items.len(), page.total),
                 SearchPayload::Albums(page) => (page.items.len(), page.total),
                 SearchPayload::Playlists(page) => (page.items.len(), page.total),
+                SearchPayload::MusicVideos(page) => (page.items.len(), page.total),
+                SearchPayload::Users(page) => (page.items.len(), page.total),
             };
             assert_eq!((len, total), (0, 0));
         }
