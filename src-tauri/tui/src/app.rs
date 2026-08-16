@@ -56,7 +56,10 @@ pub struct Effects {
     pub config_path: std::path::PathBuf,
 }
 
-const COVER_SOURCE_EDGE: u32 = 500;
+// Terminal graphics never upscale (Resize::Fit): the source must out-resolve
+// the cover area or a fullscreen retina window shows a half-sized cover.
+// 1024px covers a ~32-row cover column at typical retina cell sizes.
+const COVER_SOURCE_EDGE: u32 = 1024;
 pub(crate) const PREVIEW_CELLS: (u16, u16) = (22, 11);
 const HOT_PIXEL_COVER_LIMIT: usize = 64;
 
@@ -196,7 +199,16 @@ fn query_graphics_picker(mode: CoverMode, background: Color) -> Option<Picker> {
     if mode != CoverMode::Original {
         return None;
     }
-    let queried = Picker::from_query_stdio().ok();
+    let queried = match Picker::from_query_stdio() {
+        Ok(picker) => {
+            tracing::debug!(protocol = ?picker.protocol_type(), font = ?picker.font_size(), "graphics query answered");
+            Some(picker)
+        }
+        Err(error) => {
+            tracing::debug!(%error, "graphics query failed");
+            None
+        }
+    };
     // ratatui-image's query bundle includes its own OSC 11, and its parser
     // can stop reading before a slow terminal finishes answering. Sweep the
     // leftovers before the event stream starts, or they arrive as phantom
@@ -441,6 +453,9 @@ pub struct AppState {
     original_cover: Option<OriginalCover>,
     selected_original_cover: Option<OriginalCover>,
     bar_original_cover: Option<OriginalCover>,
+    /// Debug probes: last logged render areas, so --debug traces size changes.
+    debug_playing_cover_area: Option<Rect>,
+    debug_bar_cover_area: Option<Rect>,
     selected_cover: SelectionCoverState,
     hot_pixel_covers: HotPixelCovers,
     pub idle_art: PixelCover,
@@ -546,6 +561,8 @@ impl AppState {
             original_cover: None,
             selected_original_cover: None,
             bar_original_cover: None,
+            debug_playing_cover_area: None,
+            debug_bar_cover_area: None,
             selected_cover: SelectionCoverState {
                 generation: 0,
                 key: None,
@@ -1013,13 +1030,22 @@ impl AppState {
 
     pub fn render_original_cover(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         if let Some(original) = &mut self.original_cover {
+            if self.debug_playing_cover_area != Some(area) {
+                self.debug_playing_cover_area = Some(area);
+                tracing::debug!(
+                    ?area,
+                    empty = original.protocol.protocol_type().is_none(),
+                    "playing cover render area changed"
+                );
+            }
             frame.render_stateful_widget(StatefulImage::new(), area, &mut original.protocol);
         }
     }
 
     fn apply_original_resize(&mut self, response: ResizeResponse) {
         if let Some(original) = &mut self.original_cover {
-            original.protocol.update_resized_protocol(response);
+            let accepted = original.protocol.update_resized_protocol(response);
+            tracing::debug!(accepted, "playing cover resize response");
         }
     }
 
@@ -1033,13 +1059,18 @@ impl AppState {
 
     pub fn render_bar_original(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         if let Some(original) = &mut self.bar_original_cover {
+            if self.debug_bar_cover_area != Some(area) {
+                self.debug_bar_cover_area = Some(area);
+                tracing::debug!(?area, "bar cover render area changed");
+            }
             frame.render_stateful_widget(StatefulImage::new(), area, &mut original.protocol);
         }
     }
 
     fn apply_bar_original_resize(&mut self, response: ResizeResponse) {
         if let Some(original) = &mut self.bar_original_cover {
-            original.protocol.update_resized_protocol(response);
+            let accepted = original.protocol.update_resized_protocol(response);
+            tracing::debug!(accepted, "bar cover resize response");
         }
     }
 
