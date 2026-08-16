@@ -33,6 +33,7 @@ import {
   createBlobAudioSource,
   createRemoteAudioSource,
   discardFailedCache,
+  isCacheCorruptionError,
   resolveAudioSource,
   toHowlSourceOptions,
 } from '@/utils/audioSource';
@@ -638,7 +639,7 @@ export default class Player {
     if (isSharedAudioProxyURL(failedSource.url)) {
       reportSharedCacheFailure();
     }
-    if (failedSource.origin === 'cache') {
+    if (failedSource.origin === 'cache' && isCacheCorruptionError(errCode)) {
       await discardFailedCache(
         async trackID => {
           const tasks: Promise<unknown>[] = [deleteTrackSource(trackID)];

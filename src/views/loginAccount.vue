@@ -221,7 +221,14 @@ export default defineComponent({
           .then(this.handleLoginResponse)
           .catch(error => {
             this.processing = false;
-            nativeAlert(`发生错误，请检查你的账号密码是否正确\n${error}`);
+            // No HTTP response = the request never reached the server;
+            // blaming the credentials would send the user to reset a
+            // perfectly good password.
+            nativeAlert(
+              error?.response !== undefined
+                ? `发生错误，请检查你的账号密码是否正确\n${error}`
+                : `网络不可用或服务未就绪，请检查网络后重试\n${error}`
+            );
           });
       } else {
         this.processing = this.validateEmail();
@@ -234,7 +241,14 @@ export default defineComponent({
           .then(this.handleLoginResponse)
           .catch(error => {
             this.processing = false;
-            nativeAlert(`发生错误，请检查你的账号密码是否正确\n${error}`);
+            // No HTTP response = the request never reached the server;
+            // blaming the credentials would send the user to reset a
+            // perfectly good password.
+            nativeAlert(
+              error?.response !== undefined
+                ? `发生错误，请检查你的账号密码是否正确\n${error}`
+                : `网络不可用或服务未就绪，请检查网络后重试\n${error}`
+            );
           });
       }
     },

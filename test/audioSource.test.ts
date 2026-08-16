@@ -4,6 +4,7 @@ import {
   createRemoteAudioSource,
   discardFailedCache,
   getAudioSourceOriginsAfter,
+  isCacheCorruptionError,
   normalizeAudioFormat,
   resolveAudioSource,
   toHowlSourceOptions,
@@ -91,6 +92,17 @@ describe('音源失败降级顺序', () => {
 
     expect(calls).toEqual(['netease', 'netease:error', 'unm']);
     expect(source?.origin).toBe('unm');
+  });
+
+  test('只有解码类错误才算缓存损坏，网络错误不能误删离线副本', () => {
+    // MediaError: 3 = DECODE, 4 = SRC_NOT_SUPPORTED → 真损坏
+    expect(isCacheCorruptionError(3)).toBe(true);
+    expect(isCacheCorruptionError(4)).toBe(true);
+    // 2 = NETWORK（Sidecar 重启 / 回环断开）以及未知形态 → 保留缓存
+    expect(isCacheCorruptionError(2)).toBe(false);
+    expect(isCacheCorruptionError(1)).toBe(false);
+    expect(isCacheCorruptionError(undefined)).toBe(false);
+    expect(isCacheCorruptionError('Decoding failed')).toBe(false);
   });
 
   test('删除毒缓存失败只记录错误，不阻断后续音源降级', async () => {

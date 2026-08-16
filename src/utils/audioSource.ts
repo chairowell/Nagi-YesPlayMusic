@@ -199,6 +199,13 @@ export async function resolveAudioSource(
   return null;
 }
 
+// MediaError 3 (DECODE) / 4 (SRC_NOT_SUPPORTED) mean the bytes themselves
+// are bad. 2 (NETWORK) is the transport — a sidecar restart or a cut
+// loopback — and must not cost the offline copy.
+export function isCacheCorruptionError(errCode: unknown): boolean {
+  return errCode === 3 || errCode === 4;
+}
+
 export async function discardFailedCache<TId, TResult>(
   deleteSource: (trackID: TId) => TResult | Promise<TResult>,
   trackID: TId,
