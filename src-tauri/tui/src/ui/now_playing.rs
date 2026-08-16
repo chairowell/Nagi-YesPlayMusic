@@ -516,13 +516,13 @@ fn current_lyric_spans(
 }
 
 /// Bottom strip for the browsing views. Short terminals get two content
-/// rows (title + controls); tall ones add the mini cover and a spectrum
-/// band. The last row always stays blank so the bar never touches the
-/// footer hints.
+/// rows (title + controls); tall ones add the mini cover and the current
+/// lyric pair. The last row always stays blank so the bar never touches
+/// the footer hints.
 pub(super) const PLAYER_BAR_HEIGHT: u16 = 3;
-pub(super) const PLAYER_BAR_EXPANDED_HEIGHT: u16 = 7;
-/// Mini pixel cover: 6 rows of half-blocks make a 12×12 pixel square.
-pub(crate) const PLAYER_BAR_COVER_CELLS: (u16, u16) = (12, 6);
+pub(super) const PLAYER_BAR_EXPANDED_HEIGHT: u16 = 9;
+/// Mini pixel cover: 8 rows of half-blocks make a 16×16 pixel square.
+pub(crate) const PLAYER_BAR_COVER_CELLS: (u16, u16) = (16, 8);
 const PLAYER_BAR_EXPAND_MIN_TERMINAL_HEIGHT: u16 = 26;
 
 pub(super) fn player_bar_height(total_height: u16) -> u16 {
@@ -581,38 +581,70 @@ pub(super) fn draw_player_bar(
         false,
         0,
     );
+    // Two fixed lyric rows keep the layout stable while lines change; the
+    // translation row simply stays blank when a line has none.
+    let lyric_rows: u16 = if expanded && !state.lyrics.is_empty() {
+        2
+    } else {
+        0
+    };
+    // The text block (title, lyric pair, controls) centers beside the cover.
+    let (title_y, progress_y) = if expanded {
+        let block = 3 + lyric_rows;
+        let top = content.height.saturating_sub(block) / 2;
+        (right.y + top, right.y + top + block - 1)
+    } else {
+        (right.y, right.y + 1)
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::raw(" "),
             Span::styled(note, Style::new().fg(theme.accent)),
             Span::styled(title, Style::new().fg(theme.dim)),
         ])),
-        Rect { height: 1, ..right },
+        Rect {
+            y: title_y,
+            height: 1,
+            ..right
+        },
     );
+
+    if lyric_rows > 0 {
+        if let Some(index) = current_lyric_index(&state.lyrics, state.position) {
+            if let Some(lyric) = state.lyrics.get(index) {
+                let mut spans = vec![Span::raw("   ")];
+                spans.extend(current_lyric_spans(lyric, state.position, &theme));
+                frame.render_widget(
+                    Paragraph::new(Line::from(spans)),
+                    Rect {
+                        y: title_y + 1,
+                        height: 1,
+                        ..right
+                    },
+                );
+                if let Some(translation) = &lyric.translation {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(vec![
+                            Span::raw("   "),
+                            Span::styled(translation.clone(), Style::new().fg(theme.dim)),
+                        ])),
+                        Rect {
+                            y: title_y + 2,
+                            height: 1,
+                            ..right
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     let progress = Rect {
-        y: right.y + 1,
+        y: progress_y,
         height: 1,
         ..right
     };
     draw_progress(frame, state, progress, hits);
-
-    if expanded {
-        let band = Rect {
-            y: right.y + 2,
-            height: content.height.saturating_sub(2),
-            ..right
-        };
-        if state.config.spectrum_enabled && !band.is_empty() {
-            state.spectrum.render(
-                state.config.spectrum_style,
-                state.config.spectrum_glow,
-                state.spectrum_render_options(),
-                band,
-                frame.buffer_mut(),
-                &theme,
-            );
-        }
-    }
 }
 
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
