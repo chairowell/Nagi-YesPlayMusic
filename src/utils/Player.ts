@@ -1,7 +1,8 @@
 import { getAlbum } from '@/api/album';
 import { getArtist } from '@/api/artist';
 import { trackScrobble, trackUpdateNowPlaying } from '@/api/lastfm';
-import { fmTrash, personalFM } from '@/api/others';
+import { personalFM } from '@/api/others';
+import { trashFM } from '@/services/librarySource';
 import { getPlaylistDetail, intelligencePlaylist } from '@/api/playlist';
 import { getLyric, getTrackDetail, scrobble } from '@/api/track';
 import { getAppStore } from '@/stores/accessor';
@@ -1622,7 +1623,7 @@ export default class Player {
     this._isPersonalFM = true;
     let id = this._personalFMTrack.id;
     if (await this.playNextFMTrack()) {
-      fmTrash(id);
+      void trashFM(id).catch(() => {});
     }
   }
 

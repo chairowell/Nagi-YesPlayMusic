@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     config::SidecarConfig,
     health::{self, HealthState},
+    library,
     ncm::{self, NcmState},
     playback,
     player_api::{self, PlayerApiState},
@@ -133,7 +134,10 @@ async fn build_api_router(
         .merge(playback::router(playback::PlaybackState::production(
             client.clone(),
         )))
-        .merge(search::router(search::SearchState::production(client)))
+        .merge(search::router(search::SearchState::production(
+            client.clone(),
+        )))
+        .merge(library::router(library::LibraryState::production(client)))
         .merge(unm::router(UnmState::new()))
         .merge(shared_cache::router(
             SharedCacheState::production().map_err(ServerError::SharedCacheClient)?,

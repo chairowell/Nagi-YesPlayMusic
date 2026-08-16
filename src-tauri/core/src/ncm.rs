@@ -5,7 +5,6 @@
 //! Errors are typed so each frontend attaches its own user-facing wording
 //! (the TUI translates them, a future CLI can print them raw).
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -367,27 +366,17 @@ impl NcmClient {
         like: bool,
         session: Option<&Session>,
     ) -> Result<(), NcmClientError> {
-        let query = Self::query_with_session(session)
-            .param("id", &id.to_string())
-            .param("like", if like { "true" } else { "false" });
-        let response = self.client.like(&query).await?;
-        match response.body["code"].as_i64() {
-            Some(200) => Ok(()),
-            code => Err(NcmClientError::Rejected(code)),
-        }
+        set_like_with(&self.client, Self::query_with_session(session), id, like).await
     }
 
+    /// Ordered as NCM answers (most recently liked first) — the GUI renders
+    /// the head of this list, so it must stay a sequence, not a set.
     pub async fn liked_ids(
         &self,
         uid: i64,
         session: Option<&Session>,
-    ) -> Result<HashSet<i64>, NcmClientError> {
-        let query = Self::query_with_session(session).param("uid", &uid.to_string());
-        let response = self.client.likelist(&query).await?;
-        Ok(response_array(&response.body, &["ids"])?
-            .iter()
-            .filter_map(Value::as_i64)
-            .collect())
+    ) -> Result<Vec<i64>, NcmClientError> {
+        liked_ids_with(&self.client, Self::query_with_session(session), uid).await
     }
 
     pub async fn daily_songs(
@@ -414,15 +403,9 @@ impl NcmClient {
         Ok(songs.iter().map(song_row_flex).collect())
     }
 
-    /// FM trash ("never play this again"). The transport layer rewrites some
-    /// refusals into HTTP 200, so the body's own code is the real verdict.
+    /// FM trash ("never play this again").
     pub async fn fm_trash(&self, id: i64, session: Option<&Session>) -> Result<(), NcmClientError> {
-        let query = Self::query_with_session(session).param("id", &id.to_string());
-        let response = self.client.fm_trash(&query).await?;
-        match response.body.get("code").and_then(Value::as_i64) {
-            Some(200) => Ok(()),
-            code => Err(NcmClientError::Rejected(code)),
-        }
+        fm_trash_with(&self.client, Self::query_with_session(session), id).await
     }
 
     pub async fn cloud_songs(
@@ -1084,6 +1067,52 @@ fn parse_md5(value: Option<&str>) -> Result<Option<[u8; 16]>, NcmClientError> {
         })?;
     }
     Ok(Some(digest))
+}
+
+/// Library operations for frontends that carry their own cookie transport
+/// (the GUI sidecar forwards the browser cookie on every request).
+pub async fn liked_ids_with(
+    client: &ApiClient,
+    query: Query,
+    uid: i64,
+) -> Result<Vec<i64>, NcmClientError> {
+    let query = query.param("uid", &uid.to_string());
+    let response = client.likelist(&query).await?;
+    Ok(response_array(&response.body, &["ids"])?
+        .iter()
+        .filter_map(Value::as_i64)
+        .collect())
+}
+
+pub async fn set_like_with(
+    client: &ApiClient,
+    query: Query,
+    id: i64,
+    like: bool,
+) -> Result<(), NcmClientError> {
+    let query = query
+        .param("id", &id.to_string())
+        .param("like", if like { "true" } else { "false" });
+    let response = client.like(&query).await?;
+    match response.body["code"].as_i64() {
+        Some(200) => Ok(()),
+        code => Err(NcmClientError::Rejected(code)),
+    }
+}
+
+/// The transport layer rewrites some refusals into HTTP 200, so the body's
+/// own code is the real verdict.
+pub async fn fm_trash_with(
+    client: &ApiClient,
+    query: Query,
+    id: i64,
+) -> Result<(), NcmClientError> {
+    let query = query.param("id", &id.to_string());
+    let response = client.fm_trash(&query).await?;
+    match response.body.get("code").and_then(Value::as_i64) {
+        Some(200) => Ok(()),
+        code => Err(NcmClientError::Rejected(code)),
+    }
 }
 
 /// Search for frontends that carry their own cookie transport (the GUI

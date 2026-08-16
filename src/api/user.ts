@@ -107,20 +107,6 @@ const decodePlayHistoryResponse: Decoder<
   };
 };
 
-const decodeLikedSongIdsResponse: Decoder<ApiResponse & { ids?: number[] }> = (
-  input,
-  context
-) => {
-  const response = decodeRecord(input, context);
-  const ids = decodeOptionalArray(
-    response['ids'],
-    context,
-    '$.ids',
-    decodeNumber
-  );
-  return { ...response, ...(ids === undefined ? {} : { ids }) };
-};
-
 const decodeOptionalAlbumsResponse: Decoder<
   ApiResponse & { data?: Album[] }
 > = (input, context) => {
@@ -257,20 +243,6 @@ export function userPlayHistory(params: { uid: number; type: number }) {
       params,
     },
     decodePlayHistoryResponse
-  );
-}
-
-export function userLikedSongsIDs(uid: number) {
-  return request<ApiResponse & { ids?: number[] }>(
-    {
-      url: '/likelist',
-      method: 'get',
-      params: {
-        uid,
-        timestamp: new Date().getTime(),
-      },
-    },
-    decodeLikedSongIdsResponse
   );
 }
 

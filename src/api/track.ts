@@ -174,22 +174,6 @@ export function topSong(
   );
 }
 
-export function likeATrack(params: {
-  id: number;
-  like?: boolean;
-  timestamp?: number;
-}): Promise<ApiResponse> {
-  params.timestamp = new Date().getTime();
-  return request<ApiResponse>(
-    {
-      url: '/like',
-      method: 'get',
-      params,
-    },
-    decodeApiResponse
-  );
-}
-
 export function scrobble(params: {
   id: number;
   sourceid: number | string;

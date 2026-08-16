@@ -4,7 +4,11 @@ import defaultStorageState from './defaults';
 import updateApp from '@/utils/updateApp';
 import defaultShortcuts from '@/utils/shortcuts';
 import { isAccountLoggedIn, isLooseLoggedIn } from '@/utils/auth';
-import { likeATrack as requestLikeTrack, getTrackDetail } from '@/api/track';
+import { getTrackDetail } from '@/api/track';
+import {
+  fetchLikedSongIds,
+  likeTrack as requestLikeTrack,
+} from '@/services/librarySource';
 import { getPlaylistDetail } from '@/api/playlist';
 import {
   cloudDisk,
@@ -12,7 +16,6 @@ import {
   likedArtists,
   likedMVs,
   userAccount,
-  userLikedSongsIDs,
   userPlayHistory,
   userPlaylist,
 } from '@/api/user';
@@ -292,7 +295,7 @@ export const useAppStore = defineStore('app', {
       const ids = await fetchLikedSongIdsForUser(userId, {
         isLooseLoggedIn,
         isAccountLoggedIn,
-        fetchLikedSongIds: userLikedSongsIDs,
+        fetchLikedSongIds,
       });
       if (
         ids &&

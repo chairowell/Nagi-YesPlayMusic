@@ -147,39 +147,6 @@
     "idempotent": false
   },
   {
-    "id": "fm_trash",
-    "method": "POST",
-    "path": "/fm_trash",
-    "requestBuilder": "src/api/others.ts#fmTrash",
-    "nodeAdapter": "@neteaseapireborn/api/module/fm_trash",
-    "rustAdapter": "ncm::fm_trash",
-    "decoder": "src/api/decoders.ts#decodeApiResponse",
-    "comparator": ["code"],
-    "idempotent": false
-  },
-  {
-    "id": "like",
-    "method": "GET",
-    "path": "/like",
-    "requestBuilder": "src/api/track.ts#likeATrack",
-    "nodeAdapter": "@neteaseapireborn/api/module/like",
-    "rustAdapter": "ncm::like",
-    "decoder": "src/api/decoders.ts#decodeApiResponse",
-    "comparator": ["code"],
-    "idempotent": false
-  },
-  {
-    "id": "likelist",
-    "method": "GET",
-    "path": "/likelist",
-    "requestBuilder": "src/api/user.ts#userLikedSongsIDs",
-    "nodeAdapter": "@neteaseapireborn/api/module/likelist",
-    "rustAdapter": "ncm::likelist",
-    "decoder": "src/api/user.ts#decodeLikedSongIdsResponse",
-    "comparator": ["code", "ids[]"],
-    "idempotent": true
-  },
-  {
     "id": "login",
     "method": "POST",
     "path": "/login",

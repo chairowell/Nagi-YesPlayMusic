@@ -1,7 +1,7 @@
 import request from '@/utils/request';
 import type { Track } from '@/types/domain';
 import type { ApiResponse } from './types';
-import { decodeApiResponse, decodeArray, decodeRecord, decodeTrack } from './decoders';
+import { decodeArray, decodeRecord, decodeTrack } from './decoders';
 import type { Decoder } from './decoders';
 
 const decodeTrackDataResponse: Decoder<ApiResponse & { data: Track[] }> = (
@@ -28,16 +28,3 @@ export function personalFM(): Promise<ApiResponse & { data: Track[] }> {
   );
 }
 
-export function fmTrash(id: number): Promise<ApiResponse> {
-  return request<ApiResponse>(
-    {
-      url: '/fm_trash',
-      method: 'post',
-      params: {
-        timestamp: new Date().getTime(),
-        id,
-      },
-    },
-    decodeApiResponse
-  );
-}

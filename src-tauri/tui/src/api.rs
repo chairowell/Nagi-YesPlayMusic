@@ -357,9 +357,12 @@ impl Ncm {
         uid: i64,
         session: Option<&Session>,
     ) -> Result<std::collections::HashSet<i64>> {
+        // The TUI only ever asks "is this song liked"; the ordered list the
+        // GUI renders collapses into a set here.
         self.core
             .liked_ids(uid, session)
             .await
+            .map(|ids| ids.into_iter().collect())
             .map_err(|error| library_error(Key::OpUserPlaylist, error))
     }
 

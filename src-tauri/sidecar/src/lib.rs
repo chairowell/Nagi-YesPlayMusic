@@ -1,6 +1,7 @@
 pub mod cloud;
 pub mod config;
 pub mod health;
+pub mod library;
 pub mod ncm;
 pub mod playback;
 pub mod player_api;
