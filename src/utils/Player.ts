@@ -3,7 +3,7 @@ import { getArtist } from '@/api/artist';
 import { trackScrobble, trackUpdateNowPlaying } from '@/api/lastfm';
 import { fmTrash, personalFM } from '@/api/others';
 import { getPlaylistDetail, intelligencePlaylist } from '@/api/playlist';
-import { getLyric, getMP3, getTrackDetail, scrobble } from '@/api/track';
+import { getLyric, getTrackDetail, scrobble } from '@/api/track';
 import { getAppStore } from '@/stores/accessor';
 import { isAccountLoggedIn } from '@/utils/auth';
 import {
@@ -37,7 +37,7 @@ import {
   resolveAudioSource,
   toHowlSourceOptions,
 } from '@/utils/audioSource';
-import { findMatchingAudioResponse } from '@/utils/audioCacheIntegrity';
+import { resolveNeteasePlaybackSource } from '@/services/playbackSource';
 import {
   createTrackSwitchGuard,
   runLatestTrackSwitch,
@@ -68,7 +68,6 @@ import {
   reportSharedCacheFailure,
   shouldUseSharedAudioProxy,
 } from '@/services/sharedCache';
-import type { AudioUrlResponse } from '@/api/track';
 import type { Track } from '@/types/domain';
 import type { AudioSource, AudioSourceOrigin } from '@/utils/audioSource';
 import { isAudioSourceOrigin } from '@/utils/audioSource';
@@ -758,39 +757,29 @@ export default class Player {
   }
   async _getAudioSourceFromNetease(track: Track): Promise<AudioSource | null> {
     if (isAccountLoggedIn()) {
-      return getMP3(track.id).then(async result => {
-        const audio = findMatchingAudioResponse<AudioUrlResponse>(
-          result.data,
-          track.id
-        );
-        if (!audio) {
-          console.warn(
-            `[Player] 网易云音源响应没有当前歌曲 ID，拒绝使用可能串台的结果：${track.id}`
-          );
-          return null;
-        }
-        if (!audio.url) return null;
-        if (audio.freeTrialInfo !== null) return null; // Skip preview-only tracks.
-        const source = audio.url.replace(/^http:/, 'https:');
-        const settings = getAppStore().settings;
-        if (await shouldUseSharedAudioProxy(settings.shareCacheWithYpm)) {
-          return createSharedAudioProxy({
-            track,
-            quality: settings.musicQuality,
-            source,
-            format: audio.type,
-            actualBitrate: audio.br ?? 128000,
-            cache: settings.automaticallyCacheSongs,
-            origin: 'netease',
-          });
-        }
-        return createRemoteAudioSource(source, {
+      // Candidate matching, free-trial refusal and rejected-vs-unavailable
+      // classification live server-side (core::ncm), shared with the TUI.
+      const audio = await resolveNeteasePlaybackSource(track.id);
+      if (!audio) return null;
+      const source = audio.url.replace(/^http:/, 'https:');
+      const settings = getAppStore().settings;
+      if (await shouldUseSharedAudioProxy(settings.shareCacheWithYpm)) {
+        return createSharedAudioProxy({
+          track,
+          quality: settings.musicQuality,
+          source,
+          format: audio.codec,
+          actualBitrate: audio.actualBitrate,
+          cache: settings.automaticallyCacheSongs,
           origin: 'netease',
-          format: audio.type,
-          cacheAfterLoad: settings.automaticallyCacheSongs
-            ? () => cacheTrackSource(track, source, audio.br ?? 128000)
-            : null,
         });
+      }
+      return createRemoteAudioSource(source, {
+        origin: 'netease',
+        format: audio.codec,
+        cacheAfterLoad: settings.automaticallyCacheSongs
+          ? () => cacheTrackSource(track, source, audio.actualBitrate)
+          : null,
       });
     } else {
       const source = `https://music.163.com/song/media/outer/url?id=${track.id}`;
