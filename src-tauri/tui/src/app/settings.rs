@@ -30,6 +30,7 @@ pub(crate) enum SettingField {
     SpectrumStyle,
     SpectrumGlow,
     SpectrumFlatten,
+    SpectrumDb,
     SpectrumGradient,
     SpectrumBars,
     SpectrumSensitivity,
@@ -38,7 +39,7 @@ pub(crate) enum SettingField {
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 24] = [
         Self::Theme,
         Self::ThemeMode,
         Self::Language,
@@ -57,6 +58,7 @@ impl SettingField {
         Self::SpectrumStyle,
         Self::SpectrumGlow,
         Self::SpectrumFlatten,
+        Self::SpectrumDb,
         Self::SpectrumGradient,
         Self::SpectrumBars,
         Self::SpectrumSensitivity,
@@ -84,6 +86,7 @@ impl SettingField {
             Self::SpectrumStyle => Key::SettingSpectrumStyle,
             Self::SpectrumGlow => Key::SettingSpectrumGlow,
             Self::SpectrumFlatten => Key::SettingSpectrumFlatten,
+            Self::SpectrumDb => Key::SettingSpectrumDb,
             Self::SpectrumGradient => Key::SettingSpectrumGradient,
             Self::SpectrumBars => Key::SettingSpectrumBars,
             Self::SpectrumSensitivity => Key::SettingSpectrumSensitivity,
@@ -288,6 +291,9 @@ impl AppState {
             SettingField::SpectrumFlatten => {
                 self.config.spectrum_flatten = !self.config.spectrum_flatten;
             }
+            SettingField::SpectrumDb => {
+                self.config.spectrum_db = !self.config.spectrum_db;
+            }
             SettingField::SpectrumGradient => {
                 self.config.spectrum_gradient = !self.config.spectrum_gradient;
             }
@@ -426,6 +432,7 @@ impl AppState {
             }
             SettingField::SpectrumGlow => self.on_off(self.config.spectrum_glow),
             SettingField::SpectrumFlatten => self.on_off(self.config.spectrum_flatten),
+            SettingField::SpectrumDb => self.on_off(self.config.spectrum_db),
             SettingField::SpectrumGradient => self.on_off(self.config.spectrum_gradient),
             SettingField::SpectrumBars => {
                 i18n::t_spectrum_bars(self.config.spectrum_bars).to_owned()

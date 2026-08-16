@@ -708,7 +708,7 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         + display_width(&total)
         + heart_slot_width
         + mode_slot_width
-        + display_width(icons.volume)
+        + display_width(icons.volume_high)
         + VOLUME_CELLS
         + 21;
     let bar_width = (area.width as usize).saturating_sub(fixed).max(8);
@@ -826,7 +826,10 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
     // Click or drag across the dot meter to set the volume.
     let filled = (state.volume.clamp(0.0, 1.0) * VOLUME_CELLS as f32).round() as usize;
     spans.push(Span::raw("  "));
-    spans.push(Span::styled(icons.volume, Style::new().fg(theme.faint)));
+    spans.push(Span::styled(
+        icons.volume_at(state.volume),
+        Style::new().fg(theme.faint),
+    ));
     spans.push(Span::raw(" "));
     let volume_x = spans
         .iter()
@@ -1026,7 +1029,7 @@ mod tests {
         });
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true, false);
+            .tick(&SampleBuffer::default(), false, true, true, false, true);
         let backend = TestBackend::new(80, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -1059,7 +1062,7 @@ mod tests {
         });
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true, false);
+            .tick(&SampleBuffer::default(), false, true, true, false, true);
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -1097,7 +1100,7 @@ mod tests {
             });
             state
                 .spectrum
-                .tick(&SampleBuffer::default(), false, true, true, false);
+                .tick(&SampleBuffer::default(), false, true, true, false, true);
             let backend = TestBackend::new(200, 60);
             let mut terminal = Terminal::new(backend).unwrap();
             let mut hits = Hits::default();
@@ -1138,7 +1141,7 @@ mod tests {
         }];
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true, false);
+            .tick(&SampleBuffer::default(), false, true, true, false, true);
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -1547,7 +1550,8 @@ mod tests {
         let rendered = (0..100)
             .map(|x| buffer[(x, 0)].symbol())
             .collect::<String>();
-        assert!(rendered.contains(icons.volume));
+        // Half volume renders the high-level speaker (0.5 is the boundary).
+        assert!(rendered.contains(icons.volume_high));
         assert!(rendered.contains(&icons.volume_full.repeat(5)));
         assert!(rendered.contains(&icons.volume_empty.repeat(5)));
     }

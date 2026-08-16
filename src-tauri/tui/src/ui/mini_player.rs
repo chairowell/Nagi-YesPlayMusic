@@ -65,8 +65,11 @@ pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut H
     let play_x = area.x;
     let heart_x =
         area.x + (display_width(play_icon) + 1 + title_width + 1 + display_width(&time) + 1) as u16;
-    let volume_x =
-        heart_x + display_width(icons.heart) as u16 + 2 + display_width(icons.volume) as u16 + 1;
+    let volume_x = heart_x
+        + display_width(icons.heart) as u16
+        + 2
+        + display_width(icons.volume_at(state.volume)) as u16
+        + 1;
 
     push_hit(
         &mut hits.play,
@@ -97,7 +100,7 @@ pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut H
             Style::new().fg(if liked { theme.accent2 } else { theme.faint }),
         ),
         Span::raw("  "),
-        Span::styled(icons.volume, Style::new().fg(theme.faint)),
+        Span::styled(icons.volume_at(state.volume), Style::new().fg(theme.faint)),
         Span::raw(" "),
         Span::styled(icons.volume_full.repeat(filled), Style::new().fg(theme.dim)),
         Span::styled(
@@ -155,7 +158,7 @@ fn mini_layout(state: &AppState, width: u16, title: &str) -> MiniLayout {
         .max(display_width(icons.pause))
         + 11 // mm:ss/mm:ss
         + display_width(icons.heart)
-        + display_width(icons.volume)
+        + display_width(icons.volume_high)
         + 6; // Spaces between the six rendered segments.
     let flexible = usize::from(width).saturating_sub(fixed_without_meter);
     let volume_cells = flexible

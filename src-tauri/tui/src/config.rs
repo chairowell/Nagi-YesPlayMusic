@@ -131,6 +131,10 @@ pub struct Config {
     pub spectrum_glow: bool,
     /// +4 dB/octave tilt so highs read as lively as bass (cava-style).
     pub spectrum_flatten: bool,
+    /// dB window mapping (WinAmp/cava recipe): mids and highs stay alive
+    /// instead of being crushed by the loudest bass bin. Off = legacy
+    /// peak-normalized linear scale.
+    pub spectrum_db: bool,
     /// Height gradient bar coloring; off = flat accent color.
     pub spectrum_gradient: bool,
     /// Bar footprint: slim 1+0, duo 2+1 (default), wide 3+1 cells.
@@ -185,6 +189,7 @@ impl Default for Config {
             spectrum_style: SpectrumKind::Blocks,
             spectrum_glow: false,
             spectrum_flatten: true,
+            spectrum_db: true,
             spectrum_gradient: true,
             spectrum_bars: SpectrumBars::default(),
             spectrum_sensitivity: SpectrumSensitivity::default(),
@@ -299,6 +304,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # spectrum_style = "blocks"   # blocks | mirror | led | braille | shade | scope | fire | waterfall | vu | reflect
 # spectrum_glow = false        # 荧光余辉残影
 # spectrum_flatten = true      # 高频补偿（+4dB/倍频程），关掉显示真实能量比例
+# spectrum_db = true           # dB 对数标度：中高频不再被最响的贝斯压扁；false 为旧线性标度
 # spectrum_gradient = true     # 柱体高度渐变色；false 为纯主题色
 # spectrum_bars = "duo"        # slim | duo | wide，适用于 blocks/mirror/led/reflect 柱状风格
 # spectrum_sensitivity = "normal" # soft | normal | sharp 跳动灵敏度
@@ -609,6 +615,7 @@ idle_art = "~/art.png"
                 spectrum_style: SpectrumKind::Fire,
                 spectrum_glow: true,
                 spectrum_flatten: false,
+                spectrum_db: false,
                 spectrum_gradient: false,
                 spectrum_bars: SpectrumBars::Wide,
                 spectrum_sensitivity: SpectrumSensitivity::Sharp,

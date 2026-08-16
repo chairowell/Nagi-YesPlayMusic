@@ -2490,6 +2490,7 @@ async fn event_loop(
                     state.view == View::Settings,
                     state.config.spectrum_flatten,
                     state.config.spectrum_stereo,
+                    state.config.spectrum_db,
                 );
             }
         }

@@ -11,7 +11,9 @@ pub(crate) struct IconSet {
     pub(crate) repeat_list: &'static str,
     pub(crate) repeat_one: &'static str,
     pub(crate) sequential: &'static str,
-    pub(crate) volume: &'static str,
+    pub(crate) volume_muted: &'static str,
+    pub(crate) volume_low: &'static str,
+    pub(crate) volume_high: &'static str,
     pub(crate) volume_full: &'static str,
     pub(crate) volume_empty: &'static str,
     pub(crate) search: &'static str,
@@ -25,7 +27,9 @@ const UNICODE: IconSet = IconSet {
     repeat_list: "↺",
     repeat_one: "↺¹",
     sequential: "→",
-    volume: "♪",
+    volume_muted: "✕",
+    volume_low: "♩",
+    volume_high: "♪",
     volume_full: "●",
     volume_empty: "○",
     search: "⌕",
@@ -39,11 +43,26 @@ const NERD: IconSet = IconSet {
     repeat_list: "\u{f01e}",
     repeat_one: "\u{f0458}",
     sequential: "\u{f061}",
-    volume: "\u{f028}",
+    volume_muted: "\u{f026}",
+    volume_low: "\u{f027}",
+    volume_high: "\u{f028}",
     volume_full: "\u{f111}",
     volume_empty: "\u{f10c}",
     search: "\u{f002}",
 };
+
+impl IconSet {
+    /// The speaker glyph tracks the actual level: muted, below half, above.
+    pub(crate) fn volume_at(&self, volume: f32) -> &'static str {
+        if volume <= f32::EPSILON {
+            self.volume_muted
+        } else if volume < 0.5 {
+            self.volume_low
+        } else {
+            self.volume_high
+        }
+    }
+}
 
 pub(crate) const fn for_style(style: IconStyle) -> &'static IconSet {
     match style {
@@ -56,7 +75,7 @@ pub(crate) const fn for_style(style: IconStyle) -> &'static IconSet {
 mod tests {
     use super::*;
 
-    fn glyphs(icons: &IconSet) -> [&str; 11] {
+    fn glyphs(icons: &IconSet) -> [&str; 13] {
         [
             icons.play,
             icons.pause,
@@ -65,7 +84,9 @@ mod tests {
             icons.repeat_list,
             icons.repeat_one,
             icons.sequential,
-            icons.volume,
+            icons.volume_muted,
+            icons.volume_low,
+            icons.volume_high,
             icons.volume_full,
             icons.volume_empty,
             icons.search,
@@ -90,6 +111,14 @@ mod tests {
         assert!(glyphs(for_style(IconStyle::Nerd))
             .into_iter()
             .all(|icon| icon.chars().all(is_private_use)));
+    }
+
+    #[test]
+    fn speaker_glyph_tracks_the_volume_level() {
+        let icons = for_style(IconStyle::Nerd);
+        assert_eq!(icons.volume_at(0.0), icons.volume_muted);
+        assert_eq!(icons.volume_at(0.3), icons.volume_low);
+        assert_eq!(icons.volume_at(0.8), icons.volume_high);
     }
 
     #[test]

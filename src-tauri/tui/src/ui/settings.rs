@@ -40,6 +40,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
                 | SettingField::SpectrumEnabled
                 | SettingField::SpectrumGlow
                 | SettingField::SpectrumFlatten
+                | SettingField::SpectrumDb
                 | SettingField::SpectrumGradient
                 | SettingField::SpectrumBars
                 | SettingField::SpectrumSensitivity
@@ -604,7 +605,7 @@ mod tests {
             .unwrap();
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true, false);
+            .tick(&SampleBuffer::default(), false, true, true, false, true);
         let mut hits = Hits::default();
 
         terminal
