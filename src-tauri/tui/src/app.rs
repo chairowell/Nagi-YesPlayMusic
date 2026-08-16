@@ -2045,6 +2045,19 @@ async fn process_cover(
     let processed = tokio::task::spawn_blocking(move || {
         if load.style.original {
             let image = image::load_from_memory(&bytes)?;
+            // The CDN's size param only shrinks; old albums ship 500-800px
+            // originals. Terminal graphics never upscale (Resize::Fit), so a
+            // small source would render as a small cover in a big window —
+            // upscale once here and every cover fills its area.
+            let image = if image.width().max(image.height()) < COVER_SOURCE_EDGE {
+                image.resize(
+                    COVER_SOURCE_EDGE,
+                    COVER_SOURCE_EDGE,
+                    image::imageops::FilterType::CatmullRom,
+                )
+            } else {
+                image
+            };
             write_original_cover(&cache, downloaded, &source_key, &bytes);
             return Ok::<_, anyhow::Error>(EitherCover::Original(image));
         }

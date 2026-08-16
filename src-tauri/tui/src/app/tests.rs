@@ -2819,3 +2819,36 @@ async fn the_playing_view_render_path_promotes_the_next_tracks_cover() {
     assert_eq!(cover.generation, Some(2));
     assert!(!cover.has_pending());
 }
+
+#[tokio::test]
+async fn small_source_covers_are_upscaled_to_fill_the_cover_area() {
+    let mut bytes = Vec::new();
+    DynamicImage::new_rgba8(64, 64)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    let load = CoverLoad {
+        request: CoverRenderRequest {
+            surface: CoverSurface::Playing,
+            generation: 1,
+            cells: (64, 32),
+            style_revision: 0,
+            song_id: 1,
+            source_key: "test".into(),
+        },
+        style: CoverStyle {
+            pixel: AppState::new(&Config::default()).pixel_style(),
+            original: true,
+        },
+    };
+
+    let processed = process_cover(None, &load, bytes, false).await.unwrap();
+    match processed {
+        EitherCover::Original(image) => {
+            assert_eq!(image.width().max(image.height()), COVER_SOURCE_EDGE);
+        }
+        EitherCover::Pixel(_) => panic!("original load must decode an image"),
+    }
+}
