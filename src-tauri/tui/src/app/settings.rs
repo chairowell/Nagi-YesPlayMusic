@@ -399,7 +399,9 @@ impl AppState {
             SettingField::CoverMode => match self.config.cover_mode {
                 CoverMode::Pixel => "Pixel".to_owned(),
                 CoverMode::Original if self.original_cover.is_some() => "Original".to_owned(),
-                CoverMode::Original => "Original (restart)".to_owned(),
+                // The startup probe already ran: a missing picker means the
+                // terminal genuinely lacks a graphics protocol.
+                CoverMode::Original => "Original (unsupported)".to_owned(),
             },
             SettingField::CoverPalette => match self.config.cover_palette {
                 CoverPalette::Original => "Original",

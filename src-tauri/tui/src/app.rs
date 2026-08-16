@@ -223,17 +223,14 @@ impl OriginalCover {
     }
 }
 
-fn select_graphics_picker(mode: CoverMode, picker: Option<Picker>) -> Option<Picker> {
-    if mode != CoverMode::Original {
-        return None;
-    }
+fn select_graphics_picker(picker: Option<Picker>) -> Option<Picker> {
     picker.filter(|picker| picker.protocol_type() != ProtocolType::Halfblocks)
 }
 
-fn query_graphics_picker(mode: CoverMode, background: Color) -> Option<Picker> {
-    if mode != CoverMode::Original {
-        return None;
-    }
+/// Always query, whatever the configured cover mode: the probe only works
+/// before the event stream owns stdin, and having the picker ready is what
+/// lets pixel ↔ original switch live in the settings.
+fn query_graphics_picker(background: Color) -> Option<Picker> {
     let queried = match Picker::from_query_stdio() {
         Ok(picker) => {
             tracing::debug!(protocol = ?picker.protocol_type(), font = ?picker.font_size(), "graphics query answered");
@@ -249,7 +246,7 @@ fn query_graphics_picker(mode: CoverMode, background: Color) -> Option<Picker> {
     // leftovers before the event stream starts, or they arrive as phantom
     // key presses (seen as the command palette popping open with hex noise).
     crate::terminal_background::drain_pending_responses();
-    let mut picker = select_graphics_picker(mode, queried)?;
+    let mut picker = select_graphics_picker(queried)?;
     if let Color::Rgb(red, green, blue) = background {
         picker.set_background_color(Some(Rgba([red, green, blue, 255])));
     }
@@ -2415,7 +2412,7 @@ async fn event_loop(
         config.theme_mode,
         terminal_is_light,
     ));
-    let picker = query_graphics_picker(config.cover_mode, theme.bg);
+    let picker = query_graphics_picker(theme.bg);
     let original_cover = picker.clone().map(|picker| {
         OriginalCover::buffered(picker, playing_resize_tx, playing_pending_resize_tx)
     });

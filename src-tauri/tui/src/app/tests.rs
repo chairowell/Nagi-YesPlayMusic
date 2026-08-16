@@ -2283,18 +2283,20 @@ fn cover_result_for_an_old_size_cannot_replace_the_current_cover() {
 }
 
 #[test]
-fn original_mode_only_accepts_a_real_graphics_protocol() {
-    assert!(select_graphics_picker(CoverMode::Original, None).is_none());
-    assert!(select_graphics_picker(CoverMode::Original, Some(Picker::halfblocks())).is_none());
+fn graphics_picker_only_accepts_a_real_graphics_protocol() {
+    assert!(select_graphics_picker(None).is_none());
+    assert!(select_graphics_picker(Some(Picker::halfblocks())).is_none());
 
     let mut kitty = Picker::halfblocks();
     kitty.set_protocol_type(ProtocolType::Kitty);
-    let selected = select_graphics_picker(CoverMode::Original, Some(kitty)).unwrap();
+    let selected = select_graphics_picker(Some(kitty)).unwrap();
     assert_eq!(selected.protocol_type(), ProtocolType::Kitty);
 
+    // The probe runs regardless of cover mode so pixel ↔ original can
+    // switch live; a real protocol is accepted even in pixel mode.
     let mut sixel = Picker::halfblocks();
     sixel.set_protocol_type(ProtocolType::Sixel);
-    assert!(select_graphics_picker(CoverMode::Pixel, Some(sixel)).is_none());
+    assert!(select_graphics_picker(Some(sixel)).is_some());
 }
 
 #[tokio::test]
