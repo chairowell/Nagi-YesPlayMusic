@@ -549,10 +549,21 @@ pub(super) fn player_bar_height(total_height: u16) -> u16 {
     }
 }
 
+/// Rows kept clear between the bar's baseline and the footer hints; taller
+/// bars can afford a wider breather so the controls don't crowd the keys.
+fn player_bar_gap(bar_height: u16) -> u16 {
+    if bar_height >= 11 {
+        2
+    } else {
+        1
+    }
+}
+
 /// Cover cells for the bar at this terminal height: the art fills the bar's
 /// content rows, twice as wide as tall for a square half-block pixel grid.
 pub(crate) fn player_bar_cover_cells(total_height: u16) -> (u16, u16) {
-    let rows = player_bar_height(total_height).saturating_sub(1);
+    let bar = player_bar_height(total_height);
+    let rows = bar.saturating_sub(player_bar_gap(bar));
     (rows.saturating_mul(2), rows)
 }
 
@@ -567,9 +578,9 @@ pub(super) fn draw_player_bar(
     }
     let theme = state.theme;
     let expanded = area.height >= PLAYER_BAR_EXPANDED_HEIGHT;
-    // Last row is the breathing gap above the footer hints.
+    // The last row(s) are the breathing gap above the footer hints.
     let content = Rect {
-        height: area.height - 1,
+        height: area.height - player_bar_gap(area.height),
         ..area
     };
     // The cover fills the bar's content rows; it only appears when the row
