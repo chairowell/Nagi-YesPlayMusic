@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use yesplaymusic_core::auth::Session;
 
-use crate::action::{Action, SessionStamp, View};
-use crate::api::{Ncm, QrStatus, SongRow, Source};
+use crate::action::{Action, RestoreFailure, SessionStamp, View};
+use crate::api::{AccountError, Ncm, QrStatus, SongRow, Source};
 use crate::i18n::{self, Key};
 
 use super::{AppState, Effects};
@@ -21,7 +21,7 @@ pub struct SessionState {
 }
 
 impl SessionState {
-    fn begin_restore(&mut self) -> u64 {
+    pub(super) fn begin_restore(&mut self) -> u64 {
         self.session_epoch += 1;
         self.restoring_epoch = Some(self.session_epoch);
         self.session_epoch
@@ -161,9 +161,35 @@ impl AppState {
         self.finish_account(fx, stamp, nickname, session);
     }
 
-    pub(super) fn apply_session_restore_failed(&mut self, epoch: u64, message: String) {
-        if self.session.fail_restore(epoch) {
-            self.status = Some(message);
+    pub(super) fn apply_session_restore_failed(
+        &mut self,
+        fx: &Effects,
+        epoch: u64,
+        failure: RestoreFailure,
+    ) {
+        match failure {
+            RestoreFailure::Expired => {
+                if self.session.fail_restore(epoch) {
+                    self.status = Some(i18n::t(Key::SessionExpired).into());
+                }
+            }
+            RestoreFailure::Offline => match fx.store.load_profile() {
+                Some(profile) => {
+                    let Some(stamp) =
+                        self.session
+                            .accept_restore(epoch, profile.uid, profile.nickname)
+                    else {
+                        return;
+                    };
+                    self.enter_library(fx, stamp);
+                    self.status = Some(i18n::t(Key::OfflineLibrary).into());
+                }
+                None => {
+                    if self.session.fail_restore(epoch) {
+                        self.status = Some(i18n::t(Key::NetworkUnavailable).into());
+                    }
+                }
+            },
         }
     }
 
@@ -175,6 +201,15 @@ impl AppState {
         session: Session,
     ) {
         self.status = Some(i18n::t_welcome(&nickname));
+        self.enter_library(fx, stamp);
+        let request = self.begin_library_request();
+        spawn_fetch_library(fx, stamp, request, session);
+        spawn_save_profile(fx, stamp.uid, nickname);
+    }
+
+    /// Adopt an account identity: reset per-account state and show the
+    /// on-disk liked snapshot. Callers decide whether a fetch follows.
+    fn enter_library(&mut self, fx: &Effects, stamp: SessionStamp) {
         if self.view == View::Login {
             self.view = View::Library;
         }
@@ -195,8 +230,6 @@ impl AppState {
             .map(|rows| rows.into_iter().map(|row| row.into_song_row()).collect())
             .unwrap_or_default();
         self.liked = self.library.iter().map(|row| row.id).collect();
-        let request = self.begin_library_request();
-        spawn_fetch_library(fx, stamp, request, session);
     }
 
     fn personal_request(&self, fx: &Effects) -> Option<(SessionStamp, Session)> {
@@ -533,12 +566,30 @@ fn spawn_restore(fx: &Effects, epoch: u64, session: Session) {
                 uid,
                 nickname,
             },
-            Err(_) => Action::SessionRestoreFailed {
+            Err(AccountError::Expired(_)) => Action::SessionRestoreFailed {
                 epoch,
-                message: i18n::t(Key::SessionExpired).into(),
+                failure: RestoreFailure::Expired,
             },
+            Err(AccountError::Unreachable(error)) => {
+                tracing::warn!(%error, "session restore unreachable, going offline");
+                Action::SessionRestoreFailed {
+                    epoch,
+                    failure: RestoreFailure::Offline,
+                }
+            }
         };
         let _ = actions.send(action);
+    });
+}
+
+fn spawn_save_profile(fx: &Effects, uid: i64, nickname: String) {
+    let store = fx.store.clone();
+    tokio::spawn(async move {
+        let profile = crate::store::StoredProfile { uid, nickname };
+        let result = tokio::task::spawn_blocking(move || store.save_profile(&profile)).await;
+        if let Ok(Err(error)) = result {
+            tracing::warn!(%error, "profile save failed");
+        }
     });
 }
 

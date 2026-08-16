@@ -2,6 +2,7 @@
 //! injects the persisted session cookie; anonymous calls degrade the same
 //! way the desktop client does (standard quality, no personal data).
 
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
@@ -9,7 +10,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use futures_util::future::BoxFuture;
 use ncm_api_rs::api::Query;
-use ncm_api_rs::ApiClient;
+use ncm_api_rs::{ApiClient, NcmError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use yesplaymusic_core::auth::{Session, SessionStore};
@@ -234,6 +235,37 @@ pub enum QrStatus {
     Success(Session),
 }
 
+/// Why `account()` failed — the split decides whether a startup treats the
+/// stored session as dead or merely unverifiable.
+#[derive(Debug)]
+pub enum AccountError {
+    /// NCM never answered (offline, DNS, timeout, rate limit, 5xx). The
+    /// stored session may still be valid; don't log the user out over it.
+    Unreachable(anyhow::Error),
+    /// NCM answered and rejected or omitted the account: the session is dead.
+    Expired(anyhow::Error),
+}
+
+impl fmt::Display for AccountError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unreachable(error) | Self::Expired(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for AccountError {}
+
+/// Only an explicit auth rejection proves the session expired; every other
+/// failure mode (transport, throttling, server trouble) leaves it unknown.
+fn classify_account_error(error: NcmError) -> AccountError {
+    let wrapped = anyhow!(i18n::t_api_failed(Key::OpAccount, &error));
+    match error {
+        NcmError::AuthRequired(_) => AccountError::Expired(wrapped),
+        _ => AccountError::Unreachable(wrapped),
+    }
+}
+
 pub struct Ncm {
     client: ApiClient,
     store: SessionStore,
@@ -340,13 +372,16 @@ impl Ncm {
 
     // ── account & library ────────────────────────────────────────────
 
-    pub async fn account(&self, session: Option<&Session>) -> Result<(i64, String)> {
+    pub async fn account(
+        &self,
+        session: Option<&Session>,
+    ) -> std::result::Result<(i64, String), AccountError> {
         let response = self
             .client
             .user_account(&Self::query_with_session(session))
             .await
-            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpAccount, error)))?;
-        parse_account(&response.body)
+            .map_err(classify_account_error)?;
+        parse_account(&response.body).map_err(AccountError::Expired)
     }
 
     /// The user's "我喜欢的音乐" — by NCM convention the first playlist.
@@ -1254,6 +1289,28 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    #[test]
+    fn only_an_auth_rejection_counts_as_an_expired_session() {
+        assert!(matches!(
+            classify_account_error(NcmError::AuthRequired("需要登录".into())),
+            AccountError::Expired(_)
+        ));
+        for unproven in [
+            NcmError::Timeout("connect".into()),
+            NcmError::RateLimited("503".into()),
+            NcmError::Api {
+                code: 502,
+                msg: "bad gateway".into(),
+            },
+            NcmError::Unknown("connection reset".into()),
+        ] {
+            assert!(matches!(
+                classify_account_error(unproven),
+                AccountError::Unreachable(_)
+            ));
+        }
+    }
 
     #[test]
     fn lyric_payload_keeps_all_supported_timeline_kinds() {

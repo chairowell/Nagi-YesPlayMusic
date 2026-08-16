@@ -457,8 +457,8 @@ impl AppState {
                 uid,
                 nickname,
             } => self.apply_session_restored(fx, epoch, uid, nickname),
-            Action::SessionRestoreFailed { epoch, message } => {
-                self.apply_session_restore_failed(epoch, message);
+            Action::SessionRestoreFailed { epoch, failure } => {
+                self.apply_session_restore_failed(fx, epoch, failure);
             }
             Action::LibraryLoaded {
                 session,

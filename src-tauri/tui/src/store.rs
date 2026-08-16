@@ -79,6 +79,21 @@ struct PlaybackSnapshot {
     playback: StoredPlayback,
 }
 
+/// Last verified account identity; lets an offline start adopt the stored
+/// session instead of treating an unreachable network as a logout.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StoredProfile {
+    pub uid: i64,
+    pub nickname: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProfileSnapshot {
+    version: u32,
+    saved_at_unix: u64,
+    profile: StoredProfile,
+}
+
 impl LibraryStore {
     pub fn new(root: PathBuf) -> Self {
         Self { root }
@@ -133,6 +148,30 @@ impl LibraryStore {
         Ok(())
     }
 
+    pub fn load_profile(&self) -> Option<StoredProfile> {
+        let bytes = fs::read(self.root.join("profile.json")).ok()?;
+        let snapshot: ProfileSnapshot = serde_json::from_slice(&bytes).ok()?;
+        (snapshot.version == SNAPSHOT_VERSION).then_some(snapshot.profile)
+    }
+
+    pub fn save_profile(&self, profile: &StoredProfile) -> io::Result<()> {
+        fs::create_dir_all(&self.root)?;
+        let snapshot = ProfileSnapshot {
+            version: SNAPSHOT_VERSION,
+            saved_at_unix: unix_now()?,
+            profile: profile.clone(),
+        };
+        let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
+        let path = self.root.join("profile.json");
+        let temporary = self.root.join("profile.json.tmp");
+        fs::write(&temporary, bytes)?;
+        if let Err(error) = fs::rename(&temporary, path) {
+            let _ = fs::remove_file(temporary);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn read_snapshot(&self, uid: i64, source: &str) -> Option<Snapshot> {
         validate_source(source).ok()?;
         let bytes = fs::read(self.snapshot_path(uid, source)).ok()?;
@@ -173,7 +212,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{LibraryStore, StoredPlayback, StoredSong};
+    use super::{LibraryStore, StoredPlayback, StoredProfile, StoredSong};
     use crate::api::{SongRow, Source};
     use crate::app::PlayMode;
 
@@ -312,6 +351,35 @@ mod tests {
 
         assert_eq!(store.load_playback(), Some(playback));
         assert!(!root.join("playback.json.tmp").exists());
+    }
+
+    #[test]
+    fn profile_roundtrips_and_replaces_the_previous_account() {
+        let directory = tempdir().unwrap();
+        let store = LibraryStore::new(directory.path().join("library"));
+        let first = StoredProfile {
+            uid: 7,
+            nickname: "夜航".into(),
+        };
+        let second = StoredProfile {
+            uid: 9,
+            nickname: "Nagi".into(),
+        };
+
+        store.save_profile(&first).unwrap();
+        store.save_profile(&second).unwrap();
+
+        assert_eq!(store.load_profile(), Some(second));
+    }
+
+    #[test]
+    fn damaged_profile_reads_as_absent() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("library");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("profile.json"), b"{broken").unwrap();
+
+        assert_eq!(LibraryStore::new(root).load_profile(), None);
     }
 
     #[test]

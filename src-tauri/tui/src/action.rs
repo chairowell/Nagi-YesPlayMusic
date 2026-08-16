@@ -51,6 +51,14 @@ pub struct SessionStamp {
     pub uid: i64,
 }
 
+/// How a session restore failed; only a proven rejection logs the user out,
+/// an unreachable network falls back to the stored profile and local data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RestoreFailure {
+    Expired,
+    Offline,
+}
+
 #[derive(Debug)]
 pub enum Action {
     UiTick,
@@ -191,7 +199,7 @@ pub enum Action {
     },
     SessionRestoreFailed {
         epoch: u64,
-        message: String,
+        failure: RestoreFailure,
     },
     LibraryLoaded {
         session: SessionStamp,

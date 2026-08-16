@@ -7,6 +7,7 @@ use tempfile::TempDir;
 use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 
 use super::*;
+use crate::action::RestoreFailure;
 
 const PREVIEW_TERMINAL_SIZE: (u16, u16) = (
     ui::library::PREVIEW_MIN_TERMINAL_WIDTH,
@@ -2515,3 +2516,90 @@ fn promoting_a_pending_cover_keeps_the_main_resize_channel_open() {
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
     ));
 }
+
+#[tokio::test]
+async fn offline_restore_adopts_the_stored_profile_and_local_library() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    fx.store
+        .save_profile(&crate::store::StoredProfile {
+            uid: 7,
+            nickname: "夜航".into(),
+        })
+        .unwrap();
+    fx.store
+        .save(7, "liked", &[crate::store::StoredSong::from(&row(42))])
+        .unwrap();
+    let mut state = AppState::new(&Config::default());
+    let epoch = state.session.begin_restore();
+
+    state.update(
+        Action::SessionRestoreFailed {
+            epoch,
+            failure: RestoreFailure::Offline,
+        },
+        &fx,
+    );
+
+    assert_eq!(state.session.nickname.as_deref(), Some("夜航"));
+    assert_eq!(state.library.len(), 1);
+    assert_eq!(state.library[0].id, 42);
+    assert!(state.liked.contains(&42));
+    assert_eq!(
+        state.status.as_deref(),
+        Some(crate::i18n::t(crate::i18n::Key::OfflineLibrary))
+    );
+}
+
+#[tokio::test]
+async fn offline_restore_without_a_profile_reports_the_network_not_a_logout() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let epoch = state.session.begin_restore();
+
+    state.update(
+        Action::SessionRestoreFailed {
+            epoch,
+            failure: RestoreFailure::Offline,
+        },
+        &fx,
+    );
+
+    assert_eq!(state.session.nickname, None);
+    assert_eq!(state.library, AppState::new(&Config::default()).library);
+    assert_eq!(
+        state.status.as_deref(),
+        Some(crate::i18n::t(crate::i18n::Key::NetworkUnavailable))
+    );
+}
+
+#[tokio::test]
+async fn expired_restore_still_logs_the_user_out() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    fx.store
+        .save_profile(&crate::store::StoredProfile {
+            uid: 7,
+            nickname: "夜航".into(),
+        })
+        .unwrap();
+    let mut state = AppState::new(&Config::default());
+    let epoch = state.session.begin_restore();
+
+    state.update(
+        Action::SessionRestoreFailed {
+            epoch,
+            failure: RestoreFailure::Expired,
+        },
+        &fx,
+    );
+
+    assert_eq!(state.session.nickname, None);
+    assert_eq!(state.library, AppState::new(&Config::default()).library);
+    assert_eq!(
+        state.status.as_deref(),
+        Some(crate::i18n::t(crate::i18n::Key::SessionExpired))
+    );
+}
+
