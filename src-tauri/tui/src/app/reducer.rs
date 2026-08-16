@@ -619,6 +619,24 @@ impl AppState {
                     ),
                 }
             }
+            Action::CoverLoadFailed {
+                surface,
+                generation,
+            } => match surface {
+                CoverSurface::Playing if generation == self.generation => {
+                    self.cover = None;
+                    if let Some(original) = &mut self.original_cover {
+                        original.clear();
+                    }
+                }
+                CoverSurface::Bar if generation == self.generation => {
+                    self.bar_cover = None;
+                    if let Some(original) = &mut self.bar_original_cover {
+                        original.clear();
+                    }
+                }
+                _ => {}
+            },
             Action::CoverDecoded {
                 surface,
                 generation,

@@ -147,6 +147,12 @@ pub enum Action {
         request: CoverRenderRequest,
         cover: PixelCover,
     },
+    /// A cover load definitively failed: the surface must fall back to the
+    /// placeholder instead of keeping the previous track's art forever.
+    CoverLoadFailed {
+        surface: CoverSurface,
+        generation: u64,
+    },
     CoverDecoded {
         surface: CoverSurface,
         generation: u64,

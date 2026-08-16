@@ -67,6 +67,16 @@ impl SpectrumSensitivity {
             Self::Sharp => (0.65, 0.16),
         }
     }
+
+    /// dB window under the adaptive ceiling: narrower = more contrast and
+    /// motion, wider = calmer bars that all stay lit.
+    pub fn range_db(self) -> f32 {
+        match self {
+            Self::Soft => 45.0,
+            Self::Normal => 35.0,
+            Self::Sharp => 28.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

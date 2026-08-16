@@ -242,7 +242,7 @@ const SMEAR_DECAY: f32 = 1.6;
 // dB mapping (the cava/WinAmp recipe): bar height is the bin's position
 // inside a fixed dB window under a slowly adapting ceiling, so mids and
 // highs stay alive instead of being crushed by the loudest bass bin.
-const DB_RANGE: f32 = 55.0;
+
 const DB_CEILING_ATTACK: f32 = 0.5;
 // ~1 dB/s at the 20 Hz tick: loud passages release gently, no pumping.
 const DB_CEILING_FALL: f32 = 0.05;
@@ -254,6 +254,7 @@ struct SpectrumAnalyzer {
     bins: [f32; SPECTRUM_BINS],
     ceiling: f32,
     ceiling_db: f32,
+    db_range: f32,
     attack: f32,
     decay: f32,
 }
@@ -267,6 +268,7 @@ impl Default for SpectrumAnalyzer {
             bins: [0.0; SPECTRUM_BINS],
             ceiling: CEILING_FLOOR,
             ceiling_db: DB_CEILING_MIN,
+            db_range: 35.0,
             attack: 0.4,
             decay: 0.09,
         }
@@ -365,10 +367,10 @@ impl SpectrumAnalyzer {
             } else {
                 self.ceiling_db = (self.ceiling_db - DB_CEILING_FALL).max(DB_CEILING_MIN);
             }
-            let floor_db = self.ceiling_db - DB_RANGE;
+            let floor_db = self.ceiling_db - self.db_range;
             for (bin, target) in self.bins.iter_mut().zip(targets) {
                 let level_db = 20.0 * target.max(1e-6).log10();
-                let normalized = ((level_db - floor_db) / DB_RANGE).clamp(0.0, 1.0);
+                let normalized = ((level_db - floor_db) / self.db_range).clamp(0.0, 1.0);
                 let coefficient = if normalized > *bin {
                     self.attack
                 } else {
@@ -393,9 +395,10 @@ impl SpectrumAnalyzer {
         &self.bins
     }
 
-    fn set_sensitivity(&mut self, attack: f32, decay: f32) {
+    fn set_sensitivity(&mut self, attack: f32, decay: f32, range_db: f32) {
         self.attack = attack;
         self.decay = decay;
+        self.db_range = range_db;
     }
 }
 
@@ -473,8 +476,8 @@ impl SpectrumView {
         self.terminal_background = background;
     }
 
-    pub fn set_sensitivity(&mut self, attack: f32, decay: f32) {
-        self.analyzer.set_sensitivity(attack, decay);
+    pub fn set_sensitivity(&mut self, attack: f32, decay: f32, range_db: f32) {
+        self.analyzer.set_sensitivity(attack, decay, range_db);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1642,7 +1645,7 @@ mod tests {
             .collect::<Vec<_>>();
         let ratio = |db: bool| {
             let mut analyzer = SpectrumAnalyzer::default();
-            analyzer.set_sensitivity(1.0, 1.0);
+            analyzer.set_sensitivity(1.0, 1.0, 45.0);
             let mut bins = [0.0; SPECTRUM_BINS];
             // Let the dB ceiling settle like a few seconds of playback would.
             for _ in 0..40 {

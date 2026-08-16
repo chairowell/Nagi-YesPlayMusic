@@ -2724,3 +2724,64 @@ async fn switching_tracks_keeps_the_old_original_cover_until_the_new_one_lands()
     state.play_row(&fx, bare);
     assert!(!state.playing_original_visible());
 }
+
+#[tokio::test]
+async fn a_stale_pending_cover_is_dropped_instead_of_promoting_later() {
+    let picker = ratatui_image::picker::Picker::halfblocks();
+    let (main_tx, _main_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (pending_tx, _pending_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(picker, main_tx, pending_tx);
+    cover.replace(1, DynamicImage::new_rgba8(4, 4));
+    cover.replace(2, DynamicImage::new_rgba8(4, 4));
+    assert!(cover.has_pending());
+
+    let backend = TestBackend::new(20, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    // The track moved on to generation 3: the parked generation-2 image
+    // must vanish, not resurface over the current track's art.
+    terminal
+        .draw(|frame| cover.render(frame, Rect::new(0, 0, 10, 5), 3))
+        .unwrap();
+
+    assert!(!cover.has_pending());
+    assert_eq!(cover.generation, Some(1));
+}
+
+#[tokio::test]
+async fn a_failed_cover_load_clears_the_previous_tracks_art() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.config.cover_mode = crate::config::CoverMode::Original;
+    let (main_tx, _main_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (pending_tx, _pending_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(
+        ratatui_image::picker::Picker::halfblocks(),
+        main_tx,
+        pending_tx,
+    );
+    cover.replace(1, DynamicImage::new_rgba8(4, 4));
+    state.original_cover = Some(cover);
+    state.generation = 2;
+    assert!(state.playing_original_visible());
+
+    // A failure for an older generation changes nothing...
+    state.update(
+        Action::CoverLoadFailed {
+            surface: CoverSurface::Playing,
+            generation: 1,
+        },
+        &fx,
+    );
+    assert!(state.playing_original_visible());
+
+    // ...the current track's failure drops the stale art honestly.
+    state.update(
+        Action::CoverLoadFailed {
+            surface: CoverSurface::Playing,
+            generation: 2,
+        },
+        &fx,
+    );
+    assert!(!state.playing_original_visible());
+}

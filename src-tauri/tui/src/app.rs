@@ -135,7 +135,17 @@ impl OriginalCover {
         self.pending.is_some()
     }
 
-    fn render(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+    fn render(&mut self, frame: &mut ratatui::Frame, area: Rect, current_generation: u64) {
+        // A pending image whose track already changed again must never
+        // promote later and shadow the current track's art.
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.generation != current_generation)
+        {
+            self.cancel_pending();
+            self.pending = None;
+        }
         let ready_without_resize = if let Some(pending) = &mut self.pending {
             frame.render_stateful_widget(StatefulImage::new(), area, &mut pending.protocol);
             pending.protocol.protocol_type().is_some()
@@ -1102,8 +1112,9 @@ impl AppState {
     }
 
     pub(crate) fn render_selected_original(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        let generation = self.selected_cover.generation;
         if let Some(original) = &mut self.selected_original_cover {
-            original.render(frame, area);
+            original.render(frame, area, generation);
         }
     }
 
@@ -1881,15 +1892,25 @@ fn spawn_cover_loads(fx: &Effects, loads: Vec<CoverLoad>, pic_url: String) {
             Ok(bytes) => bytes,
             Err(error) => {
                 tracing::warn!(%error, "cover fetch failed");
+                for load in pending {
+                    send_cover_failure(&actions, &load.request);
+                }
                 return;
             }
         };
         for load in pending {
-            if let Some(processed) = process_cover(cache.clone(), &load, bytes.clone(), true).await
-            {
-                send_cover(&actions, &load.request, processed);
+            match process_cover(cache.clone(), &load, bytes.clone(), true).await {
+                Some(processed) => send_cover(&actions, &load.request, processed),
+                None => send_cover_failure(&actions, &load.request),
             }
         }
+    });
+}
+
+fn send_cover_failure(actions: &mpsc::UnboundedSender<Action>, request: &CoverRenderRequest) {
+    let _ = actions.send(Action::CoverLoadFailed {
+        surface: request.surface,
+        generation: request.generation,
     });
 }
 
@@ -2483,7 +2504,11 @@ async fn event_loop(
             }
             _ = spectrum_ticks.tick(), if state.config.spectrum_enabled || state.view == View::Settings => {
                 let (attack, decay) = state.config.spectrum_sensitivity.coefficients();
-                state.spectrum.set_sensitivity(attack, decay);
+                state.spectrum.set_sensitivity(
+                    attack,
+                    decay,
+                    state.config.spectrum_sensitivity.range_db(),
+                );
                 state.spectrum.tick(
                     fx.player.samples(),
                     state.now.is_some() && !state.paused,
