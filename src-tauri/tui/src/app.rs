@@ -1020,12 +1020,14 @@ impl AppState {
         }
     }
 
-    pub fn original_cover_is_current(&self) -> bool {
+    /// The original keeps showing through a track switch: the old art stays
+    /// until the next track's decode promotes, so the swap never flashes.
+    pub fn playing_original_visible(&self) -> bool {
         self.config.cover_mode == CoverMode::Original
             && self
                 .original_cover
                 .as_ref()
-                .is_some_and(|cover| cover.generation == Some(self.generation))
+                .is_some_and(|cover| cover.generation.is_some() || cover.has_pending())
     }
 
     pub fn render_original_cover(&mut self, frame: &mut ratatui::Frame, area: Rect) {
@@ -1049,12 +1051,18 @@ impl AppState {
         }
     }
 
-    pub fn bar_original_is_current(&self) -> bool {
+    fn apply_playing_pending_resize(&mut self, response: ResizeResponse) {
+        if let Some(original) = &mut self.original_cover {
+            original.update_pending(response, self.generation);
+        }
+    }
+
+    pub fn bar_original_visible(&self) -> bool {
         self.config.cover_mode == CoverMode::Original
             && self
                 .bar_original_cover
                 .as_ref()
-                .is_some_and(|cover| cover.generation == Some(self.generation))
+                .is_some_and(|cover| cover.generation.is_some())
     }
 
     pub fn render_bar_original(&mut self, frame: &mut ratatui::Frame, area: Rect) {
@@ -1475,7 +1483,9 @@ impl AppState {
         self.paused = false;
         self.resume_on_play = None;
         self.seek_after_start = None;
-        self.clear_cover();
+        if row.pic_url.is_none() {
+            self.clear_cover();
+        }
         self.ensure_placeholder();
         self.generation += 1;
         self.now = Some(NowPlaying {
@@ -2292,6 +2302,8 @@ async fn event_loop(
     let (selected_pending_responses_tx, mut selected_pending_responses) = mpsc::unbounded_channel();
     let (bar_resize_tx, bar_resize_rx) = mpsc::unbounded_channel();
     let (bar_responses_tx, mut bar_responses) = mpsc::unbounded_channel();
+    let (playing_pending_resize_tx, playing_pending_resize_rx) = mpsc::unbounded_channel();
+    let (playing_pending_responses_tx, mut playing_pending_responses) = mpsc::unbounded_channel();
 
     // Graphics protocol queries must finish before EventStream starts reading
     // the same terminal response bytes.
@@ -2301,9 +2313,9 @@ async fn event_loop(
         terminal_is_light,
     ));
     let picker = query_graphics_picker(config.cover_mode, theme.bg);
-    let original_cover = picker
-        .clone()
-        .map(|picker| OriginalCover::new(picker, playing_resize_tx));
+    let original_cover = picker.clone().map(|picker| {
+        OriginalCover::buffered(picker, playing_resize_tx, playing_pending_resize_tx)
+    });
     let selected_original_cover = picker.clone().map(|picker| {
         OriginalCover::buffered(picker, selected_resize_tx, selected_pending_resize_tx)
     });
@@ -2312,6 +2324,7 @@ async fn event_loop(
     spawn_resize_worker(selected_resize_rx, selected_responses_tx);
     spawn_resize_worker(selected_pending_resize_rx, selected_pending_responses_tx);
     spawn_resize_worker(bar_resize_rx, bar_responses_tx);
+    spawn_resize_worker(playing_pending_resize_rx, playing_pending_responses_tx);
 
     if config.update_check {
         let update_tx = actions_tx.clone();
@@ -2448,6 +2461,14 @@ async fn event_loop(
                     continue;
                 };
                 state.apply_selected_pending_resize(response);
+            }
+            response = playing_pending_responses.recv(), if state.original_cover.is_some() => {
+                let Some(response) = response else {
+                    tracing::warn!("playing pending cover worker gone, disabling original cover");
+                    state.original_cover = None;
+                    continue;
+                };
+                state.apply_playing_pending_resize(response);
             }
             response = bar_responses.recv(), if state.bar_original_cover.is_some() => {
                 let Some(response) = response else {

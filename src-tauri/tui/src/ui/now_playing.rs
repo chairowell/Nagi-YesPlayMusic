@@ -279,7 +279,7 @@ fn draw_cover(frame: &mut Frame, state: &mut AppState, area: Rect) {
     if area.height == 0 {
         return;
     }
-    if state.original_cover_is_current() {
+    if state.playing_original_visible() {
         frame.render_widget(
             ratatui::widgets::Block::new().style(Style::new().bg(state.theme.bg)),
             area,
@@ -573,7 +573,7 @@ pub(super) fn draw_player_bar(
     if let Some(cover_area) = cover_area {
         // Same policy as the now-playing view: terminal-graphics original when
         // it is ready for this track, pixel art otherwise.
-        if state.bar_original_is_current() {
+        if state.bar_original_visible() {
             state.render_bar_original(frame, cover_area);
         } else if let Some(cover) = &state.bar_cover {
             frame.render_widget(cover, cover_area);

@@ -2623,7 +2623,7 @@ async fn bar_cover_follows_the_original_mode_and_playing_generation() {
     ));
     state.generation = 3;
     assert!(state.uses_original_cover(CoverSurface::Bar));
-    assert!(!state.bar_original_is_current());
+    assert!(!state.bar_original_visible());
 
     state.update(
         Action::CoverDecoded {
@@ -2634,9 +2634,10 @@ async fn bar_cover_follows_the_original_mode_and_playing_generation() {
         },
         &fx,
     );
-    assert!(state.bar_original_is_current());
+    assert!(state.bar_original_visible());
 
-    // A decode for a previous track must not resurrect on the current one.
+    // Through a track switch the old art deliberately stays visible, but a
+    // stale decode must not be adopted as the current track's art.
     state.generation = 4;
     state.update(
         Action::CoverDecoded {
@@ -2647,7 +2648,11 @@ async fn bar_cover_follows_the_original_mode_and_playing_generation() {
         },
         &fx,
     );
-    assert!(!state.bar_original_is_current());
+    assert!(state.bar_original_visible());
+    assert_eq!(
+        state.bar_original_cover.as_ref().unwrap().generation,
+        Some(3)
+    );
 }
 
 #[tokio::test]
@@ -2686,4 +2691,36 @@ async fn manual_track_change_disarms_a_parked_fm_advance() {
     // The batch extends the queue without yanking playback off the pick.
     assert_eq!(state.queue.len(), 3);
     assert_eq!(state.queue_pos, Some(0));
+}
+
+#[tokio::test]
+async fn switching_tracks_keeps_the_old_original_cover_until_the_new_one_lands() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.config.cover_mode = crate::config::CoverMode::Original;
+    let (main_tx, _main_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (pending_tx, _pending_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(
+        ratatui_image::picker::Picker::halfblocks(),
+        main_tx,
+        pending_tx,
+    );
+    cover.replace(1, DynamicImage::new_rgba8(4, 4));
+    state.original_cover = Some(cover);
+    state.generation = 1;
+    assert!(state.playing_original_visible());
+
+    // The next track carries art: the old cover must stay on screen while
+    // the new one decodes, instead of flashing the placeholder.
+    let mut with_art = row(2);
+    with_art.pic_url = Some("https://example.test/next.jpg".into());
+    state.play_row(&fx, with_art);
+    assert!(state.playing_original_visible());
+
+    // An art-less track has nothing incoming, so the stale art must go.
+    let mut bare = row(3);
+    bare.pic_url = None;
+    state.play_row(&fx, bare);
+    assert!(!state.playing_original_visible());
 }
