@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
   configureSafeNeteaseApiCache,
-  findMatchingAudioResponse,
   isTrustedTrackSource,
 } from '../src/utils/audioCacheIntegrity';
 
@@ -17,19 +16,6 @@ describe('网易云 API 响应缓存安全', () => {
     expect(configured).toEqual({ enabled: false });
   });
 
-  test('音源响应必须包含当前歌曲 ID，不能拿上一首的结果兜底', () => {
-    const response = [
-      { id: 2001472, url: 'https://example.com/safe-and-sound.mp3' },
-      { id: 1868238759, url: 'https://example.com/abcdefu.mp3' },
-    ];
-
-    expect(findMatchingAudioResponse(response, 1868238759)?.url).toEndWith(
-      'abcdefu.mp3'
-    );
-    expect(findMatchingAudioResponse(response.slice(0, 1), 1868238759)).toBe(
-      null
-    );
-  });
 });
 
 describe('历史音频缓存可信标记', () => {

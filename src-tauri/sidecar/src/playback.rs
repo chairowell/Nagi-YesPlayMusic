@@ -45,7 +45,7 @@ impl PlaybackState {
 trait PlaybackResolver: Send + Sync {
     async fn song_url(
         &self,
-        cookie: Option<String>,
+        query: Query,
         track_id: i64,
         bitrate: u32,
     ) -> Result<PlaybackSource, SongUrlError>;
@@ -59,20 +59,23 @@ struct ProductionResolver {
 impl PlaybackResolver for ProductionResolver {
     async fn song_url(
         &self,
-        cookie: Option<String>,
+        query: Query,
         track_id: i64,
         bitrate: u32,
     ) -> Result<PlaybackSource, SongUrlError> {
-        let mut query = Query::new();
-        query.cookie = cookie;
         song_url_with(&self.client, query, track_id, bitrate).await
     }
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct SourceQuery {
     bitrate: u32,
+    /// Same per-request unlock knobs the generic NCM proxy honors; without
+    /// them a user relying on real-IP or an HTTP proxy would silently lose
+    /// region-locked tracks on this path.
+    #[serde(rename = "realIP")]
+    real_ip: Option<String>,
+    proxy: Option<String>,
 }
 
 pub fn router(state: PlaybackState) -> Router {
@@ -87,13 +90,16 @@ async fn source_handler(
     UrlQuery(query): UrlQuery<SourceQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let cookie = headers
+    let mut ncm_query = Query::new();
+    ncm_query.cookie = headers
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+    ncm_query.real_ip = query.real_ip;
+    ncm_query.proxy = query.proxy;
     let resolved = tokio::time::timeout(
         RESOLVE_TIMEOUT,
-        state.resolver.song_url(cookie, track_id, query.bitrate),
+        state.resolver.song_url(ncm_query, track_id, query.bitrate),
     )
     .await;
     let body = match resolved {
@@ -159,7 +165,7 @@ mod tests {
 
     struct FakeResolver {
         outcome: Mutex<Option<Result<PlaybackSource, SongUrlError>>>,
-        seen_cookie: Mutex<Option<Option<String>>>,
+        seen_query: Mutex<Option<Query>>,
         seen_request: Mutex<Option<(i64, u32)>>,
     }
 
@@ -167,7 +173,7 @@ mod tests {
         fn new(outcome: Result<PlaybackSource, SongUrlError>) -> Arc<Self> {
             Arc::new(Self {
                 outcome: Mutex::new(Some(outcome)),
-                seen_cookie: Mutex::new(None),
+                seen_query: Mutex::new(None),
                 seen_request: Mutex::new(None),
             })
         }
@@ -177,11 +183,11 @@ mod tests {
     impl PlaybackResolver for FakeResolver {
         async fn song_url(
             &self,
-            cookie: Option<String>,
+            query: Query,
             track_id: i64,
             bitrate: u32,
         ) -> Result<PlaybackSource, SongUrlError> {
-            *self.seen_cookie.lock().unwrap() = Some(cookie);
+            *self.seen_query.lock().unwrap() = Some(query);
             *self.seen_request.lock().unwrap() = Some((track_id, bitrate));
             self.outcome.lock().unwrap().take().expect("single call")
         }
@@ -217,7 +223,7 @@ mod tests {
         }));
         let (status, body) = request(
             resolver.clone(),
-            "/native/playback/source/186016?bitrate=350000",
+            "/native/playback/source/186016?bitrate=350000&realIP=1.2.3.4&proxy=HTTP%3A%2F%2F127.0.0.1%3A7890",
             Some("MUSIC_U=token"),
         )
         .await;
@@ -229,10 +235,10 @@ mod tests {
         assert_eq!(body["actualBitrate"], 850_321);
         assert_eq!(body["expectedBytes"], 12_345_678);
         assert_eq!(body["expectedMd5"], "ab".repeat(16));
-        assert_eq!(
-            *resolver.seen_cookie.lock().unwrap(),
-            Some(Some("MUSIC_U=token".to_owned()))
-        );
+        let query = resolver.seen_query.lock().unwrap().take().unwrap();
+        assert_eq!(query.cookie.as_deref(), Some("MUSIC_U=token"));
+        assert_eq!(query.real_ip.as_deref(), Some("1.2.3.4"));
+        assert_eq!(query.proxy.as_deref(), Some("HTTP://127.0.0.1:7890"));
         assert_eq!(
             *resolver.seen_request.lock().unwrap(),
             Some((186_016, 350_000))

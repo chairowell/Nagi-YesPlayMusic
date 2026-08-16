@@ -2,12 +2,26 @@ import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 
 let musicQuality: number | 'flac' = 320000;
+let enableRealIP = false;
+let realIP: string | null = null;
+let proxyConfig: { protocol: string; server: string; port: number } = {
+  protocol: 'noProxy',
+  server: '',
+  port: 0,
+};
 
-const getTestAppStore = () => ({ settings: { musicQuality } });
+const getTestAppStore = () => ({
+  settings: { musicQuality, enableRealIP, realIP, proxyConfig },
+});
 
 mock.module('@/stores/accessor', () => ({
   getAppStore: getTestAppStore,
   getAppStoreIfReady: getTestAppStore,
+}));
+// The web-only hardcoded real-IP fallback must stay out of desktop requests.
+mock.module('@/utils/runtime', () => ({
+  isDesktopRuntime: true,
+  isTauriRuntime: true,
 }));
 
 const { playbackBitrate, resolveNeteasePlaybackSource } = await import(
@@ -36,6 +50,9 @@ afterAll(() => {
 describe('播放源解析服务', () => {
   beforeEach(() => {
     musicQuality = 320000;
+    enableRealIP = false;
+    realIP = null;
+    proxyConfig = { protocol: 'noProxy', server: '', port: 0 };
     fetchCalls = [];
   });
 
@@ -78,6 +95,27 @@ describe('播放源解析服务', () => {
       expectedBytes: 12345678,
       expectedMd5: 'ab'.repeat(16),
     });
+  });
+
+  test('真实 IP 与代理设置随请求透传，与 axios 拦截器同一语义', async () => {
+    enableRealIP = true;
+    realIP = '1.2.3.4';
+    proxyConfig = { protocol: 'HTTP', server: '127.0.0.1', port: 7890 };
+    answerWith({ status: 'unavailable' });
+
+    await resolveNeteasePlaybackSource(42);
+
+    const url = new URL(fetchCalls[0] ?? '', 'http://localhost');
+    expect(url.searchParams.get('realIP')).toBe('1.2.3.4');
+    expect(url.searchParams.get('proxy')).toBe('HTTP://127.0.0.1:7890');
+
+    // Off by default: desktop requests carry neither knob.
+    enableRealIP = false;
+    proxyConfig = { protocol: 'noProxy', server: '', port: 0 };
+    fetchCalls = [];
+    answerWith({ status: 'unavailable' });
+    await resolveNeteasePlaybackSource(42);
+    expect(fetchCalls[0]).toBe('/api/native/playback/source/42?bitrate=320000');
   });
 
   test('unavailable 与 rejected 都让链路继续，不抛错', async () => {
