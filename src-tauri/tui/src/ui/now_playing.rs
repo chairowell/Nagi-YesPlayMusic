@@ -1550,8 +1550,8 @@ mod tests {
         let rendered = (0..100)
             .map(|x| buffer[(x, 0)].symbol())
             .collect::<String>();
-        // Half volume sits in the middle band of the four-state speaker.
-        assert!(rendered.contains(icons.volume_medium));
+        // Half volume reaches the high band of the three-state speaker.
+        assert!(rendered.contains(icons.volume_high));
         assert!(rendered.contains(&icons.volume_full.repeat(5)));
         assert!(rendered.contains(&icons.volume_empty.repeat(5)));
     }

@@ -13,7 +13,6 @@ pub(crate) struct IconSet {
     pub(crate) sequential: &'static str,
     pub(crate) volume_muted: &'static str,
     pub(crate) volume_low: &'static str,
-    pub(crate) volume_medium: &'static str,
     pub(crate) volume_high: &'static str,
     pub(crate) volume_full: &'static str,
     pub(crate) volume_empty: &'static str,
@@ -30,8 +29,7 @@ const UNICODE: IconSet = IconSet {
     sequential: "→",
     volume_muted: "✕",
     volume_low: "♩",
-    volume_medium: "♪",
-    volume_high: "♫",
+    volume_high: "♪",
     volume_full: "●",
     volume_empty: "○",
     search: "⌕",
@@ -45,10 +43,12 @@ const NERD: IconSet = IconSet {
     repeat_list: "\u{f01e}",
     repeat_one: "\u{f0458}",
     sequential: "\u{f061}",
-    volume_muted: "\u{f075f}",
-    volume_low: "\u{f057f}",
-    volume_medium: "\u{f0580}",
-    volume_high: "\u{f057e}",
+    // The classic FontAwesome trio: same family and optical size as the
+    // play/pause glyphs, present in every Nerd Font build. Mute is the bare
+    // speaker — the emptied dot meter already says "zero".
+    volume_muted: "\u{f026}",
+    volume_low: "\u{f027}",
+    volume_high: "\u{f028}",
     volume_full: "\u{f111}",
     volume_empty: "\u{f10c}",
     search: "\u{f002}",
@@ -59,10 +59,8 @@ impl IconSet {
     pub(crate) fn volume_at(&self, volume: f32) -> &'static str {
         if volume <= f32::EPSILON {
             self.volume_muted
-        } else if volume < 1.0 / 3.0 {
+        } else if volume < 0.5 {
             self.volume_low
-        } else if volume < 2.0 / 3.0 {
-            self.volume_medium
         } else {
             self.volume_high
         }
@@ -80,7 +78,7 @@ pub(crate) const fn for_style(style: IconStyle) -> &'static IconSet {
 mod tests {
     use super::*;
 
-    fn glyphs(icons: &IconSet) -> [&str; 14] {
+    fn glyphs(icons: &IconSet) -> [&str; 13] {
         [
             icons.play,
             icons.pause,
@@ -91,7 +89,6 @@ mod tests {
             icons.sequential,
             icons.volume_muted,
             icons.volume_low,
-            icons.volume_medium,
             icons.volume_high,
             icons.volume_full,
             icons.volume_empty,
@@ -124,7 +121,6 @@ mod tests {
         let icons = for_style(IconStyle::Nerd);
         assert_eq!(icons.volume_at(0.0), icons.volume_muted);
         assert_eq!(icons.volume_at(0.2), icons.volume_low);
-        assert_eq!(icons.volume_at(0.5), icons.volume_medium);
         assert_eq!(icons.volume_at(0.8), icons.volume_high);
     }
 
