@@ -438,26 +438,6 @@
     "idempotent": false
   },
   {
-    "id": "search",
-    "method": "GET",
-    "path": "/search",
-    "requestBuilder": "src/api/others.ts#search",
-    "nodeAdapter": "@neteaseapireborn/api/module/search",
-    "rustAdapter": "ncm::search",
-    "decoder": "src/api/others.ts#decodeSearchResponse",
-    "comparator": [
-      "code",
-      "result.songs[].id",
-      "result.song.songs[].id",
-      "result.albums[].id",
-      "result.artists[].id",
-      "result.playlists[].id",
-      "result.mvs[].id",
-      "result.userprofiles[].userId"
-    ],
-    "idempotent": true
-  },
-  {
     "id": "simi_artist",
     "method": "POST",
     "path": "/simi/artist",

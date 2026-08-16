@@ -15,7 +15,7 @@ export function playbackBitrate(quality: number | 'flac'): number {
   return quality === 'flac' ? 350000 : quality;
 }
 
-type PlaybackSettings = ReturnType<typeof getAppStore>['settings'];
+export type PlaybackSettings = ReturnType<typeof getAppStore>['settings'];
 
 // Same cascade the axios interceptor applies to every NCM call: env
 // override, then the user's real-IP setting, then the web-only fallback.
@@ -34,7 +34,7 @@ function playbackProxy(settings: PlaybackSettings): string | null {
     : null;
 }
 
-function unlockParams(settings: PlaybackSettings): URLSearchParams {
+export function unlockParams(settings: PlaybackSettings): URLSearchParams {
   const params = new URLSearchParams();
   const realIP = playbackRealIP(settings);
   if (realIP) params.set('realIP', realIP);

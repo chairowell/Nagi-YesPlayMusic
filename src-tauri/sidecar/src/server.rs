@@ -17,6 +17,7 @@ use crate::{
     precise_wav::{self, PreciseWavState},
     proxy_relay::{self, UpstreamProxy},
     renderer::{self, ApiProxy},
+    search,
     session::{self, RequestBoundary},
     shared_cache::{self, SharedCacheState},
     unm::{self, UnmState},
@@ -130,8 +131,9 @@ async fn build_api_router(
     let client = Arc::new(ncm_api_rs::ApiClient::new(None));
     let mut router = ncm::router(NcmState::production(client.clone()))?
         .merge(playback::router(playback::PlaybackState::production(
-            client,
+            client.clone(),
         )))
+        .merge(search::router(search::SearchState::production(client)))
         .merge(unm::router(UnmState::new()))
         .merge(shared_cache::router(
             SharedCacheState::production().map_err(ServerError::SharedCacheClient)?,

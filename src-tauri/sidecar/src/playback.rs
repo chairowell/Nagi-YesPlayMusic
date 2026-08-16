@@ -100,7 +100,11 @@ pub fn router(state: PlaybackState) -> Router {
         .with_state(state)
 }
 
-fn ncm_query(headers: &HeaderMap, real_ip: Option<String>, proxy: Option<String>) -> Query {
+pub(crate) fn ncm_query(
+    headers: &HeaderMap,
+    real_ip: Option<String>,
+    proxy: Option<String>,
+) -> Query {
     let mut query = Query::new();
     query.cookie = headers
         .get(header::COOKIE)

@@ -42,7 +42,13 @@
 <script lang="ts">
 import { defineComponent } from 'vue';
 import { getTrackDetail } from '@/api/track';
-import { search } from '@/api/others';
+import {
+  searchAlbums,
+  searchArtists,
+  searchMusicVideos,
+  searchPlaylists,
+  searchTracks,
+} from '@/services/searchSource';
 import locale from '@/locale';
 import { camelCase } from 'change-case';
 import NProgress from 'nprogress';
@@ -127,54 +133,43 @@ export default defineComponent({
   },
   methods: {
     fetchData() {
-      const typeTable: Record<SearchType, number> = {
-        musicVideos: 1004,
-        tracks: 1,
-        albums: 10,
-        artists: 100,
-        playlists: 1000,
-      };
-      return search({
-        keywords: this.keywords,
-        type: typeTable[this.type],
-        offset: this.resultLength,
-      }).then(response => {
-        const result = response.result;
-        if (!result) return;
-        this.hasMore = result.hasMore ?? true;
-        switch (this.type) {
-          case 'musicVideos':
-            this.mvResults.push(...(result.mvs ?? []));
-            if (
-              result.mvCount !== undefined &&
-              result.mvCount <= this.mvResults.length
-            ) {
-              this.hasMore = false;
-            }
-            break;
-          case 'artists':
-            this.artistResults.push(...(result.artists ?? []));
-            break;
-          case 'albums':
-            this.albumResults.push(...(result.albums ?? []));
-            if (
-              result.albumCount !== undefined &&
-              result.albumCount <= this.albumResults.length
-            ) {
-              this.hasMore = false;
-            }
-            break;
-          case 'tracks':
-            this.trackResults.push(...(result.songs ?? []));
-            this.getTracksDetail();
-            break;
-          case 'playlists':
-            this.playlistResults.push(...(result.playlists ?? []));
-            break;
-        }
+      const keywords = this.keywords;
+      const options = { offset: this.resultLength };
+      // Every channel now pages against the server-reported total, which
+      // the legacy hasMore flag only approximated for two of them.
+      const finish = (accumulated: number, total: number) => {
+        this.hasMore = accumulated < total;
         NProgress.done();
         this.show = true;
-      });
+      };
+      switch (this.type) {
+        case 'musicVideos':
+          return searchMusicVideos(keywords, options).then(page => {
+            this.mvResults.push(...page.items);
+            finish(this.mvResults.length, page.total);
+          });
+        case 'artists':
+          return searchArtists(keywords, options).then(page => {
+            this.artistResults.push(...page.items);
+            finish(this.artistResults.length, page.total);
+          });
+        case 'albums':
+          return searchAlbums(keywords, options).then(page => {
+            this.albumResults.push(...page.items);
+            finish(this.albumResults.length, page.total);
+          });
+        case 'tracks':
+          return searchTracks(keywords, options).then(page => {
+            this.trackResults.push(...page.items);
+            this.getTracksDetail();
+            finish(this.trackResults.length, page.total);
+          });
+        case 'playlists':
+          return searchPlaylists(keywords, options).then(page => {
+            this.playlistResults.push(...page.items);
+            finish(this.playlistResults.length, page.total);
+          });
+      }
     },
     getTracksDetail() {
       const trackIDs = this.trackResults.map(track => track.id);

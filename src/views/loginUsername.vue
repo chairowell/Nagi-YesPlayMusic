@@ -57,7 +57,7 @@ import { defineComponent } from 'vue';
 import { mapActions } from 'pinia';
 import { useAppStore } from '@/stores/app';
 import NProgress from 'nprogress';
-import { search } from '@/api/others';
+import { searchUsers } from '@/services/searchSource';
 import { userPlaylist } from '@/api/user';
 import { throttle } from '@/utils/common';
 
@@ -83,8 +83,8 @@ export default defineComponent({
     ...mapActions(useAppStore, ['updateData', 'startUserSession']),
     search() {
       if (!this.keyword) return;
-      search({ keywords: this.keyword, limit: 9, type: 1002 }).then(data => {
-        this.result = data.result?.userprofiles ?? [];
+      searchUsers(this.keyword, { limit: 9 }).then(page => {
+        this.result = page.items;
         this.activeUser = this.result[0] ?? {};
       });
     },

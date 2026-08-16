@@ -214,6 +214,9 @@ pub struct UserHit {
     pub user_id: i64,
     pub nickname: String,
     pub avatar_url: Option<String>,
+    /// `0` means no VIP; the GUI's settings page badges on it.
+    pub vip_type: i64,
+    pub signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -760,17 +763,16 @@ fn parse_song_row(song: &Value) -> Result<SongRow, NcmClientError> {
 
 fn parse_song_hit(song: &Value) -> Result<SongHit, NcmClientError> {
     let row = parse_song_row(song)?;
+    // The row parser already guaranteed a named first artist; the rest of
+    // the credits list tolerates id-0 or unnamed entries instead of turning
+    // one malformed guest credit into a failed page.
     let artists = required_array(song, &["ar"])?
         .iter()
-        .map(|artist| {
-            Ok(ArtistRef {
-                // Some catalog entries carry id 0 artists; the row parser
-                // already guaranteed at least one named entry exists.
-                id: artist["id"].as_i64().unwrap_or(0),
-                name: required_string(artist, &["name"])?,
-            })
+        .map(|artist| ArtistRef {
+            id: artist["id"].as_i64().unwrap_or(0),
+            name: artist["name"].as_str().unwrap_or("").to_owned(),
         })
-        .collect::<Result<_, NcmClientError>>()?;
+        .collect();
     Ok(SongHit {
         id: row.id,
         name: row.title,
@@ -799,6 +801,15 @@ fn parse_song_privilege(privilege: &Value) -> Option<SongPrivilege> {
     })
 }
 
+/// Display-only counters: a missing or malformed count degrades to zero
+/// instead of failing the whole page (the GUI never renders these).
+fn usize_or_zero(value: &Value, field: &str) -> usize {
+    value[field]
+        .as_u64()
+        .and_then(|number| usize::try_from(number).ok())
+        .unwrap_or(0)
+}
+
 fn string_list(value: &Value, field: &str) -> Vec<String> {
     value[field]
         .as_array()
@@ -824,8 +835,8 @@ fn parse_artist_hit(artist: &Value) -> Result<ArtistHit, NcmClientError> {
         name: required_string(artist, &["name"])?,
         pic_url: pic_url.clone().or_else(|| img1v1_url.clone()),
         img1v1_url,
-        album_count: required_usize(artist, &["albumSize"])?,
-        song_count: required_usize(artist, &["musicSize"])?,
+        album_count: usize_or_zero(artist, "albumSize"),
+        song_count: usize_or_zero(artist, "musicSize"),
     })
 }
 
@@ -842,7 +853,7 @@ fn parse_album_hit(album: &Value) -> Result<AlbumHit, NcmClientError> {
             name: required_string(album, &["artist", "name"])?,
         },
         pic_url: optional_string(album, "picUrl")?,
-        song_count: required_usize(album, &["size"])?,
+        song_count: usize_or_zero(album, "size"),
         mark: album["mark"].as_i64().unwrap_or(0),
     })
 }
@@ -855,9 +866,12 @@ fn parse_playlist_hit(playlist: &Value) -> Result<PlaylistHit, NcmClientError> {
     Ok(PlaylistHit {
         id,
         name: required_string(playlist, &["name"])?,
-        creator: required_string(playlist, &["creator", "nickname"])?,
+        creator: playlist["creator"]["nickname"]
+            .as_str()
+            .unwrap_or("")
+            .to_owned(),
         cover_url: optional_string(playlist, "coverImgUrl")?,
-        track_count: required_usize(playlist, &["trackCount"])?,
+        track_count: usize_or_zero(playlist, "trackCount"),
         privacy: playlist["privacy"].as_i64().unwrap_or(0),
     })
 }
@@ -907,6 +921,8 @@ fn parse_user_hit(user: &Value) -> Result<UserHit, NcmClientError> {
         user_id,
         nickname: required_string(user, &["nickname"])?,
         avatar_url: optional_string(user, "avatarUrl")?,
+        vip_type: user["vipType"].as_i64().unwrap_or(0),
+        signature: optional_string(user, "signature")?,
     })
 }
 

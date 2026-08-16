@@ -89,8 +89,13 @@ import { defineComponent } from 'vue';
 import { mapActions, mapState } from 'pinia';
 import { useAppStore } from '@/stores/app';
 import { getTrackDetail } from '@/api/track';
-import { search as searchApi } from '@/api/others';
-import type { SearchResult } from '@/api/others';
+import {
+  searchAlbums,
+  searchArtists,
+  searchMusicVideos,
+  searchPlaylists,
+  searchTracks,
+} from '@/services/searchSource';
 import { settleIndependentRequests } from '@/services/searchBatches';
 import NProgress from 'nprogress';
 
@@ -108,8 +113,12 @@ import type {
 type SearchKind = 'musicVideos' | 'tracks' | 'albums' | 'artists' | 'playlists';
 
 interface SearchBatch {
-  result?: SearchResult;
   type: SearchKind;
+  tracks?: Track[];
+  artists?: Artist[];
+  albums?: Album[];
+  playlists?: Playlist[];
+  musicVideos?: MusicVideo[];
 }
 
 export default defineComponent({
@@ -157,22 +166,35 @@ export default defineComponent({
   methods: {
     ...mapActions(useAppStore, ['showToast']),
     search(type: SearchKind): Promise<SearchBatch> {
-      const typeTable: Record<SearchKind, number> = {
-        musicVideos: 1004,
-        tracks: 1,
-        albums: 10,
-        artists: 100,
-        playlists: 1000,
-      };
-      return searchApi({
-        keywords: this.keywords,
-        type: typeTable[type],
-        limit: 16,
-      }).then(response =>
-        response.result === undefined
-          ? { type }
-          : { result: response.result, type }
-      );
+      const keywords = this.keywords;
+      const options = { limit: 16 };
+      switch (type) {
+        case 'tracks':
+          return searchTracks(keywords, options).then(page => ({
+            type,
+            tracks: page.items,
+          }));
+        case 'artists':
+          return searchArtists(keywords, options).then(page => ({
+            type,
+            artists: page.items,
+          }));
+        case 'albums':
+          return searchAlbums(keywords, options).then(page => ({
+            type,
+            albums: page.items,
+          }));
+        case 'playlists':
+          return searchPlaylists(keywords, options).then(page => ({
+            type,
+            playlists: page.items,
+          }));
+        case 'musicVideos':
+          return searchMusicVideos(keywords, options).then(page => ({
+            type,
+            musicVideos: page.items,
+          }));
+      }
     },
     getData() {
       setTimeout(() => {
@@ -186,25 +208,22 @@ export default defineComponent({
           .then(({ values, errors }) => {
             if (keywords != this.keywords) return;
             values.forEach(batch => {
-              const searchType = batch.type;
-              const result = batch.result;
-              if (result === undefined) return;
-              switch (searchType) {
+              switch (batch.type) {
                 case 'musicVideos':
-                  this.musicVideos = result.mvs ?? [];
+                  this.musicVideos = batch.musicVideos ?? [];
                   break;
                 case 'artists':
-                  this.artists = result.artists ?? [];
+                  this.artists = batch.artists ?? [];
                   break;
                 case 'albums':
-                  this.albums = result.albums ?? [];
+                  this.albums = batch.albums ?? [];
                   break;
                 case 'tracks':
-                  this.tracks = result.songs ?? [];
+                  this.tracks = batch.tracks ?? [];
                   this.getTracksDetail();
                   break;
                 case 'playlists':
-                  this.playlists = result.playlists ?? [];
+                  this.playlists = batch.playlists ?? [];
                   break;
               }
             });

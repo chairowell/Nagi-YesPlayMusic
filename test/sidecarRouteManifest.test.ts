@@ -14,10 +14,10 @@ describe('Rust Sidecar NCM route manifest', () => {
       .map(comparableManifestRoute)
       .sort((left, right) => left.path.localeCompare(right.path));
 
-    expect(actual).toHaveLength(55);
-    expect(manifest).toHaveLength(55);
+    expect(actual).toHaveLength(54);
+    expect(manifest).toHaveLength(54);
     expect(declared).toEqual(actual);
-    expect(new Set(actual.map(route => route.path)).size).toBe(55);
+    expect(new Set(actual.map(route => route.path)).size).toBe(54);
   });
 
   test('helper 生成的两条密码登录调用也由 AST 推导', () => {
