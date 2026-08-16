@@ -1,5 +1,5 @@
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::spectrum::SpectrumKind;
 
@@ -185,10 +185,21 @@ pub enum Key {
     OpFmTrash,
 }
 
-static LANGUAGE: OnceLock<Lang> = OnceLock::new();
+// Mutable so a settings-page language change takes effect immediately:
+// every draw re-reads all strings, so the whole UI follows on the next frame.
+static LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
 pub fn init(lang: Lang) {
-    let _ = LANGUAGE.set(lang);
+    set_language(lang);
+}
+
+pub fn set_language(lang: Lang) {
+    let code = match lang {
+        Lang::Zh => 0,
+        Lang::En => 1,
+        Lang::Ja => 2,
+    };
+    LANGUAGE.store(code, Ordering::Relaxed);
 }
 
 pub fn t(key: Key) -> &'static str {
@@ -424,7 +435,11 @@ pub fn t_command_invalid_argument(command: &str, value: &str, expected: &str) ->
 }
 
 fn language() -> Lang {
-    LANGUAGE.get().copied().unwrap_or(Lang::Zh)
+    match LANGUAGE.load(Ordering::Relaxed) {
+        1 => Lang::En,
+        2 => Lang::Ja,
+        _ => Lang::Zh,
+    }
 }
 
 fn track_count_for(lang: Lang, n: usize) -> String {

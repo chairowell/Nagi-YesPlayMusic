@@ -2354,6 +2354,10 @@ async fn event_loop(
     state.original_cover = original_cover;
     state.selected_original_cover = selected_original_cover;
     state.bar_original_cover = bar_original_cover;
+    // AppState::new built its placeholders from the raw configured theme
+    // name; rebuild them now that mode/terminal detection has resolved it,
+    // or a light session shows dark vinyl art until any style change.
+    state.refresh_pixel_art(&fx);
     if let Some(playback) = fx.store.load_playback() {
         state.restore_playback(playback);
         fx.player.send(PlayerCommand::SetVolume(state.volume));

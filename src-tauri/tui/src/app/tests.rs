@@ -928,7 +928,7 @@ async fn restored_playback_stays_paused_until_space_then_seeks_after_start() {
 }
 
 #[test]
-fn restored_mini_player_recovers_the_title_and_uses_a_portable_status_icon() {
+fn restored_mini_player_recovers_the_title_and_follows_the_icon_style() {
     let queued = named_row(7, "Recovered title", "Recovered artist");
     let mut stored_current = crate::store::StoredSong::from(&queued);
     stored_current.title.clear();
@@ -962,7 +962,11 @@ fn restored_mini_player_recovers_the_title_and_uses_a_portable_status_icon() {
     let first = (0..80)
         .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
         .collect::<String>();
-    assert!(first.contains('▶'), "missing pause-state icon: {first:?}");
+    // icons = nerd must reach the state glyph too, matching heart/volume.
+    assert!(
+        first.contains('\u{f04b}'),
+        "missing pause-state icon: {first:?}"
+    );
     assert!(
         first.contains("Recovered title"),
         "missing restored title: {first:?}"
@@ -975,7 +979,10 @@ fn restored_mini_player_recovers_the_title_and_uses_a_portable_status_icon() {
     let first = (0..80)
         .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
         .collect::<String>();
-    assert!(first.contains('⏸'), "missing playing-state icon: {first:?}");
+    assert!(
+        first.contains('\u{f04c}'),
+        "missing playing-state icon: {first:?}"
+    );
 }
 
 #[tokio::test]

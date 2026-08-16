@@ -202,8 +202,21 @@ impl AppState {
         let before = self.config.clone();
         match SettingField::ALL[self.settings.selected] {
             SettingField::Theme => {
-                self.config.theme =
-                    cycle(BUILTIN_NAMES, &self.config.theme.as_str(), delta).to_owned();
+                // Offer only names canonical under the active appearance;
+                // otherwise the paired variants resolve straight back and
+                // the row has stops where pressing → visibly does nothing.
+                let names: Vec<&str> = BUILTIN_NAMES
+                    .iter()
+                    .copied()
+                    .filter(|name| {
+                        crate::theme::resolved_name(
+                            name,
+                            self.config.theme_mode,
+                            self.terminal_is_light,
+                        ) == *name
+                    })
+                    .collect();
+                self.config.theme = cycle(&names, &self.config.theme.as_str(), delta).to_owned();
             }
             SettingField::ThemeMode => {
                 use crate::config::ThemeMode;
@@ -523,6 +536,9 @@ impl AppState {
                 ))
             });
         }
+        if before.language != self.config.language {
+            i18n::set_language(i18n::Lang::from_config(&self.config.language));
+        }
         self.layout = PlayLayout::from_config(&self.config.layout);
         self.thick_progress = self.config.progress_style == "bar";
         self.pixel_detail_scale = self.config.pixel_scale.clamp(0.5, 4.0);
@@ -571,7 +587,7 @@ impl AppState {
         }
     }
 
-    fn refresh_pixel_art(&mut self, fx: &Effects) {
+    pub(super) fn refresh_pixel_art(&mut self, fx: &Effects) {
         self.style_revision = self.style_revision.wrapping_add(1);
         let desired = self.desired_cover_cells();
         if self.now.is_some() {

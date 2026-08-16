@@ -32,8 +32,20 @@ const SETTINGS_ARROW_WIDTH: u16 = 2;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits) {
     let theme = state.theme;
-    let show_preview =
-        SettingField::ALL.get(state.settings.selected) == Some(&SettingField::SpectrumStyle);
+    // Every spectrum knob benefits from the live preview, not just the style.
+    let show_preview = matches!(
+        SettingField::ALL.get(state.settings.selected),
+        Some(
+            SettingField::SpectrumStyle
+                | SettingField::SpectrumEnabled
+                | SettingField::SpectrumGlow
+                | SettingField::SpectrumFlatten
+                | SettingField::SpectrumGradient
+                | SettingField::SpectrumBars
+                | SettingField::SpectrumSensitivity
+                | SettingField::SpectrumStereo
+        )
+    );
     let preview_height = if show_preview {
         SPECTRUM_PREVIEW_HEIGHT
     } else {

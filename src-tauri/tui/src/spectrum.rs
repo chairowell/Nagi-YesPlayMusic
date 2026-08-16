@@ -533,9 +533,9 @@ fn style_for(kind: SpectrumKind) -> Box<dyn SpectrumStyle> {
         SpectrumKind::Blocks => Box::new(Blocks::default()),
         SpectrumKind::Mirror => Box::new(Mirror::default()),
         SpectrumKind::Led => Box::new(Led::default()),
-        SpectrumKind::Braille => Box::new(Braille),
-        SpectrumKind::Shade => Box::new(Shade),
-        SpectrumKind::Scope => Box::new(Scope),
+        SpectrumKind::Braille => Box::new(Braille::default()),
+        SpectrumKind::Shade => Box::new(Shade::default()),
+        SpectrumKind::Scope => Box::new(Scope::default()),
         SpectrumKind::Fire => Box::new(Fire::default()),
         SpectrumKind::Waterfall => Box::new(Waterfall::default()),
         SpectrumKind::Vu => Box::new(Vu::default()),
@@ -817,7 +817,7 @@ impl SpectrumStyle for Mirror {
             return;
         }
         let count = self.options.columns(area.width);
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         for index in 0..count {
             let level = (bin_value(bins, index, count) * f32::from(half) * 2.0).round() as u16;
             for distance in 0..half {
@@ -927,9 +927,16 @@ impl SpectrumStyle for Led {
     }
 }
 
-struct Braille;
+#[derive(Default)]
+struct Braille {
+    options: RenderOptions,
+}
 
 impl SpectrumStyle for Braille {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -946,7 +953,7 @@ impl SpectrumStyle for Braille {
             let next = bin_value(bins, (x + 1).min(columns - 1), columns);
             *value = (previous + current * 2.0 + next) / 4.0;
         }
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         let mut canvas = BrailleCanvas::new(area);
         let pixel_height = area.height.saturating_mul(4);
         for (x, value) in ridge.into_iter().enumerate() {
@@ -964,9 +971,16 @@ impl SpectrumStyle for Braille {
     }
 }
 
-struct Shade;
+#[derive(Default)]
+struct Shade {
+    options: RenderOptions,
+}
 
 impl SpectrumStyle for Shade {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -975,7 +989,7 @@ impl SpectrumStyle for Shade {
         buf: &mut Buffer,
         theme: &Theme,
     ) {
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         for x in 0..area.width {
             let value = bin_value(bins, usize::from(x), usize::from(area.width));
             let height = (value * f32::from(area.height)).ceil() as u16;
@@ -995,9 +1009,16 @@ impl SpectrumStyle for Shade {
     }
 }
 
-struct Scope;
+#[derive(Default)]
+struct Scope {
+    options: RenderOptions,
+}
 
 impl SpectrumStyle for Scope {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         _bins: &[f32],
@@ -1013,7 +1034,7 @@ impl SpectrumStyle for Scope {
         let pixels_w = area.width.saturating_mul(2);
         let pixels_h = area.height.saturating_mul(4);
         let middle = pixels_h.saturating_sub(1) as f32 / 2.0;
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         for x in 0..pixels_w {
             let index = usize::from(x) * (samples.len() - 1) / usize::from(pixels_w.max(1));
             let y = (middle - samples[index].clamp(-1.0, 1.0) * middle)
@@ -1031,6 +1052,7 @@ impl SpectrumStyle for Scope {
 
 #[derive(Default)]
 struct Fire {
+    options: RenderOptions,
     width: u16,
     height: u16,
     heat: Vec<f32>,
@@ -1038,6 +1060,10 @@ struct Fire {
 }
 
 impl SpectrumStyle for Fire {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -1070,7 +1096,7 @@ impl SpectrumStyle for Fire {
             }
         }
         self.heat = next;
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         for y in 0..height {
             for x in 0..width {
                 let heat = self.heat[y * width + x];
@@ -1110,6 +1136,7 @@ impl Fire {
 
 #[derive(Default)]
 struct Waterfall {
+    options: RenderOptions,
     history: Vec<Vec<f32>>,
     tick: bool,
     width: u16,
@@ -1117,6 +1144,10 @@ struct Waterfall {
 }
 
 impl SpectrumStyle for Waterfall {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -1137,7 +1168,7 @@ impl SpectrumStyle for Waterfall {
                 self.history[0][x] = bin_value(bins, x, usize::from(area.width));
             }
         }
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         for (y, row) in self.history.iter().enumerate() {
             for (x, intensity) in row.iter().copied().enumerate() {
                 if intensity > 0.02 {
@@ -1158,10 +1189,15 @@ impl SpectrumStyle for Waterfall {
 
 #[derive(Default)]
 struct Vu {
+    options: RenderOptions,
     levels: [f32; 2],
 }
 
 impl SpectrumStyle for Vu {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         _bins: &[f32],
@@ -1210,7 +1246,7 @@ impl Vu {
         let height = f32::from(area.height.saturating_mul(4));
         let center = (width / 2.0, height - 2.0);
         let radius = (width * 0.43, height * 0.72);
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         for mark in 0..9 {
             let ratio = mark as f32 / 8.0;
             let angle = PI + ratio * PI;
@@ -1507,6 +1543,35 @@ mod tests {
     use rodio::buffer::SamplesBuffer;
 
     use super::*;
+
+    #[test]
+    fn gradient_off_reaches_every_ramp_style() {
+        let theme = crate::theme::Theme::by_name("dracula");
+        // faint/dim double as legitimate chrome (baselines, idle marks); the
+        // upper ramp stops only ever come from an active gradient.
+        let banned = [theme.accent2, theme.fg];
+        let bins = [0.9_f32; SPECTRUM_BINS];
+        let samples = vec![0.5_f32; 4096];
+        for kind in SpectrumKind::ALL {
+            let mut style = style_for(kind);
+            style.set_options(RenderOptions {
+                gradient: false,
+                bar_width: 1,
+                bar_gap: 0,
+            });
+            let area = Rect::new(0, 0, 32, 12);
+            let mut buf = Buffer::empty(area);
+            // History-driven styles (fire, waterfall) need a warmed frame.
+            style.render(&bins, &samples, area, &mut buf, &theme);
+            style.render(&bins, &samples, area, &mut buf, &theme);
+            for cell in buf.content() {
+                assert!(
+                    !banned.contains(&cell.fg),
+                    "{kind:?} leaked a gradient color with the toggle off"
+                );
+            }
+        }
+    }
 
     #[test]
     fn tap_mixes_complete_stereo_frames_without_changing_audio() {

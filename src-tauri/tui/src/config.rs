@@ -279,8 +279,9 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # language = "zh"            # zh | en | ja
 # quality = "exhigh"          # 128 | 192 | 320/exhigh | lossless | hires
 # unm_enabled = true          # 无版权/VIP 曲目无可播地址时尝试 UNM 换源
-# theme = "db16"              # db16 | pico8 | gameboy | everforest | tokyo-night | tokyo-night-storm
-#                              # one-dark | one-dark-pro | dracula | synthwave84 | laserwave | fairyfloss | ultraviolence | transparent
+# theme = "db16"              # db16 | pico8 | gameboy | everforest | everforest-light | tokyo-night | tokyo-night-storm
+#                              # tokyo-night-day | one-dark | one-dark-pro | one-light | dracula | alucard
+#                              # synthwave84 | laserwave | fairyfloss | ultraviolence | transparent
 #                              # 省略时：暗色终端用 db16，亮色终端用 fairyfloss
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
@@ -299,7 +300,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # spectrum_glow = false        # 荧光余辉残影
 # spectrum_flatten = true      # 高频补偿（+4dB/倍频程），关掉显示真实能量比例
 # spectrum_gradient = true     # 柱体高度渐变色；false 为纯主题色
-# spectrum_bars = "duo"        # slim | duo | wide，适用于块条/镜像风格
+# spectrum_bars = "duo"        # slim | duo | wide，适用于 blocks/mirror/led/reflect 柱状风格
 # spectrum_sensitivity = "normal" # soft | normal | sharp 跳动灵敏度
 # spectrum_stereo = false      # 左右声道分离显示（中间低频、两侧高频）
 # update_check = true          # 启动时静默检查新版本

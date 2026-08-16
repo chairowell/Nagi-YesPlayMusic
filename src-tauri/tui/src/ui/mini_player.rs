@@ -12,8 +12,6 @@ use crate::ui::text::{display_width, needs_marquee, pad_or_marquee};
 use crate::ui::{format_duration, Hits};
 
 const VOLUME_CELLS: usize = 5;
-const PLAY_ICON: &str = "▶";
-const PAUSE_ICON: &str = "⏸";
 
 #[derive(Clone, Copy)]
 struct MiniLayout {
@@ -40,7 +38,11 @@ pub(super) fn draw(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut H
 
     let theme = &state.theme;
     let icons = crate::icons::for_style(state.config.icons);
-    let play_icon = if state.paused { PLAY_ICON } else { PAUSE_ICON };
+    let play_icon = if state.paused {
+        icons.play
+    } else {
+        icons.pause
+    };
     let title = state
         .now
         .as_ref()
@@ -149,8 +151,8 @@ fn draw_quit_confirm(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut
 
 fn mini_layout(state: &AppState, width: u16, title: &str) -> MiniLayout {
     let icons = crate::icons::for_style(state.config.icons);
-    let fixed_without_meter = display_width(PLAY_ICON)
-        .max(display_width(PAUSE_ICON))
+    let fixed_without_meter = display_width(icons.play)
+        .max(display_width(icons.pause))
         + 11 // mm:ss/mm:ss
         + display_width(icons.heart)
         + display_width(icons.volume)
