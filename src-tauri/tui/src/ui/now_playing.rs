@@ -620,13 +620,15 @@ pub(super) fn draw_player_bar(
     } else {
         0
     };
-    // The text block is bottom-aligned: its progress row shares the cover's
-    // last row, giving the bar one clean baseline; spare rows gather above.
+    // The progress row is pinned to the baseline (the cover's last row);
+    // the title/lyric block centers in the space above it, so the bar has
+    // one clean bottom edge without going bottom-heavy.
     let (title_y, progress_y) = if expanded {
-        let block = 3 + lyric_rows;
+        let text_rows = 1 + lyric_rows;
         let anchor = cover_area.map_or(content.height, |cover| cover.height);
-        let top = anchor.saturating_sub(block);
-        (right.y + top, right.y + anchor.max(block) - 1)
+        let above = anchor.saturating_sub(1);
+        let top = above.saturating_sub(text_rows) / 2;
+        (right.y + top, right.y + anchor.max(text_rows + 1) - 1)
     } else {
         (right.y, right.y + 1)
     };
