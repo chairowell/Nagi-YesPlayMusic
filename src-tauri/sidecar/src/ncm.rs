@@ -17,7 +17,7 @@ use crate::{
     session::desktop_session_expiry_cookies,
 };
 
-const FRONTEND_ROUTE_COUNT: usize = 46;
+const FRONTEND_ROUTE_COUNT: usize = 45;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const CLOUD_MULTIPART_BODY_LIMIT_BYTES: usize = 513 * 1024 * 1024;
 const NCM_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -145,7 +145,6 @@ define_production_dispatch!(
     recommend_resource,
     simi_artist,
     simi_mv,
-    song_detail,
     top_playlist,
     top_playlist_highquality,
     top_song,

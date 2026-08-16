@@ -35,8 +35,12 @@ mock.module('@/utils/auth', () => ({
   doLogout: async () => true,
 }));
 
-const { fetchAlbumDetail, fetchArtistDetail, fetchPlaylistDetail } =
-  await import('../src/services/detailSource');
+const {
+  fetchAlbumDetail,
+  fetchArtistDetail,
+  fetchPlaylistDetail,
+  fetchTrackDetails,
+} = await import('../src/services/detailSource');
 
 const originalFetch = globalThis.fetch;
 let fetchCalls: string[] = [];
@@ -100,6 +104,22 @@ describe('详情页端点服务', () => {
     expect(fetchCalls[1]).toBe('/api/native/artist/detail?id=7');
     expect(artist.artist.name).toBe('Artist');
     expect(artist.hotSongs[0]?.ar).toEqual([{ id: 7, name: 'Artist' }]);
+  });
+
+  test('歌曲详情：原始行完整透传，老 decoder 语义保留', async () => {
+    answerWith(200, {
+      songs: [{ id: 42, name: 'Song', rawOnlyField: 7, cd: '02' }],
+      privileges: [{ id: 42, pl: 320000 }],
+    });
+    const data = await fetchTrackDetails('42,43');
+    expect(fetchCalls[0]).toBe('/api/native/song/detail?ids=42%2C43');
+    // Verbatim rows feed the IndexedDB cache; unknown fields must survive.
+    expect(data.songs[0]?.['rawOnlyField']).toBe(7);
+    expect(data.privileges?.[0]?.pl).toBe(320000);
+
+    // The legacy decoder still rejects rows without a numeric id.
+    answerWith(200, { songs: [{ id: '42' }] });
+    await expect(fetchTrackDetails('42')).rejects.toThrow();
   });
 
   test('HTTP 失败抛错、缺 meta 抛错', async () => {

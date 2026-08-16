@@ -191,6 +191,15 @@ pub struct ArtistDetailPayload {
     pub hot_songs: Vec<SongHit>,
 }
 
+/// `/song/detail` passes through verbatim: the GUI caches these rows in
+/// IndexedDB and recomputes playability at read time against the live
+/// login state, so the core must not classify or narrow them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrackDetailPayload {
+    pub songs: Vec<Value>,
+    pub privileges: Vec<Value>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArtistHit {
     pub id: i64,
@@ -1242,6 +1251,23 @@ pub async fn artist_with(
         artist,
         hot_songs: song_hits_from(&response.body["hotSongs"]),
     })
+}
+
+/// Track details for frontends that carry their own cookie transport.
+/// `ids` is the comma-separated list the NCM API expects.
+pub async fn song_detail_with(
+    client: &ApiClient,
+    query: Query,
+    ids: &str,
+) -> Result<TrackDetailPayload, NcmClientError> {
+    let query = query.param("ids", ids);
+    let response = client.song_detail(&query).await?;
+    let songs = response_array(&response.body, &["songs"])?.to_vec();
+    let privileges = response.body["privileges"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok(TrackDetailPayload { songs, privileges })
 }
 
 /// Song lists inside detail payloads degrade row-by-row: an id-less entry

@@ -1,5 +1,6 @@
 import { getAppStore } from '@/stores/accessor';
 import { fetchNeteaseLyrics } from '@/services/playbackSource';
+import { fetchTrackDetails } from '@/services/detailSource';
 import request from '@/utils/request';
 import { mapTrackPlayableStatus } from '@/utils/common';
 import {
@@ -20,7 +21,6 @@ import {
   decodeRecord,
   decodeString,
   decodeTrack,
-  decodeTrackCollectionResponse,
 } from './decoders';
 import type { DecodeContext, Decoder, ValueDecoder } from './decoders';
 
@@ -66,16 +66,9 @@ export function getTrackDetail(
   ids: number | string
 ): Promise<TrackCollectionResponse> {
   const fetchLatest = () => {
-    return request<TrackCollectionResponse>(
-      {
-        url: '/song/detail',
-        method: 'get',
-        params: {
-          ids,
-        },
-      },
-      decodeTrackCollectionResponse
-    ).then(data => {
+    // Typed sidecar endpoint (core::ncm), verbatim rows: the IndexedDB
+    // cache below and the read-time playability recompute stay untouched.
+    return fetchTrackDetails(String(ids)).then(data => {
       data.songs.forEach(song => {
         const privileges = data.privileges?.find(t => t.id === song.id);
         cacheTrackDetail(song, privileges);

@@ -1,9 +1,11 @@
 import { getAppStore } from '@/stores/accessor';
 import { unlockParams } from '@/services/playbackSource';
 import { adaptTrackItems } from '@/services/searchSource';
+import { decodeTrackCollectionResponse } from '@/api/decoders';
 import type { Artist, Track } from '@/types/domain';
 import type { DetailedAlbum } from '@/api/album';
 import type { DetailedPlaylist, PlaylistDetailResponse } from '@/api/playlist';
+import type { TrackCollectionResponse } from '@/api/types';
 
 /**
  * Detail pages through the sidecar (core::ncm, shared with the TUI).
@@ -68,6 +70,26 @@ export async function fetchAlbumDetail(
     album: metaOf(body, 'album') as unknown as DetailedAlbum,
     songs: songsOf(body, 'songs'),
   };
+}
+
+/**
+ * Verbatim `/song/detail` rows: the caller caches them in IndexedDB and
+ * recomputes playability at read time, so the transport must not narrow
+ * the shape — the strict legacy decoder still runs on the raw payload.
+ */
+export async function fetchTrackDetails(
+  ids: string
+): Promise<TrackCollectionResponse> {
+  const params = unlockParams(getAppStore().settings);
+  params.set('ids', ids);
+  const response = await fetch(`/api/native/song/detail?${params}`);
+  if (!response.ok) {
+    throw new Error(`歌曲详情请求失败（HTTP ${response.status}）`);
+  }
+  const payload: unknown = await response.json();
+  return decodeTrackCollectionResponse(payload, {
+    url: '/native/song/detail',
+  });
 }
 
 export async function fetchArtistDetail(

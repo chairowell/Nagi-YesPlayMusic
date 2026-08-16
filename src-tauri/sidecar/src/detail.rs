@@ -17,8 +17,8 @@ use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use yesplaymusic_core::ncm::{
-    album_with, artist_with, playlist_detail_with, AlbumDetailPayload, ArtistDetailPayload,
-    NcmClientError, PlaylistDetailPayload, SongHit,
+    album_with, artist_with, playlist_detail_with, song_detail_with, AlbumDetailPayload,
+    ArtistDetailPayload, NcmClientError, PlaylistDetailPayload, SongHit, TrackDetailPayload,
 };
 
 use crate::playback::ncm_query;
@@ -53,6 +53,7 @@ trait DetailResolver: Send + Sync {
     ) -> Result<PlaylistDetailPayload, NcmClientError>;
     async fn album(&self, query: Query, id: i64) -> Result<AlbumDetailPayload, NcmClientError>;
     async fn artist(&self, query: Query, id: i64) -> Result<ArtistDetailPayload, NcmClientError>;
+    async fn songs(&self, query: Query, ids: &str) -> Result<TrackDetailPayload, NcmClientError>;
 }
 
 struct ProductionResolver {
@@ -76,6 +77,10 @@ impl DetailResolver for ProductionResolver {
     async fn artist(&self, query: Query, id: i64) -> Result<ArtistDetailPayload, NcmClientError> {
         artist_with(&self.client, query, id).await
     }
+
+    async fn songs(&self, query: Query, ids: &str) -> Result<TrackDetailPayload, NcmClientError> {
+        song_detail_with(&self.client, query, ids).await
+    }
 }
 
 #[derive(Deserialize)]
@@ -86,11 +91,21 @@ struct DetailQuery {
     proxy: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct SongsQuery {
+    /// Comma-separated track ids, as the NCM API expects.
+    ids: String,
+    #[serde(rename = "realIP")]
+    real_ip: Option<String>,
+    proxy: Option<String>,
+}
+
 pub fn router(state: DetailState) -> Router {
     Router::new()
         .route("/native/playlist/detail", get(playlist_handler))
         .route("/native/album/detail", get(album_handler))
         .route("/native/artist/detail", get(artist_handler))
+        .route("/native/song/detail", get(songs_handler))
         .with_state(state)
 }
 
@@ -156,6 +171,30 @@ async fn artist_handler(
             answer.map(|payload| {
             json!({ "artist": payload.artist, "hotSongs": song_bodies(&payload.hot_songs) })
         })
+        }),
+    )
+}
+
+async fn songs_handler(
+    State(state): State<DetailState>,
+    UrlQuery(query): UrlQuery<SongsQuery>,
+    headers: HeaderMap,
+) -> Response<Body> {
+    let resolved = tokio::time::timeout(
+        DETAIL_TIMEOUT,
+        state
+            .resolver
+            .songs(ncm_query(&headers, query.real_ip, query.proxy), &query.ids),
+    )
+    .await;
+    detail_response(
+        "songs",
+        resolved.map(|answer| {
+            answer.map(|payload| {
+                // Verbatim rows: the renderer caches them and computes
+                // playability itself at read time.
+                json!({ "songs": payload.songs, "privileges": payload.privileges })
+            })
         }),
     )
 }
@@ -234,7 +273,9 @@ mod tests {
         playlist: Mutex<Option<Result<PlaylistDetailPayload, NcmClientError>>>,
         album: Mutex<Option<Result<AlbumDetailPayload, NcmClientError>>>,
         artist: Mutex<Option<Result<ArtistDetailPayload, NcmClientError>>>,
+        songs: Mutex<Option<Result<TrackDetailPayload, NcmClientError>>>,
         seen_query: Mutex<Option<Query>>,
+        seen_ids: Mutex<Option<String>>,
     }
 
     #[async_trait]
@@ -264,6 +305,16 @@ mod tests {
         ) -> Result<ArtistDetailPayload, NcmClientError> {
             *self.seen_query.lock().unwrap() = Some(query);
             self.artist.lock().unwrap().take().expect("single call")
+        }
+
+        async fn songs(
+            &self,
+            query: Query,
+            ids: &str,
+        ) -> Result<TrackDetailPayload, NcmClientError> {
+            *self.seen_query.lock().unwrap() = Some(query);
+            *self.seen_ids.lock().unwrap() = Some(ids.to_owned());
+            self.songs.lock().unwrap().take().expect("single call")
         }
     }
 
@@ -341,6 +392,29 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["artist"]["name"], "Artist");
         assert_eq!(body["hotSongs"][0]["id"], 1);
+    }
+
+    #[tokio::test]
+    async fn song_detail_passes_rows_and_privileges_through_verbatim() {
+        let resolver = Arc::new(FakeResolver {
+            songs: Mutex::new(Some(Ok(TrackDetailPayload {
+                songs: vec![json!({ "id": 1, "name": "Song", "rawOnlyField": 7 })],
+                privileges: vec![json!({ "id": 1, "pl": 320_000 })],
+            }))),
+            ..FakeResolver::default()
+        });
+        // The renderer percent-encodes the comma (ids=1%2C2); the decoded
+        // list must reach the resolver intact.
+        let (status, body) = request(resolver.clone(), "/native/song/detail?ids=1%2C2").await;
+
+        assert_eq!(status, StatusCode::OK);
+        // Verbatim: unknown raw fields must survive for the renderer cache.
+        assert_eq!(body["songs"][0]["rawOnlyField"], 7);
+        assert_eq!(body["privileges"][0]["pl"], 320_000);
+        assert_eq!(
+            resolver.seen_ids.lock().unwrap().take().as_deref(),
+            Some("1,2")
+        );
     }
 
     #[tokio::test]

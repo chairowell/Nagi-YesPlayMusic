@@ -367,17 +367,6 @@
     "idempotent": true
   },
   {
-    "id": "song_detail",
-    "method": "GET",
-    "path": "/song/detail",
-    "requestBuilder": "src/api/track.ts#getTrackDetail",
-    "nodeAdapter": "@neteaseapireborn/api/module/song_detail",
-    "rustAdapter": "ncm::song_detail",
-    "decoder": "src/api/decoders.ts#decodeTrackCollectionResponse",
-    "comparator": ["code", "songs[].id", "privileges[].id"],
-    "idempotent": true
-  },
-  {
     "id": "top_playlist",
     "method": "GET",
     "path": "/top/playlist",
