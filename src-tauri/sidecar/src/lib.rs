@@ -2,6 +2,7 @@ pub mod cloud;
 pub mod config;
 pub mod health;
 pub mod ncm;
+pub mod playback;
 pub mod player_api;
 pub mod precise_wav;
 pub mod proxy_relay;

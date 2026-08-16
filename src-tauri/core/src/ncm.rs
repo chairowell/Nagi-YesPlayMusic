@@ -394,16 +394,7 @@ impl NcmClient {
     // ── playback & metadata ──────────────────────────────────────────
 
     pub async fn song_url(&self, id: i64, bitrate: u32) -> Result<PlaybackSource, SongUrlError> {
-        let query = self
-            .query()
-            .param("id", &id.to_string())
-            .param("br", &bitrate.to_string());
-        let response = self
-            .client
-            .song_url(&query)
-            .await
-            .map_err(|error| SongUrlError::Other(error.into()))?;
-        classify_song_url(&response.body)
+        song_url_with(&self.client, self.query(), id, bitrate).await
     }
 
     /// Raw line-, translation-, and word-synchronised lyrics for a song.
@@ -793,17 +784,52 @@ fn invalid_payload(path: &str) -> NcmClientError {
     NcmClientError::InvalidPayload(path.to_owned())
 }
 
+/// Playback resolution for frontends that carry their own cookie transport:
+/// the GUI sidecar forwards the browser cookie on every request instead of
+/// using [`NcmClient`]'s persisted session.
+pub async fn song_url_with(
+    client: &ApiClient,
+    query: Query,
+    id: i64,
+    bitrate: u32,
+) -> Result<PlaybackSource, SongUrlError> {
+    let query = query
+        .param("id", &id.to_string())
+        .param("br", &bitrate.to_string());
+    let response = client
+        .song_url(&query)
+        .await
+        .map_err(|error| SongUrlError::Other(error.into()))?;
+    classify_song_url(&response.body, id)
+}
+
 /// Separate "the account may not ask" from "the track has no rights".
 /// NCM answers `code: 200` with a null url for the second case and a
 /// non-200 code (301 signed out, -462 risk control, 400 rate limited…)
 /// for the first — reading only `data[0].url` conflates them.
-fn classify_song_url(body: &Value) -> Result<PlaybackSource, SongUrlError> {
+fn classify_song_url(body: &Value, track_id: i64) -> Result<PlaybackSource, SongUrlError> {
     let code = body.get("code").and_then(Value::as_i64);
     if code != Some(200) {
         return Err(SongUrlError::Rejected(code));
     }
-    let data = &body["data"][0];
+    // The answer array can carry a different track (an upstream cross-talk
+    // bug the GUI has long guarded against): only an entry with the
+    // requested id may be used.
+    let data = body["data"]
+        .as_array()
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry["id"].as_i64() == Some(track_id))
+        })
+        .unwrap_or(&Value::Null);
     if data["url"].as_str().is_none_or(str::is_empty) {
+        return Err(SongUrlError::Unavailable);
+    }
+    // A free-trial clip is not the track: playing or caching a 30-second
+    // preview as the full song is worse than letting fallbacks look for
+    // the real audio.
+    if !data["freeTrialInfo"].is_null() {
         return Err(SongUrlError::Unavailable);
     }
     parse_playback_source(data).map_err(SongUrlError::Other)
@@ -947,40 +973,104 @@ mod tests {
 
     #[test]
     fn song_url_separates_refusals_from_tracks_without_rights() {
-        let refused = classify_song_url(&serde_json::json!({
-            "code": 301,
-            "data": [{ "url": Value::Null }]
-        }));
+        let refused = classify_song_url(
+            &serde_json::json!({
+                "code": 301,
+                "data": [{ "id": 42, "url": Value::Null }]
+            }),
+            42,
+        );
         assert!(matches!(refused, Err(SongUrlError::Rejected(Some(301)))));
 
-        let risk_control = classify_song_url(&serde_json::json!({ "code": -462 }));
+        let risk_control = classify_song_url(&serde_json::json!({ "code": -462 }), 42);
         assert!(matches!(
             risk_control,
             Err(SongUrlError::Rejected(Some(-462)))
         ));
 
-        let codeless = classify_song_url(&serde_json::json!({ "data": [] }));
+        let codeless = classify_song_url(&serde_json::json!({ "data": [] }), 42);
         assert!(matches!(codeless, Err(SongUrlError::Rejected(None))));
 
-        let unavailable = classify_song_url(&serde_json::json!({
-            "code": 200,
-            "data": [{ "url": Value::Null }]
-        }));
+        let unavailable = classify_song_url(
+            &serde_json::json!({
+                "code": 200,
+                "data": [{ "id": 42, "url": Value::Null }]
+            }),
+            42,
+        );
         assert!(matches!(unavailable, Err(SongUrlError::Unavailable)));
 
-        let playable = classify_song_url(&serde_json::json!({
-            "code": 200,
-            "data": [{
-                "url": "https://audio.example/track.mp3",
-                "type": "mp3",
-                "br": 320_000,
-                "size": 8_000_000,
-                "md5": Value::Null
-            }]
-        }))
+        let playable = classify_song_url(
+            &serde_json::json!({
+                "code": 200,
+                "data": [{
+                    "id": 42,
+                    "url": "https://audio.example/track.mp3",
+                    "type": "mp3",
+                    "br": 320_000,
+                    "size": 8_000_000,
+                    "md5": Value::Null
+                }]
+            }),
+            42,
+        )
         .unwrap();
         assert_eq!(playable.url, "https://audio.example/track.mp3");
         assert_eq!(playable.actual_bitrate, 320_000);
+    }
+
+    #[test]
+    fn song_url_rejects_cross_talk_and_free_trial_answers() {
+        // Upstream sometimes answers with a different track's entry; using
+        // it would play (and cache) the wrong song.
+        let cross_talk = classify_song_url(
+            &serde_json::json!({
+                "code": 200,
+                "data": [{
+                    "id": 7,
+                    "url": "https://audio.example/other.mp3",
+                    "type": "mp3",
+                    "br": 320_000
+                }]
+            }),
+            42,
+        );
+        assert!(matches!(cross_talk, Err(SongUrlError::Unavailable)));
+
+        let trial = classify_song_url(
+            &serde_json::json!({
+                "code": 200,
+                "data": [{
+                    "id": 42,
+                    "url": "https://audio.example/trial.mp3",
+                    "type": "mp3",
+                    "br": 320_000,
+                    "freeTrialInfo": { "start": 45, "end": 75 }
+                }]
+            }),
+            42,
+        );
+        assert!(matches!(trial, Err(SongUrlError::Unavailable)));
+
+        // A second entry with the right id must still be found.
+        let second_entry = classify_song_url(
+            &serde_json::json!({
+                "code": 200,
+                "data": [
+                    { "id": 7, "url": "https://audio.example/other.mp3" },
+                    {
+                        "id": 42,
+                        "url": "https://audio.example/track.flac",
+                        "type": "flac",
+                        "br": 850_000,
+                        "freeTrialInfo": Value::Null
+                    }
+                ]
+            }),
+            42,
+        )
+        .unwrap();
+        assert_eq!(second_entry.url, "https://audio.example/track.flac");
     }
 
     #[test]

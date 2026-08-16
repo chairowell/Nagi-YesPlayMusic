@@ -12,6 +12,7 @@ use crate::{
     config::SidecarConfig,
     health::{self, HealthState},
     ncm::{self, NcmState},
+    playback,
     player_api::{self, PlayerApiState},
     precise_wav::{self, PreciseWavState},
     proxy_relay::{self, UpstreamProxy},
@@ -127,7 +128,10 @@ async fn build_api_router(
     player_state: PlayerApiState,
 ) -> Result<Router, ServerError> {
     let client = Arc::new(ncm_api_rs::ApiClient::new(None));
-    let mut router = ncm::router(NcmState::production(client))?
+    let mut router = ncm::router(NcmState::production(client.clone()))?
+        .merge(playback::router(playback::PlaybackState::production(
+            client,
+        )))
         .merge(unm::router(UnmState::new()))
         .merge(shared_cache::router(
             SharedCacheState::production().map_err(ServerError::SharedCacheClient)?,
