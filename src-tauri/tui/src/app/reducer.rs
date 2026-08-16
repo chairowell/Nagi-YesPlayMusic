@@ -787,7 +787,9 @@ impl AppState {
     }
 
     fn set_volume(&mut self, fx: &Effects, volume: f32) {
+        // Stepping down from any level must land on exact zero, not float dust.
         let volume = volume.clamp(0.0, 1.5);
+        let volume = if volume < 0.005 { 0.0 } else { volume };
         if volume == 0.0 && self.volume > 0.0 {
             self.volume_before_mute = Some(self.volume);
         } else if volume > 0.0 {

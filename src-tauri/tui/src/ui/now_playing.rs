@@ -1550,8 +1550,8 @@ mod tests {
         let rendered = (0..100)
             .map(|x| buffer[(x, 0)].symbol())
             .collect::<String>();
-        // Half volume renders the high-level speaker (0.5 is the boundary).
-        assert!(rendered.contains(icons.volume_high));
+        // Half volume sits in the middle band of the four-state speaker.
+        assert!(rendered.contains(icons.volume_medium));
         assert!(rendered.contains(&icons.volume_full.repeat(5)));
         assert!(rendered.contains(&icons.volume_empty.repeat(5)));
     }

@@ -89,7 +89,9 @@ pub fn mouse_action(mouse: MouseEvent, hits: &Hits, selected: usize) -> Option<A
             if rect.contains(position)
                 || matches!(mouse.kind, MouseEventKind::Drag(_)) && mouse.row == rect.y
             {
-                let ratio = (mouse.column.saturating_sub(rect.x) as f32 + 0.5) / rect.width as f32;
+                // Leftmost cell is exactly 0 (mute), rightmost exactly full.
+                let ratio = mouse.column.saturating_sub(rect.x) as f32
+                    / f32::from(rect.width.saturating_sub(1).max(1));
                 return Some(Action::SetVolumeTo(ratio.clamp(0.0, 1.0)));
             }
         }
