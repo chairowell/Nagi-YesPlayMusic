@@ -742,6 +742,9 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
     .max()
     .unwrap_or(1);
     const VOLUME_CELLS: usize = 10;
+    // Eleven literal spaces separate the row's segments (see the span
+    // assembly below) plus one trailing breathing column: the meter ends
+    // flush with the content edge instead of leaving a dead right margin.
     let fixed = play_slot_width
         + display_width(&elapsed)
         + display_width(&total)
@@ -749,7 +752,7 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         + mode_slot_width
         + display_width(icons.volume_high)
         + VOLUME_CELLS
-        + 21;
+        + 12;
     let bar_width = (area.width as usize).saturating_sub(fixed).max(8);
     let ratio = match state.duration {
         Some(duration) if !duration.is_zero() => {
