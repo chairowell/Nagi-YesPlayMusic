@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
 
 use super::*;
-use crate::action::RestoreFailure;
+use crate::action::{RestoreFailure, SessionStamp};
 
 const PREVIEW_TERMINAL_SIZE: (u16, u16) = (
     ui::library::PREVIEW_MIN_TERMINAL_WIDTH,
@@ -2641,4 +2641,42 @@ async fn bar_cover_follows_the_original_mode_and_playing_generation() {
         &fx,
     );
     assert!(!state.bar_original_is_current());
+}
+
+#[tokio::test]
+async fn manual_track_change_disarms_a_parked_fm_advance() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    let epoch = state.session.begin_restore();
+    state.update(
+        Action::SessionRestored {
+            epoch,
+            uid: 7,
+            nickname: "n".into(),
+        },
+        &fx,
+    );
+    let stamp = SessionStamp { epoch, uid: 7 };
+    state.queue = vec![row(1), row(2)];
+    state.queue_pos = Some(1);
+    state.queue_source = Source::Fm;
+
+    // At the FM tail: the step parks an advance for the incoming batch...
+    state.step_queue(&fx, 1, false, false);
+    // ...but the user goes back to the previous track before it lands.
+    state.step_queue(&fx, -1, false, false);
+    assert_eq!(state.queue_pos, Some(0));
+
+    state.update(
+        Action::FmMore {
+            session: stamp,
+            rows: vec![row(3)],
+        },
+        &fx,
+    );
+
+    // The batch extends the queue without yanking playback off the pick.
+    assert_eq!(state.queue.len(), 3);
+    assert_eq!(state.queue_pos, Some(0));
 }

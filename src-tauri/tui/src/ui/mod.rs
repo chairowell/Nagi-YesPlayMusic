@@ -169,6 +169,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
     hits.play.clear();
     hits.playback_mode.clear();
     hits.volume.clear();
+    hits.progress.clear();
     hits.confirm.clear();
     hits.settings_rows.clear();
     hits.settings_adjust.clear();
@@ -673,6 +674,13 @@ mod tests {
         // The full control row rides along with its mouse targets.
         assert!(!hits.play.is_empty());
         assert!(!hits.progress.is_empty());
+
+        // Hit rects are per-frame geometry: a redraw must replace, not
+        // accumulate, or stale rects from old layouts shadow later clicks.
+        terminal
+            .draw(|frame| draw(frame, &mut state, &mut hits))
+            .unwrap();
+        assert_eq!(hits.progress.len(), 1);
 
         state.now = None;
         let mut hits = Hits::default();

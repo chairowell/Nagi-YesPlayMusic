@@ -1424,6 +1424,10 @@ impl AppState {
 
     /// Reset the now-playing surface and kick off resolution for a row.
     fn play_row(&mut self, fx: &Effects, row: SongRow) {
+        // Any track actually starting supersedes a parked "advance when the
+        // FM batch lands" intent; otherwise the batch would yank playback
+        // away from what the user just picked.
+        self.pending_fm_next = false;
         // FM never ends: once the last queued track starts, the next batch is
         // already on the wire, so playback never stalls between batches.
         if self.queue_source == Source::Fm

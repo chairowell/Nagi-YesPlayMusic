@@ -908,7 +908,13 @@ impl AppState {
             CommandInvocation::Quality(quality) => self.set_command_quality(fx, quality),
             CommandInvocation::Goto(view) => {
                 self.zen = false;
-                self.update(Action::SwitchView(view), fx);
+                if view == View::Login {
+                    // A bare view switch would show an empty frame: only
+                    // start_login spawns the QR flow.
+                    self.update(Action::StartLogin, fx);
+                } else {
+                    self.update(Action::SwitchView(view), fx);
+                }
                 Ok(())
             }
             CommandInvocation::GotoRow(index) => {
