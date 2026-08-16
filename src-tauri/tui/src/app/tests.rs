@@ -2920,3 +2920,45 @@ async fn small_source_covers_are_upscaled_to_fill_the_cover_area() {
         EitherCover::Pixel(_) => panic!("original load must decode an image"),
     }
 }
+
+#[tokio::test]
+async fn repeat_cover_loads_reuse_the_decoded_image() {
+    let mut bytes = Vec::new();
+    DynamicImage::new_rgba8(64, 64)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    let load = |key: &str| CoverLoad {
+        request: CoverRenderRequest {
+            surface: CoverSurface::Playing,
+            generation: 1,
+            cells: (64, 32),
+            style_revision: 0,
+            song_id: 1,
+            source_key: key.into(),
+        },
+        style: CoverStyle {
+            pixel: AppState::new(&Config::default()).pixel_style(),
+            original: true,
+        },
+    };
+
+    assert!(process_cover(None, &load("lru-test"), bytes, false)
+        .await
+        .is_some());
+    // Garbage bytes with the same key still decode: proof the second load
+    // came from the in-memory LRU, not another JPEG decode.
+    assert!(
+        process_cover(None, &load("lru-test"), b"not an image".to_vec(), false)
+            .await
+            .is_some()
+    );
+    // An unknown key with garbage bytes must fail: the LRU is keyed.
+    assert!(
+        process_cover(None, &load("lru-miss"), b"not an image".to_vec(), false)
+            .await
+            .is_none()
+    );
+}

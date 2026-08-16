@@ -2063,6 +2063,35 @@ async fn download_and_send_cover(
     send_cover(actions, &load.request, processed);
 }
 
+/// Tiny most-recently-used cache of decoded (and upscaled) originals. Six
+/// covers ≈ 24 MB; enough for back-and-forth track switches and the
+/// playing/bar surfaces sharing one decode.
+static DECODED_COVERS: std::sync::Mutex<Vec<(String, DynamicImage)>> =
+    std::sync::Mutex::new(Vec::new());
+const DECODED_COVER_CAP: usize = 6;
+
+fn cached_decoded_cover(source_key: &str) -> Option<DynamicImage> {
+    let mut cache = DECODED_COVERS.lock().ok()?;
+    let position = cache.iter().position(|(key, _)| key == source_key)?;
+    let entry = cache.remove(position);
+    let image = entry.1.clone();
+    cache.push(entry);
+    Some(image)
+}
+
+fn store_decoded_cover(source_key: &str, image: &DynamicImage) {
+    let Ok(mut cache) = DECODED_COVERS.lock() else {
+        return;
+    };
+    if let Some(position) = cache.iter().position(|(key, _)| key == source_key) {
+        cache.remove(position);
+    }
+    cache.push((source_key.to_owned(), image.clone()));
+    if cache.len() > DECODED_COVER_CAP {
+        cache.remove(0);
+    }
+}
+
 async fn process_cover(
     cache: Option<Arc<CoverCache>>,
     load: &CoverLoad,
@@ -2074,6 +2103,12 @@ async fn process_cover(
     let pixel_key = (!load.style.original).then(|| pixel_cache_key(&load));
     let processed = tokio::task::spawn_blocking(move || {
         if load.style.original {
+            // Decoded-image LRU: n/p round trips and the playing+bar double
+            // load hit memory instead of re-decoding a megabyte of JPEG.
+            if let Some(image) = cached_decoded_cover(&source_key) {
+                write_original_cover(&cache, downloaded, &source_key, &bytes);
+                return Ok::<_, anyhow::Error>(EitherCover::Original(image));
+            }
             let image = image::load_from_memory(&bytes)?;
             // The CDN's size param only shrinks; old albums ship 500-800px
             // originals. Terminal graphics never upscale (Resize::Fit), so a
@@ -2088,6 +2123,7 @@ async fn process_cover(
             } else {
                 image
             };
+            store_decoded_cover(&source_key, &image);
             write_original_cover(&cache, downloaded, &source_key, &bytes);
             return Ok::<_, anyhow::Error>(EitherCover::Original(image));
         }

@@ -49,6 +49,12 @@ zbus = "5.19.0"
 [patch.crates-io]
 tauri-plugin-updater = { path = "patches/tauri-plugin-updater-2.10.1" }
 
+# Debug builds keep our own crates unoptimized for fast compiles, but let
+# dependencies (JPEG decode, resize, FFT, audio) run at full speed — cover
+# switches and the spectrum are otherwise 10x slower when testing.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 codegen-units = 1
 lto = true
