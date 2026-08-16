@@ -443,8 +443,23 @@ fn original_preview_keeps_the_previous_protocol_until_the_replacement_is_ready()
     let replacement = pending_rx.try_recv().expect("replacement resize request");
     cover.update_pending(replacement.resize_encode().unwrap(), 2);
     assert_eq!(cover.generation, Some(2));
+    // New handover semantics: the encoded stand-in stays until the main
+    // protocol finishes its re-encode.
+    assert!(cover
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.promoted));
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut cover.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let handover = main_rx.try_recv().expect("handover re-encode request");
+    assert!(cover
+        .protocol
+        .update_resized_protocol(handover.resize_encode().unwrap()));
+    cover.finish_handover();
     assert!(cover.pending.is_none());
-    assert!(cover.protocol.protocol_type().is_some());
 }
 
 #[test]
@@ -489,6 +504,22 @@ fn stale_original_replacement_cannot_displace_the_held_frame() {
 
     cover.update_pending(current.resize_encode().unwrap(), 3);
     assert_eq!(cover.generation, Some(3));
+    // New handover semantics: the encoded stand-in stays until the main
+    // protocol finishes its re-encode.
+    assert!(cover
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.promoted));
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut cover.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let handover = main_rx.try_recv().expect("handover re-encode request");
+    assert!(cover
+        .protocol
+        .update_resized_protocol(handover.resize_encode().unwrap()));
+    cover.finish_handover();
     assert!(cover.pending.is_none());
 }
 
@@ -545,6 +576,22 @@ fn hidden_preview_rejects_a_stale_original_resize_after_it_returns() {
 
     cover.update_pending(current.resize_encode().unwrap(), 4);
     assert_eq!(cover.generation, Some(4));
+    // New handover semantics: the encoded stand-in stays until the main
+    // protocol finishes its re-encode.
+    assert!(cover
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.promoted));
+    ratatui_image::ResizeEncodeRender::resize_encode(
+        &mut cover.protocol,
+        &ratatui_image::Resize::Fit(None),
+        PREVIEW_CELLS.into(),
+    );
+    let handover = main_rx.try_recv().expect("handover re-encode request");
+    assert!(cover
+        .protocol
+        .update_resized_protocol(handover.resize_encode().unwrap()));
+    cover.finish_handover();
     assert!(cover.pending.is_none());
 }
 
@@ -2790,7 +2837,7 @@ async fn a_failed_cover_load_clears_the_previous_tracks_art() {
 async fn the_playing_view_render_path_promotes_the_next_tracks_cover() {
     let mut state = AppState::new(&Config::default());
     state.config.cover_mode = crate::config::CoverMode::Original;
-    let (main_tx, _main_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (main_tx, mut main_rx) = tokio::sync::mpsc::unbounded_channel();
     let (pending_tx, mut pending_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut cover = OriginalCover::buffered(
         ratatui_image::picker::Picker::halfblocks(),
@@ -2817,7 +2864,28 @@ async fn the_playing_view_render_path_promotes_the_next_tracks_cover() {
     state.apply_playing_pending_resize(response);
     let cover = state.original_cover.as_ref().unwrap();
     assert_eq!(cover.generation, Some(2));
-    assert!(!cover.has_pending());
+    // The handover keeps the encoded stand-in on screen while the main
+    // protocol re-encodes in the background...
+    assert!(cover.has_pending());
+
+    let backend = TestBackend::new(30, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| state.render_original_cover(frame, Rect::new(0, 0, 20, 10)))
+        .unwrap();
+    // The first render already queued a main request for the old art;
+    // only the newest one matches the handover protocol.
+    let mut request = None;
+    while let Ok(next) = main_rx.try_recv() {
+        request = Some(next);
+    }
+    let request = request.expect("handover must kick the main re-encode");
+    let response = request.resize_encode().unwrap();
+    let cover = state.original_cover.as_mut().unwrap();
+    assert!(cover.protocol.update_resized_protocol(response));
+    cover.finish_handover();
+    // ...and retires it the moment the re-encode lands.
+    assert!(!state.original_cover.as_ref().unwrap().has_pending());
 }
 
 #[tokio::test]

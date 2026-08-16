@@ -75,6 +75,9 @@ struct PendingOriginalCover {
     protocol: ThreadProtocol,
     generation: u64,
     image: DynamicImage,
+    /// Handover state: the main protocol is re-encoding this image in the
+    /// background while these already-encoded cells keep covering the area.
+    promoted: bool,
 }
 
 impl OriginalCover {
@@ -116,11 +119,13 @@ impl OriginalCover {
                     pending.protocol.replace_protocol(protocol);
                     pending.generation = generation;
                     pending.image = image;
+                    pending.promoted = false;
                 } else {
                     self.pending = Some(PendingOriginalCover {
                         protocol: ThreadProtocol::new(requests, Some(protocol)),
                         generation,
                         image,
+                        promoted: false,
                     });
                 }
                 return;
@@ -146,16 +151,18 @@ impl OriginalCover {
             self.cancel_pending();
             self.pending = None;
         }
-        let ready_without_resize = if let Some(pending) = &mut self.pending {
+        let mut should_promote = false;
+        if let Some(pending) = &mut self.pending {
+            // In-flight: draws nothing (old art below shows). Encoded: draws
+            // the new art, and keeps covering the area through the handover.
             frame.render_stateful_widget(StatefulImage::new(), area, &mut pending.protocol);
-            pending.protocol.protocol_type().is_some()
-        } else {
-            false
-        };
-        if ready_without_resize {
-            self.promote_pending();
-            return;
+            should_promote = !pending.promoted && pending.protocol.protocol_type().is_some();
         }
+        if should_promote {
+            self.promote_pending();
+        }
+        // During a handover the main protocol is re-encoding and paints
+        // nothing; otherwise it shows the current (or previous) art.
         frame.render_stateful_widget(StatefulImage::new(), area, &mut self.protocol);
     }
 
@@ -176,17 +183,35 @@ impl OriginalCover {
     }
 
     fn promote_pending(&mut self) {
-        let Some(pending) = self.pending.take() else {
+        let Some(pending) = &mut self.pending else {
             return;
         };
+        if pending.promoted {
+            return;
+        }
+        pending.promoted = true;
         // Rebuild on the main channel instead of adopting pending's protocol:
         // moving it here would drop the main channel's only sender, end its
         // worker, and the closed channel used to exit the whole app. The
-        // pending cells stay on screen until the re-encode lands, so the
-        // extra encode is invisible.
+        // pending stays and keeps its encoded cells on screen until the main
+        // re-encode lands (finish_handover), so the swap never blanks.
+        let image = pending.image.clone();
+        let generation = pending.generation;
         self.protocol
-            .replace_protocol(self.picker.new_resize_protocol(pending.image));
-        self.generation = Some(pending.generation);
+            .replace_protocol(self.picker.new_resize_protocol(image));
+        self.generation = Some(generation);
+    }
+
+    /// The main protocol finished re-encoding the promoted image: the
+    /// stand-in pending cells are no longer needed.
+    fn finish_handover(&mut self) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.promoted)
+        {
+            self.pending = None;
+        }
     }
 
     fn set_background(&mut self, background: Color) {
@@ -1060,6 +1085,9 @@ impl AppState {
     fn apply_original_resize(&mut self, response: ResizeResponse) {
         if let Some(original) = &mut self.original_cover {
             let accepted = original.protocol.update_resized_protocol(response);
+            if accepted {
+                original.finish_handover();
+            }
             tracing::debug!(accepted, "playing cover resize response");
         }
     }
@@ -1123,7 +1151,9 @@ impl AppState {
 
     fn apply_selected_original_resize(&mut self, response: ResizeResponse) {
         if let Some(original) = &mut self.selected_original_cover {
-            original.protocol.update_resized_protocol(response);
+            if original.protocol.update_resized_protocol(response) {
+                original.finish_handover();
+            }
         }
     }
 
