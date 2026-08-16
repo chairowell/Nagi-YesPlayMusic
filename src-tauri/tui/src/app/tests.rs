@@ -2785,3 +2785,37 @@ async fn a_failed_cover_load_clears_the_previous_tracks_art() {
     );
     assert!(!state.playing_original_visible());
 }
+
+#[tokio::test]
+async fn the_playing_view_render_path_promotes_the_next_tracks_cover() {
+    let mut state = AppState::new(&Config::default());
+    state.config.cover_mode = crate::config::CoverMode::Original;
+    let (main_tx, _main_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (pending_tx, mut pending_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cover = OriginalCover::buffered(
+        ratatui_image::picker::Picker::halfblocks(),
+        main_tx,
+        pending_tx,
+    );
+    cover.replace(1, DynamicImage::new_rgba8(4, 4));
+    cover.replace(2, DynamicImage::new_rgba8(4, 4));
+    state.original_cover = Some(cover);
+    state.generation = 2;
+
+    let backend = TestBackend::new(30, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| state.render_original_cover(frame, Rect::new(0, 0, 20, 10)))
+        .unwrap();
+
+    // The production render path must drive the pending buffer: encode
+    // request out, response applied, parked art promoted.
+    let request = pending_rx
+        .try_recv()
+        .expect("playing render must kick the pending encode");
+    let response = request.resize_encode().unwrap();
+    state.apply_playing_pending_resize(response);
+    let cover = state.original_cover.as_ref().unwrap();
+    assert_eq!(cover.generation, Some(2));
+    assert!(!cover.has_pending());
+}

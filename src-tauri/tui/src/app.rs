@@ -1041,6 +1041,7 @@ impl AppState {
     }
 
     pub fn render_original_cover(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        let generation = self.generation;
         if let Some(original) = &mut self.original_cover {
             if self.debug_playing_cover_area != Some(area) {
                 self.debug_playing_cover_area = Some(area);
@@ -1050,7 +1051,9 @@ impl AppState {
                     "playing cover render area changed"
                 );
             }
-            frame.render_stateful_widget(StatefulImage::new(), area, &mut original.protocol);
+            // The promote-aware path: it renders the pending buffer so the
+            // next track's art can encode and take over seamlessly.
+            original.render(frame, area, generation);
         }
     }
 
