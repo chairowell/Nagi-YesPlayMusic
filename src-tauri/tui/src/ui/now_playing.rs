@@ -149,11 +149,26 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
                 ])
                 .areas(panel);
                 draw_meta(frame, state, text_area, false);
+                // Reflect draws its waterline at 2/3 of the area. Extending
+                // the area below the group by half the band puts the line
+                // level with the cover's bottom edge and lets the
+                // reflection dip below it — the cover stands at the water.
+                let spectrum_area =
+                    if state.config.spectrum_style == crate::spectrum::SpectrumKind::Reflect {
+                        let below_room = main.bottom().saturating_sub(group.bottom());
+                        let extension = (panel_spectrum_area.height / 2).min(below_room);
+                        Rect {
+                            height: panel_spectrum_area.height + extension,
+                            ..panel_spectrum_area
+                        }
+                    } else {
+                        panel_spectrum_area
+                    };
                 state.spectrum.render(
                     state.config.spectrum_style,
                     state.config.spectrum_glow,
                     state.spectrum_render_options(),
-                    panel_spectrum_area,
+                    spectrum_area,
                     frame.buffer_mut(),
                     &state.theme,
                 );
@@ -1079,8 +1094,10 @@ mod tests {
         assert!(mirror_rows(buffer, 0..120, 40).is_empty());
 
         // The group is vertically centered: main = 38 rows, cover grid = 13.
+        // The reflect waterline sits level with the cover's bottom edge and
+        // the reflection dips below it.
         let group_top = (38 - 13) / 2;
-        assert!(panel_rows[0] >= group_top && panel_rows[0] < group_top + 13);
+        assert_eq!(panel_rows[0], group_top + 13);
     }
 
     #[test]
