@@ -1257,7 +1257,7 @@ impl AppState {
             self.generation,
             row.id,
             pic_url,
-            crate::ui::now_playing::PLAYER_BAR_COVER_CELLS,
+            crate::ui::now_playing::player_bar_cover_cells(self.terminal_size.1),
         );
         spawn_cover_loads(
             fx,

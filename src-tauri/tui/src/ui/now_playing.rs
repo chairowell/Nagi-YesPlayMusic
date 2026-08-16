@@ -536,16 +536,24 @@ fn current_lyric_spans(
 /// the footer hints.
 pub(super) const PLAYER_BAR_HEIGHT: u16 = 3;
 pub(super) const PLAYER_BAR_EXPANDED_HEIGHT: u16 = 9;
-/// Mini pixel cover: 8 rows of half-blocks make a 16×16 pixel square.
-pub(crate) const PLAYER_BAR_COVER_CELLS: (u16, u16) = (16, 8);
+const PLAYER_BAR_EXPANDED_MAX_HEIGHT: u16 = 14;
 const PLAYER_BAR_EXPAND_MIN_TERMINAL_HEIGHT: u16 = 26;
 
+/// The bar grows with the terminal: a quarter of the rows, between the
+/// classic 9 and a generous 14, so big windows get a bigger cover too.
 pub(super) fn player_bar_height(total_height: u16) -> u16 {
     if total_height >= PLAYER_BAR_EXPAND_MIN_TERMINAL_HEIGHT {
-        PLAYER_BAR_EXPANDED_HEIGHT
+        (total_height / 4).clamp(PLAYER_BAR_EXPANDED_HEIGHT, PLAYER_BAR_EXPANDED_MAX_HEIGHT)
     } else {
         PLAYER_BAR_HEIGHT
     }
+}
+
+/// Cover cells for the bar at this terminal height: the art fills the bar's
+/// content rows, twice as wide as tall for a square half-block pixel grid.
+pub(crate) fn player_bar_cover_cells(total_height: u16) -> (u16, u16) {
+    let rows = player_bar_height(total_height).saturating_sub(1);
+    (rows.saturating_mul(2), rows)
 }
 
 pub(super) fn draw_player_bar(
@@ -564,21 +572,22 @@ pub(super) fn draw_player_bar(
         height: area.height - 1,
         ..area
     };
-    // The cover renders at its fixed cell size, so it only appears when the
-    // row also leaves the text column usable width; otherwise it would
-    // overlap the title and controls.
-    const COVER_SLOT: u16 = PLAYER_BAR_COVER_CELLS.0 + 2;
+    // The cover fills the bar's content rows; it only appears when the row
+    // also leaves the text column usable width, otherwise it would overlap
+    // the title and controls.
+    let cover_cells = (content.height.saturating_mul(2), content.height);
+    let cover_slot = cover_cells.0 + 2;
     const MIN_TEXT_COLUMN: u16 = 24;
-    let (cover_area, right) = if expanded && content.width >= COVER_SLOT + MIN_TEXT_COLUMN {
+    let (cover_area, right) = if expanded && content.width >= cover_slot + MIN_TEXT_COLUMN {
         (
             Some(Rect {
-                width: PLAYER_BAR_COVER_CELLS.0,
-                height: PLAYER_BAR_COVER_CELLS.1.min(content.height),
+                width: cover_cells.0,
+                height: cover_cells.1,
                 ..content
             }),
             Rect {
-                x: content.x + COVER_SLOT,
-                width: content.width - COVER_SLOT,
+                x: content.x + cover_slot,
+                width: content.width - cover_slot,
                 ..content
             },
         )
@@ -611,11 +620,13 @@ pub(super) fn draw_player_bar(
     } else {
         0
     };
-    // The text block (title, lyric pair, controls) centers beside the cover.
+    // The text block is bottom-aligned: its progress row shares the cover's
+    // last row, giving the bar one clean baseline; spare rows gather above.
     let (title_y, progress_y) = if expanded {
         let block = 3 + lyric_rows;
-        let top = content.height.saturating_sub(block) / 2;
-        (right.y + top, right.y + top + block - 1)
+        let anchor = cover_area.map_or(content.height, |cover| cover.height);
+        let top = anchor.saturating_sub(block);
+        (right.y + top, right.y + anchor.max(block) - 1)
     } else {
         (right.y, right.y + 1)
     };

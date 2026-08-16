@@ -612,7 +612,7 @@ impl AppState {
                     CoverSurface::Bar => apply_pixel_cover(
                         &mut self.bar_cover,
                         self.generation,
-                        crate::ui::now_playing::PLAYER_BAR_COVER_CELLS,
+                        crate::ui::now_playing::player_bar_cover_cells(self.terminal_size.1),
                         self.style_revision,
                         request,
                         cover,
@@ -752,7 +752,14 @@ impl AppState {
                 }
                 let desired = self.desired_cover_cells();
                 let current = self.cover.as_ref().map(|cover| (cover.width, cover.height));
-                if current != Some(desired) {
+                // The bar cover scales with the terminal too: a height change
+                // that crosses a bar-size step needs a re-render as well.
+                let bar_desired = crate::ui::now_playing::player_bar_cover_cells(rows);
+                let bar_stale = self
+                    .bar_cover
+                    .as_ref()
+                    .is_some_and(|cover| (cover.width, cover.height) != bar_desired);
+                if current != Some(desired) || bar_stale {
                     self.cover = None;
                     self.bar_cover = None;
                     if let Some(row) = self.active_row.clone() {
