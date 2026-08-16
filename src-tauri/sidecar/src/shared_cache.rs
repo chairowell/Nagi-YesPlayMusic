@@ -34,7 +34,6 @@ pub struct SharedCacheState {
     cache_root: Arc<PathBuf>,
     client: reqwest::Client,
     enabled: Arc<AtomicBool>,
-    terminal_cache_detected: bool,
 }
 
 impl SharedCacheState {
@@ -46,12 +45,10 @@ impl SharedCacheState {
     }
 
     fn new(base_root: PathBuf, client: reqwest::Client) -> Result<Self, reqwest::Error> {
-        let terminal_cache_detected = base_root.exists();
         Ok(Self {
             cache_root: Arc::new(base_root.join("audio")),
             client,
             enabled: Arc::new(AtomicBool::new(false)),
-            terminal_cache_detected,
         })
     }
 
@@ -62,6 +59,15 @@ impl SharedCacheState {
 
     fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Acquire)
+    }
+
+    /// True only when the shared tracks directory holds published files.
+    /// Checked per request: the TUI creates the directory skeleton on every
+    /// launch, and the cache can fill up or be wiped while the sidecar runs.
+    fn terminal_cache_detected(&self) -> bool {
+        std::fs::read_dir(self.cache_root.join("tracks"))
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
     }
 }
 
@@ -128,7 +134,7 @@ pub fn router(state: SharedCacheState) -> Router {
 async fn status_handler(State(state): State<SharedCacheState>) -> Json<SharedCacheStatus> {
     Json(SharedCacheStatus {
         enabled: state.is_enabled(),
-        terminal_cache_detected: state.terminal_cache_detected && !state.is_enabled(),
+        terminal_cache_detected: state.terminal_cache_detected() && !state.is_enabled(),
     })
 }
 
@@ -178,7 +184,7 @@ async fn settings_handler(
     state.enabled.store(settings.enabled, Ordering::Release);
     Json(SharedCacheStatus {
         enabled: settings.enabled,
-        terminal_cache_detected: state.terminal_cache_detected && !settings.enabled,
+        terminal_cache_detected: state.terminal_cache_detected() && !settings.enabled,
     })
     .into_response()
 }
@@ -694,6 +700,42 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    async fn status(app: &Router) -> serde_json::Value {
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/native/shared-cache/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn terminal_cache_detection_requires_real_cached_audio() {
+        let directory = tempdir().unwrap();
+        let base_root = directory.path().join("ypm");
+        // The TUI creates this skeleton on every launch, even with nothing cached.
+        TrackCache::open(base_root.join("audio")).unwrap();
+        let app = router(SharedCacheState::testing(base_root.clone()));
+        assert_eq!(status(&app).await["terminalCacheDetected"], false);
+
+        let cache = TrackCache::open(base_root.join("audio")).unwrap();
+        let request = CacheWriteRequest::new(
+            CacheKey::new(99, AudioQuality::High320),
+            AudioCodec::Mp3,
+            320_000,
+        );
+        let mut writer = cache.begin_write(request).unwrap();
+        writer.write_all(b"terminal audio").unwrap();
+        writer.finish().unwrap();
+        assert_eq!(status(&app).await["terminalCacheDetected"], true);
     }
 
     #[tokio::test]

@@ -24,8 +24,12 @@ use writer::CompletedWrite;
 
 pub const DEFAULT_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
-const SCHEMA_VERSION: i64 = 1;
-const SCHEMA: &str = "
+// MIGRATIONS[n] upgrades user_version n to n + 1. Steps after the bootstrap
+// must keep existing rows: reconcile() deletes every file the index no longer
+// references, so a lossy migration would wipe the user's cached audio.
+const MIGRATIONS: [&str; 1] = [SCHEMA_V1];
+const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
+const SCHEMA_V1: &str = "
 DROP TABLE IF EXISTS tracks;
 DROP TABLE IF EXISTS cache_policy;
 
@@ -48,7 +52,6 @@ CREATE TABLE cache_policy (
 );
 
 INSERT INTO cache_policy (singleton, max_bytes, next_generation) VALUES (1, 8589934592, 0);
-PRAGMA user_version = 1;
 ";
 
 #[derive(Debug, thiserror::Error)]
@@ -165,6 +168,19 @@ impl TrackCache {
     }
 
     pub fn lookup(&self, key: CacheKey) -> Result<Option<CacheLease>, CacheError> {
+        match self.lookup_once(key) {
+            // SQLITE_BUSY after the 5s busy_timeout means a slow writer
+            // (e.g. a full reconcile) held the lock, not a missing entry.
+            // One more attempt keeps a cached track off the network.
+            Err(error) if is_busy(&error) => {
+                std::thread::sleep(Duration::from_millis(250));
+                self.lookup_once(key)
+            }
+            result => result,
+        }
+    }
+
+    fn lookup_once(&self, key: CacheKey) -> Result<Option<CacheLease>, CacheError> {
         loop {
             let Some(entry) = query_entry(&self.conn, key)? else {
                 return Ok(None);
@@ -533,13 +549,24 @@ struct RawEntry {
 }
 
 fn migrate(conn: &mut Connection) -> Result<(), CacheError> {
-    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let version: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    match version {
-        0 => transaction.execute_batch(SCHEMA)?,
-        SCHEMA_VERSION => {}
-        other => return Err(CacheError::UnsupportedSchema(other)),
+    // Plain read first: WAL readers never block on writers, so the common
+    // already-migrated open stays contention-free (an immediate transaction
+    // here used to fail the whole open whenever another process held the
+    // write lock past busy_timeout, e.g. during a large maintenance sweep).
+    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if !(0..=SCHEMA_VERSION).contains(&version) {
+        return Err(CacheError::UnsupportedSchema(version));
     }
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    // The caller holds open.lock, so no other process migrates concurrently;
+    // the transaction only makes a crashed migration roll back whole.
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for step in &MIGRATIONS[version as usize..] {
+        transaction.execute_batch(step)?;
+    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
 }
@@ -663,7 +690,13 @@ fn publish(
                     Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                     Err(error) => return Err(error.into()),
                 };
-                if !try_lock_exclusive(&existing)? {
+                // When a reader is playing this content-addressed path, its
+                // shared lock still lets us verify the bytes and keeps the
+                // file alive until the row commits, so an identical
+                // concurrent write (both apps caching the same track)
+                // publishes instead of being dropped.
+                let exclusive = try_lock_exclusive(&existing)?;
+                if !exclusive && !try_lock_shared(&existing)? {
                     return Err(CacheError::ExistingFileLeased);
                 }
                 if existing.metadata()?.len() == expected_bytes
@@ -671,6 +704,9 @@ fn publish(
                 {
                     drop(staging);
                     return Ok(existing);
+                }
+                if !exclusive {
+                    return Err(CacheError::ExistingFileLeased);
                 }
                 fs::remove_file(final_path)?;
                 drop(existing);
@@ -724,6 +760,28 @@ fn try_lock_exclusive(file: &File) -> Result<bool, CacheError> {
             }
         }
     }
+}
+
+fn try_lock_shared(file: &File) -> Result<bool, CacheError> {
+    match File::try_lock_shared(file) {
+        Ok(()) => Ok(true),
+        Err(error) => {
+            let error: io::Error = error.into();
+            if error.kind() == io::ErrorKind::WouldBlock {
+                Ok(false)
+            } else {
+                Err(error.into())
+            }
+        }
+    }
+}
+
+fn is_busy(error: &CacheError) -> bool {
+    matches!(
+        error,
+        CacheError::Index(rusqlite::Error::SqliteFailure(inner, _))
+            if inner.code == rusqlite::ErrorCode::DatabaseBusy
+    )
 }
 
 fn sqlite_integer(field: &'static str, value: u64) -> Result<i64, CacheError> {

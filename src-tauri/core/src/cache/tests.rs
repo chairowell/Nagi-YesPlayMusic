@@ -178,6 +178,51 @@ fn replacing_a_leased_generation_preserves_the_old_entry_until_retry() {
 }
 
 #[test]
+fn an_identical_write_publishes_while_the_same_track_is_playing() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("cache");
+    let first = TrackCache::open(&root).unwrap();
+    let second = TrackCache::open(&root).unwrap();
+    let key = CacheKey::new(73, AudioQuality::High320);
+    let original = write_entry(&first, request(73, AudioQuality::High320), b"same audio");
+    let mut lease = first.lookup(key).unwrap().unwrap();
+
+    let published = write_entry(&second, request(73, AudioQuality::High320), b"same audio");
+    assert!(published.generation > original.generation);
+    assert_eq!(file_count(&root.join("tracks")), 1);
+
+    let mut audio = Vec::new();
+    lease.read_to_end(&mut audio).unwrap();
+    assert_eq!(audio, b"same audio");
+    drop(lease);
+    assert_eq!(read_entry(&second, key), Some(b"same audio".to_vec()));
+}
+
+#[test]
+fn a_future_schema_version_is_rejected_without_touching_the_data() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("cache");
+    let cache = TrackCache::open(&root).unwrap();
+    let key = CacheKey::new(74, AudioQuality::High320);
+    write_entry(&cache, request(74, AudioQuality::High320), b"kept");
+    drop(cache);
+
+    let index = Connection::open(root.join("index.sqlite3")).unwrap();
+    index.pragma_update(None, "user_version", 2).unwrap();
+    drop(index);
+    assert!(matches!(
+        TrackCache::open(&root),
+        Err(CacheError::UnsupportedSchema(2))
+    ));
+
+    let index = Connection::open(root.join("index.sqlite3")).unwrap();
+    index.pragma_update(None, "user_version", 1).unwrap();
+    drop(index);
+    let reopened = TrackCache::open(&root).unwrap();
+    assert_eq!(read_entry(&reopened, key), Some(b"kept".to_vec()));
+}
+
+#[test]
 fn invalidation_is_generation_cas_and_waits_for_active_leases() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("cache");
