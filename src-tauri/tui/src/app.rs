@@ -1791,10 +1791,6 @@ struct PixelStyle {
     detail: pixel::CoverDetail,
 }
 
-fn spawn_cover_load(fx: &Effects, request: CoverRenderRequest, pic_url: String, style: CoverStyle) {
-    spawn_cover_loads(fx, vec![CoverLoad { request, style }], pic_url);
-}
-
 /// Several surfaces of the same artwork share one fetch: the URL downloads
 /// once and every pending size is derived from the same bytes, so they
 /// cannot double-download or fail independently.

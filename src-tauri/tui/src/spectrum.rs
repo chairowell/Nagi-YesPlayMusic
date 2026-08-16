@@ -721,16 +721,20 @@ fn reflection_color(
     mix_with_background(main, theme, terminal_background, weight)
 }
 
-fn draw_eighth_bar(
-    buf: &mut Buffer,
-    area: Rect,
+struct EighthBar {
     x: u16,
     width: u16,
     value: f32,
     height: u16,
-    theme: &Theme,
-    gradient: bool,
-) {
+}
+
+fn draw_eighth_bar(buf: &mut Buffer, area: Rect, bar: EighthBar, theme: &Theme, gradient: bool) {
+    let EighthBar {
+        x,
+        width,
+        value,
+        height,
+    } = bar;
     let ramp = Ramp::for_options(theme, gradient);
     let eighths = (value.clamp(0.0, 1.0) * f32::from(height) * 8.0).round() as u16;
     for row in 0..height {
@@ -777,10 +781,12 @@ impl SpectrumStyle for Blocks {
             draw_eighth_bar(
                 buf,
                 area,
-                index as u16 * self.options.stride(),
-                self.options.bar_width,
-                bin_value(bins, index, count),
-                area.height,
+                EighthBar {
+                    x: index as u16 * self.options.stride(),
+                    width: self.options.bar_width,
+                    value: bin_value(bins, index, count),
+                    height: area.height,
+                },
                 theme,
                 self.options.gradient,
             );
