@@ -914,6 +914,14 @@ export default defineComponent({
             this.lyricType = 'translation';
             return true;
           })
+          .catch(() => {
+            // A failed fetch must not leave the previous track's lyrics up.
+            if (isStale()) return false;
+            this.lyric = [];
+            this.tlyric = [];
+            this.romalyric = [];
+            return false;
+          })
           .finally(finishLyricRequest);
       }
       return getLyric(requestedId)
@@ -960,6 +968,14 @@ export default defineComponent({
               return true;
             }
           }
+        })
+        .catch(() => {
+          // A failed fetch must not leave the previous track's lyrics up.
+          if (isStale()) return false;
+          this.lyric = [];
+          this.tlyric = [];
+          this.romalyric = [];
+          return false;
         })
         .finally(finishLyricRequest);
     },

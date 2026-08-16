@@ -1,5 +1,11 @@
 # Bun Sidecar → Rust Sidecar 迁移与验收记录
 
+> 勘误（2026-08-16）：#22 的 NCM 下沉工程开始把通用转发路由逐个替换为
+> `/native/playback/*` 类型化端点，manifest 路由数随之缩减（`/song/url`、
+> `/lyric` 已移除，当前 55 条）。本文其余 "57 条" 表述为当时的历史记录，
+> 不再逐处订正；现行的确切计数以 `test/sidecarRouteManifest.test.ts` 与
+> `FRONTEND_ROUTE_COUNT` 为准。
+>
 > 状态（2026-08-11）：57-route 静态合同门禁、Rust Sidecar 与 Rust-only 分发接线已在工作树实现；逐路 Node↔Rust differential 尚未实现。冻结在 `1b891bc1059f1b92b090bf08d56a12f63b5ab5a9` 的 `0.8.0-canary.1` pre-tag 本地 adhoc Hardened Runtime DMG 已完成 installed/core/WebView/supervisor、可见暂停、连续播放与窗口隐藏验收。Tag CI、updater 签名资产、canary feed 与真实发布仍为 **PENDING**；Developer ID/公证按当前政策为 **N/A**。Windows/Ubuntu 实验安装包验收仍待完成，90 天观察期尚未开始。
 >
 > 迁移基线：`b6efe0b850bca17bfd3d9c0ffc9061e6348c4f07`（v0.7.0 的 Bun 发行实现）。90 天起点必须是首个实际发布并投入使用的 Rust-only prerelease 的 tag、发布时间和 artifact SHA；当前为 `TBD`。上述 freeze commit、本地 DMG 及其 SHA 都不计入观察期，也不代表未来 tag CI artifact。
@@ -267,7 +273,8 @@ HTTP、cookie、云盘、UNM、音频和 proxy 的行为测试与对应 Rust 模
 
 ### API 与 decoder
 
-- route manifest 与生产调用集合完全相等，至少覆盖当前 57 条路径。
+- route manifest 与生产调用集合完全相等（计数随 #22 端点下沉逐步缩减，
+  以 `test/sidecarRouteManifest.test.ts` 断言为准）。
 - 最终 differential 中每个 case 的 Node、Rust、decoder、comparator 执行次数均须大于零；当前该项是 **PENDING**。
 - QR、手机号、邮箱、cookie refresh、logout、session expiry 全部通过。
 - 搜索、歌单详情、喜欢/取消喜欢、创建歌单、歌单写入和每日推荐通过。

@@ -24,42 +24,6 @@ import {
 } from './decoders';
 import type { DecodeContext, Decoder, ValueDecoder } from './decoders';
 
-export interface AudioUrlResponse extends Record<string, unknown> {
-  id: number;
-  url?: string;
-  type?: string;
-  br?: number;
-  freeTrialInfo?: unknown;
-}
-
-const decodeAudioUrl: ValueDecoder<AudioUrlResponse> = (
-  input,
-  context,
-  field
-) => {
-  const audio = decodeRecord(input, context, field);
-  const url = decodeOptionalString(audio['url'], context, `${field}.url`);
-  const type = decodeOptionalString(audio['type'], context, `${field}.type`);
-  const br = decodeOptionalNumber(audio['br'], context, `${field}.br`);
-  return {
-    ...audio,
-    id: decodeNumber(audio['id'], context, `${field}.id`),
-    ...(url === undefined ? {} : { url }),
-    ...(type === undefined ? {} : { type }),
-    ...(br === undefined ? {} : { br }),
-  };
-};
-
-const decodeAudioUrlResponse: Decoder<
-  ApiResponse & { data: AudioUrlResponse[] }
-> = (input, context) => {
-  const response = decodeRecord(input, context);
-  return {
-    ...response,
-    data: decodeArray(response['data'], context, '$.data', decodeAudioUrl),
-  };
-};
-
 function decodeLyricPayload(
   input: unknown,
   context: DecodeContext,
@@ -97,28 +61,6 @@ const decodeTrackDataResponse: Decoder<ApiResponse & { data: Track[] }> = (
     data: decodeArray(response['data'], context, '$.data', decodeTrack),
   };
 };
-
-export function getMP3(
-  id: number | string
-): Promise<ApiResponse & { data: AudioUrlResponse[] }> {
-  const getBr = () => {
-    // The API selects Hi-Res for quality values at or above 400000.
-    const quality = getAppStore().settings.musicQuality;
-    return quality === 'flac' ? '350000' : quality;
-  };
-
-  return request<ApiResponse & { data: AudioUrlResponse[] }>(
-    {
-      url: '/song/url',
-      method: 'get',
-      params: {
-        id,
-        br: getBr(),
-      },
-    },
-    decodeAudioUrlResponse
-  );
-}
 
 export function getTrackDetail(
   ids: number | string
@@ -170,7 +112,8 @@ export function getLyric(id: number): Promise<LyricsResponse> {
     });
   };
 
-  fetchLatest();
+  // Background refresh only; failures surface on the foreground path below.
+  fetchLatest().catch(() => {});
 
   return (getLyricFromCache(id) as Promise<LyricsResponse | undefined>).then(
     result => {

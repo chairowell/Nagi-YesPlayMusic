@@ -12,8 +12,6 @@ export interface LyricsResponse {
   lrc?: LyricPayload;
   tlyric?: LyricPayload;
   romalrc?: LyricPayload;
-  lyricUser?: unknown;
-  transUser?: unknown;
 }
 
 export function lyricParser(lrc: LyricsResponse = {}) {
@@ -21,8 +19,6 @@ export function lyricParser(lrc: LyricsResponse = {}) {
     lyric: parseLyric(lrc?.lrc?.lyric || ''),
     tlyric: parseLyric(lrc?.tlyric?.lyric || ''),
     romalyric: parseLyric(lrc?.romalrc?.lyric || ''),
-    lyricuser: lrc.lyricUser,
-    transuser: lrc.transUser,
   };
 }
 

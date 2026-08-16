@@ -238,6 +238,7 @@ mod tests {
         lyrics_outcome: Mutex<Option<Result<LyricsPayload, NcmClientError>>>,
         seen_query: Mutex<Option<Query>>,
         seen_request: Mutex<Option<(i64, u32)>>,
+        seen_track: Mutex<Option<i64>>,
     }
 
     impl FakeResolver {
@@ -275,7 +276,7 @@ mod tests {
             track_id: i64,
         ) -> Result<LyricsPayload, NcmClientError> {
             *self.seen_query.lock().unwrap() = Some(query);
-            *self.seen_request.lock().unwrap() = Some((track_id, 0));
+            *self.seen_track.lock().unwrap() = Some(track_id);
             self.lyrics_outcome
                 .lock()
                 .unwrap()
@@ -381,6 +382,39 @@ mod tests {
         let query = resolver.seen_query.lock().unwrap().take().unwrap();
         assert_eq!(query.cookie.as_deref(), Some("MUSIC_U=token"));
         assert_eq!(query.real_ip.as_deref(), Some("1.2.3.4"));
+        assert_eq!(*resolver.seen_track.lock().unwrap(), Some(186_016));
+    }
+
+    #[tokio::test]
+    async fn every_shared_quality_case_is_a_cacheable_tier_the_endpoint_accepts() {
+        #[derive(serde::Deserialize)]
+        struct AudioQualityCase {
+            setting: serde_json::Value,
+            wire: String,
+        }
+        let quality_cases: Vec<AudioQualityCase> =
+            serde_json::from_str(include_str!("fixtures/audio-quality-cases.json")).unwrap();
+        assert_eq!(quality_cases.len(), 5);
+
+        for quality_case in quality_cases {
+            let wire: u32 = quality_case.wire.parse().unwrap();
+            // The renderer caches through the shared proxy keyed by quality,
+            // so every requestable bitrate must stay a valid cache tier.
+            assert!(
+                yesplaymusic_core::media::AudioQuality::from_bitrate(wire).is_some(),
+                "setting {}",
+                quality_case.setting
+            );
+            let resolver = FakeResolver::new(Err(SongUrlError::Unavailable));
+            let (status, _) = request(
+                resolver.clone(),
+                &format!("/native/playback/source/42?bitrate={wire}"),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(*resolver.seen_request.lock().unwrap(), Some((42, wire)));
+        }
     }
 
     #[tokio::test]

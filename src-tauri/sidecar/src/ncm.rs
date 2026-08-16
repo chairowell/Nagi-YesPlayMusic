@@ -17,7 +17,7 @@ use crate::{
     session::desktop_session_expiry_cookies,
 };
 
-const FRONTEND_ROUTE_COUNT: usize = 56;
+const FRONTEND_ROUTE_COUNT: usize = 55;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const CLOUD_MULTIPART_BODY_LIMIT_BYTES: usize = 513 * 1024 * 1024;
 const NCM_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -155,7 +155,6 @@ define_production_dispatch!(
     simi_artist,
     simi_mv,
     song_detail,
-    song_url,
     top_playlist,
     top_playlist_highquality,
     top_song,
@@ -780,12 +779,6 @@ mod tests {
 
     struct PendingBackend;
 
-    #[derive(Deserialize)]
-    struct AudioQualityCase {
-        setting: Value,
-        wire: String,
-    }
-
     #[async_trait]
     impl NcmBackend for PendingBackend {
         async fn dispatch(&self, _: &str, _: &Query) -> Result<ApiResponse, NcmError> {
@@ -1353,36 +1346,6 @@ mod tests {
         }
 
         capture_task.abort();
-    }
-
-    #[tokio::test]
-    async fn all_shared_audio_quality_values_reach_the_song_url_adapter() {
-        let quality_cases: Vec<AudioQualityCase> =
-            serde_json::from_str(include_str!("fixtures/audio-quality-cases.json")).unwrap();
-        assert_eq!(quality_cases.len(), 5);
-
-        for quality_case in quality_cases {
-            let response = ApiResponse {
-                status: 200,
-                body: json!({ "code": 200, "data": [] }),
-                cookie: Vec::new(),
-            };
-            let (app, mut calls) = recording_router(Ok(response), false);
-            let request = Request::builder()
-                .uri(format!("/song/url?id=42&br={}", quality_case.wire))
-                .body(Body::empty())
-                .unwrap();
-
-            assert_eq!(app.oneshot(request).await.unwrap().status(), StatusCode::OK);
-            let call = calls.recv().await.unwrap();
-            assert_eq!(call.adapter, "ncm::song_url");
-            assert_eq!(
-                call.params.get("br"),
-                Some(&quality_case.wire),
-                "setting {}",
-                quality_case.setting
-            );
-        }
     }
 
     #[tokio::test]
