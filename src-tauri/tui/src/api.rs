@@ -10,12 +10,14 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use futures_util::future::BoxFuture;
 use ncm_api_rs::api::Query;
-use ncm_api_rs::{ApiClient, NcmError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use yesplaymusic_core::auth::{Session, SessionStore};
+use yesplaymusic_core::auth::Session;
 use yesplaymusic_core::cache::{AudioCodec, AudioQuality, CacheKey};
+use yesplaymusic_core::ncm::{AccountReason, NcmClient, NcmClientError};
 use yesplaymusic_core::unm::UnmState;
+
+pub use yesplaymusic_core::ncm::QrStatus;
 
 use crate::i18n::{self, Key};
 
@@ -227,14 +229,6 @@ pub enum Source {
     Search,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum QrStatus {
-    Waiting,
-    Scanned,
-    Expired,
-    Success(Session),
-}
-
 /// Why `account()` failed — the split decides whether a startup treats the
 /// stored session as dead or merely unverifiable.
 #[derive(Debug)]
@@ -256,32 +250,24 @@ impl fmt::Display for AccountError {
 
 impl std::error::Error for AccountError {}
 
-/// Only an explicit auth rejection proves the session expired; every other
-/// failure mode (transport, throttling, server trouble) leaves it unknown.
-fn classify_account_error(error: NcmError) -> AccountError {
-    let wrapped = anyhow!(i18n::t_api_failed(Key::OpAccount, &error));
+/// Translate a core account failure, preserving the Expired/Unreachable split.
+fn account_error(error: yesplaymusic_core::ncm::AccountError) -> AccountError {
+    use yesplaymusic_core::ncm::AccountError as Core;
     match error {
-        NcmError::AuthRequired(_) => AccountError::Expired(wrapped),
-        _ => AccountError::Unreachable(wrapped),
+        Core::Expired(reason) => AccountError::Expired(account_reason_text(reason)),
+        Core::Unreachable(reason) => AccountError::Unreachable(account_reason_text(reason)),
     }
 }
 
-/// NCM's logged-out answer is a well-formed code-200 body with no account.
-/// Anything else missing the account — captive-portal HTML passed through as
-/// a string body, an EAPI decrypt that fell back to null — never proves the
-/// session dead.
-fn account_from_body(body: &Value) -> std::result::Result<(i64, String), AccountError> {
-    match parse_account(body) {
-        Ok(account) => Ok(account),
-        Err(error) if body["code"].as_i64() == Some(200) => Err(AccountError::Expired(error)),
-        Err(error) => Err(AccountError::Unreachable(error)),
+fn account_reason_text(reason: AccountReason) -> anyhow::Error {
+    match reason {
+        AccountReason::Api(error) => anyhow!(i18n::t_api_failed(Key::OpAccount, error)),
+        AccountReason::InvalidPayload => anyhow!(i18n::t(Key::ApiInvalidSession)),
     }
 }
 
 pub struct Ncm {
-    client: ApiClient,
-    store: SessionStore,
-    session: RwLock<Option<Session>>,
+    core: NcmClient,
     quality: RwLock<AudioQuality>,
     unm_enabled: bool,
     unm: Arc<dyn UnmResolver>,
@@ -306,12 +292,8 @@ impl Ncm {
         unm: Arc<dyn UnmResolver>,
         unm_timeout: Duration,
     ) -> Self {
-        let store = SessionStore::new(session_path);
-        let session = RwLock::new(store.load());
         Self {
-            client: ApiClient::new(None),
-            store,
-            session,
+            core: NcmClient::new(session_path),
             quality: RwLock::new(quality),
             unm_enabled,
             unm,
@@ -320,7 +302,7 @@ impl Ncm {
     }
 
     pub fn session_snapshot(&self) -> Option<Session> {
-        self.session.read().ok().and_then(|session| session.clone())
+        self.core.session_snapshot()
     }
 
     pub(crate) fn quality(&self) -> AudioQuality {
@@ -332,54 +314,38 @@ impl Ncm {
     }
 
     pub fn commit_session(&self, session: &Session) -> Result<()> {
-        self.store
-            .save(session)
-            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPersistSession, error)))?;
-        *self.session.write().expect("session lock") = Some(session.clone());
-        Ok(())
+        self.core
+            .commit_session(session)
+            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPersistSession, error)))
     }
 
     fn query(&self) -> Query {
-        let session = self.session_snapshot();
-        Self::query_with_session(session.as_ref())
+        self.core.query()
     }
 
     fn query_with_session(session: Option<&Session>) -> Query {
-        let cookie = session.map(Session::cookie_header);
-        match cookie {
-            Some(cookie) => Query::new().cookie(&cookie),
-            None => Query::new(),
-        }
+        NcmClient::query_with_session(session)
     }
 
     // ── login ────────────────────────────────────────────────────────
 
     pub async fn qr_key(&self) -> Result<String> {
-        let response = self
-            .client
-            .login_qr_key(&self.query())
-            .await
-            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpQrKey, error)))?;
-        let body = &response.body;
-        body["unikey"]
-            .as_str()
-            .or_else(|| body["data"]["unikey"].as_str())
-            .map(str::to_owned)
-            .ok_or_else(|| anyhow!(i18n::t(Key::ApiQrKeyMissing)))
+        self.core.qr_key().await.map_err(|error| match error {
+            NcmClientError::Api(error) => anyhow!(i18n::t_api_failed(Key::OpQrKey, error)),
+            _ => anyhow!(i18n::t(Key::ApiQrKeyMissing)),
+        })
     }
 
     pub fn qr_login_url(key: &str) -> String {
-        format!("https://music.163.com/login?codekey={key}")
+        NcmClient::qr_login_url(key)
     }
 
     pub async fn qr_check(&self, key: &str) -> Result<QrStatus> {
-        let query = self.query().param("key", key);
-        let response = self
-            .client
-            .login_qr_check(&query)
-            .await
-            .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpQrCheck, error)))?;
-        parse_qr_status(&response.body, &response.cookie)
+        self.core.qr_check(key).await.map_err(|error| match error {
+            NcmClientError::Api(error) => anyhow!(i18n::t_api_failed(Key::OpQrCheck, error)),
+            NcmClientError::UnknownQrStatus(status) => anyhow!(i18n::t_unknown_qr_status(status)),
+            _ => anyhow!(i18n::t(Key::ApiLoginCookieMissing)),
+        })
     }
 
     // ── account & library ────────────────────────────────────────────
@@ -388,12 +354,7 @@ impl Ncm {
         &self,
         session: Option<&Session>,
     ) -> std::result::Result<(i64, String), AccountError> {
-        let response = self
-            .client
-            .user_account(&Self::query_with_session(session))
-            .await
-            .map_err(classify_account_error)?;
-        account_from_body(&response.body)
+        self.core.account(session).await.map_err(account_error)
     }
 
     /// The user's "我喜欢的音乐" — by NCM convention the first playlist.
@@ -402,7 +363,8 @@ impl Ncm {
             .param("uid", &uid.to_string())
             .param("limit", "1");
         let response = self
-            .client
+            .core
+            .api()
             .user_playlist(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpUserPlaylist, error)))?;
@@ -432,7 +394,8 @@ impl Ncm {
             .param("limit", &PLAYLIST_PAGE_SIZE.to_string())
             .param("offset", &offset.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .playlist_track_all(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
@@ -443,7 +406,7 @@ impl Ncm {
         let query = Self::query_with_session(session)
             .param("id", &id.to_string())
             .param("like", if like { "true" } else { "false" });
-        let response = self.client.like(&query).await.map_err(|_| like_error())?;
+        let response = self.core.api().like(&query).await.map_err(|_| like_error())?;
         match response.body["code"].as_i64() {
             Some(200) => Ok(()),
             _ => Err(like_error()),
@@ -457,7 +420,8 @@ impl Ncm {
     ) -> Result<std::collections::HashSet<i64>> {
         let query = Self::query_with_session(session).param("uid", &uid.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .likelist(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpUserPlaylist, error)))?;
@@ -469,7 +433,8 @@ impl Ncm {
 
     pub async fn daily_songs(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
         let response = self
-            .client
+            .core
+            .api()
             .recommend_songs(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
@@ -479,7 +444,8 @@ impl Ncm {
 
     pub async fn personal_fm(&self, session: Option<&Session>) -> Result<Vec<SongRow>> {
         let response = self
-            .client
+            .core
+            .api()
             .personal_fm(&Self::query_with_session(session))
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
@@ -492,7 +458,8 @@ impl Ncm {
     pub async fn fm_trash(&self, id: i64, session: Option<&Session>) -> Result<()> {
         let query = Self::query_with_session(session).param("id", &id.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .fm_trash(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpFmTrash, error)))?;
@@ -515,7 +482,8 @@ impl Ncm {
             .param("limit", &PLAYLIST_PAGE_SIZE.to_string())
             .param("offset", &offset.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .user_cloud(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
@@ -552,7 +520,7 @@ impl Ncm {
             .query()
             .param("id", &id.to_string())
             .param("br", &bitrate);
-        let response = self.client.song_url(&query).await.map_err(|error| {
+        let response = self.core.api().song_url(&query).await.map_err(|error| {
             SongUrlFailure::Other(anyhow!(i18n::t_api_failed(Key::OpSongUrl, error)))
         })?;
         Ok((requested_quality, classify_song_url(&response.body)?))
@@ -562,7 +530,8 @@ impl Ncm {
     pub async fn lyrics(&self, id: i64) -> Result<LyricsPayload> {
         let query = self.query().param("id", &id.to_string());
         let response = self
-            .client
+            .core
+            .api()
             // `lyric_new` sends yv/ytv/yrv, the API's YRC request flags.
             .lyric_new(&query)
             .await
@@ -582,7 +551,8 @@ impl Ncm {
             .param("type", channel.api_type())
             .param("limit", &limit.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .cloudsearch(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSearch, error)))?;
@@ -592,7 +562,8 @@ impl Ncm {
     pub async fn artist_top_songs(&self, artist_id: i64) -> Result<Vec<SongRow>> {
         let query = self.query().param("id", &artist_id.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .artist_top_song(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
@@ -602,7 +573,8 @@ impl Ncm {
     pub async fn album_songs(&self, album_id: i64) -> Result<Vec<SongRow>> {
         let query = self.query().param("id", &album_id.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .album(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
@@ -612,7 +584,8 @@ impl Ncm {
     pub async fn playlist_detail_songs(&self, playlist_id: i64) -> Result<Vec<SongRow>> {
         let query = self.query().param("id", &playlist_id.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .playlist_detail(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpPlaylistTracks, error)))?;
@@ -631,7 +604,8 @@ impl Ncm {
             .param("type", SearchChannel::Songs.api_type())
             .param("limit", &limit.to_string());
         let response = self
-            .client
+            .core
+            .api()
             .cloudsearch(&query)
             .await
             .map_err(|error| anyhow!(i18n::t_api_failed(Key::OpSearch, error)))?;
@@ -1213,29 +1187,6 @@ fn base64_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn parse_qr_status(body: &Value, cookies: &[String]) -> Result<QrStatus> {
-    match body["code"].as_i64().unwrap_or(0) {
-        800 => Ok(QrStatus::Expired),
-        801 => Ok(QrStatus::Waiting),
-        802 => Ok(QrStatus::Scanned),
-        803 => Session::from_set_cookies(cookies)
-            .map(QrStatus::Success)
-            .ok_or_else(|| anyhow!(i18n::t(Key::ApiLoginCookieMissing))),
-        other => Err(anyhow!(i18n::t_unknown_qr_status(other))),
-    }
-}
-
-fn parse_account(body: &Value) -> Result<(i64, String)> {
-    let uid = body["account"]["id"]
-        .as_i64()
-        .ok_or_else(|| anyhow!(i18n::t(Key::ApiInvalidSession)))?;
-    let nickname = body["profile"]["nickname"]
-        .as_str()
-        .unwrap_or("")
-        .to_owned();
-    Ok((uid, nickname))
-}
-
 /// Tolerant mapping: daily/FM/cloud payloads use ar|artists, al|album,
 /// dt|duration interchangeably.
 fn song_row_flex(song: &Value) -> SongRow {
@@ -1301,52 +1252,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-
-    #[test]
-    fn a_captive_portal_body_does_not_expire_the_session() {
-        // Real logged-out answer: code-200 JSON without an account.
-        assert!(matches!(
-            account_from_body(&serde_json::json!({ "code": 200, "account": null })),
-            Err(AccountError::Expired(_))
-        ));
-        // Portal HTML arrives as a string body; decrypt failures as null.
-        for garbage in [
-            Value::String("<html>login to hotel wifi</html>".into()),
-            Value::Null,
-        ] {
-            assert!(matches!(
-                account_from_body(&garbage),
-                Err(AccountError::Unreachable(_))
-            ));
-        }
-        let account = account_from_body(
-            &serde_json::json!({ "code": 200, "account": { "id": 7 }, "profile": { "nickname": "n" } }),
-        )
-        .unwrap();
-        assert_eq!(account, (7, "n".to_owned()));
-    }
-
-    #[test]
-    fn only_an_auth_rejection_counts_as_an_expired_session() {
-        assert!(matches!(
-            classify_account_error(NcmError::AuthRequired("需要登录".into())),
-            AccountError::Expired(_)
-        ));
-        for unproven in [
-            NcmError::Timeout("connect".into()),
-            NcmError::RateLimited("503".into()),
-            NcmError::Api {
-                code: 502,
-                msg: "bad gateway".into(),
-            },
-            NcmError::Unknown("connection reset".into()),
-        ] {
-            assert!(matches!(
-                classify_account_error(unproven),
-                AccountError::Unreachable(_)
-            ));
-        }
-    }
 
     #[test]
     fn lyric_payload_keeps_all_supported_timeline_kinds() {
@@ -2248,31 +2153,6 @@ mod tests {
         assert_eq!(url, "https://music.163.com/login?codekey=abc123");
         let art = qr_unicode(&url).unwrap();
         assert!(art.lines().count() > 10);
-    }
-
-    #[test]
-    fn qr_success_returns_a_candidate_without_committing_it() {
-        let ncm = ncm(AudioQuality::High320);
-        let cookies = vec![
-            "MUSIC_U=candidate-token; Path=/; HttpOnly".into(),
-            "__csrf=candidate-csrf; Path=/".into(),
-        ];
-
-        let status = parse_qr_status(&serde_json::json!({ "code": 803 }), &cookies).unwrap();
-
-        assert!(matches!(status, QrStatus::Success(_)));
-        assert!(ncm.session_snapshot().is_none());
-        assert!(ncm.query().cookie.is_none());
-    }
-
-    #[test]
-    fn invalid_account_response_is_an_error_instead_of_uid_zero() {
-        let error = parse_account(&serde_json::json!({
-            "account": {},
-            "profile": { "nickname": "unknown" }
-        }));
-
-        assert!(error.is_err());
     }
 
     #[tokio::test]

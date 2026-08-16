@@ -4,6 +4,7 @@
 pub mod auth;
 #[cfg(feature = "cache")]
 pub mod cache;
+pub mod ncm;
 pub mod scrobble;
 pub mod session;
 pub mod unm;
