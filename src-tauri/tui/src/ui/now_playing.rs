@@ -539,8 +539,7 @@ pub(super) fn draw_player_bar(
     area: Rect,
     hits: &mut Hits,
 ) {
-    let Some(now) = &state.now else { return };
-    if area.height < PLAYER_BAR_HEIGHT || area.width < 8 {
+    if state.now.is_none() || area.height < PLAYER_BAR_HEIGHT || area.width < 8 {
         return;
     }
     let theme = state.theme;
@@ -572,11 +571,16 @@ pub(super) fn draw_player_bar(
         (None, content)
     };
     if let Some(cover_area) = cover_area {
-        if let Some(cover) = &state.bar_cover {
+        // Same policy as the now-playing view: terminal-graphics original when
+        // it is ready for this track, pixel art otherwise.
+        if state.bar_original_is_current() {
+            state.render_bar_original(frame, cover_area);
+        } else if let Some(cover) = &state.bar_cover {
             frame.render_widget(cover, cover_area);
         }
     }
 
+    let Some(now) = &state.now else { return };
     let note = "♪ ";
     let text_width = usize::from(right.width).saturating_sub(display_width(note) + 2);
     let title = crate::ui::text::pad_or_marquee(

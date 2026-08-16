@@ -558,6 +558,9 @@ impl AppState {
             if let Some(original) = &mut self.selected_original_cover {
                 original.set_background(self.theme.bg);
             }
+            if let Some(original) = &mut self.bar_original_cover {
+                original.set_background(self.theme.bg);
+            }
         }
         if theme_changed
             || pixel_changed
@@ -588,6 +591,7 @@ impl AppState {
             self.config.cover_detail,
         );
         self.cover = None;
+        self.bar_cover = None;
         if let Some(row) = self.active_row.clone() {
             self.load_playing_cover(fx, &row);
         }

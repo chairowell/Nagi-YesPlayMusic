@@ -2603,3 +2603,42 @@ async fn expired_restore_still_logs_the_user_out() {
     );
 }
 
+#[tokio::test]
+async fn bar_cover_follows_the_original_mode_and_playing_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.config.cover_mode = crate::config::CoverMode::Original;
+    let (bar_tx, _bar_rx) = tokio::sync::mpsc::unbounded_channel();
+    state.bar_original_cover = Some(OriginalCover::new(
+        ratatui_image::picker::Picker::halfblocks(),
+        bar_tx,
+    ));
+    state.generation = 3;
+    assert!(state.uses_original_cover(CoverSurface::Bar));
+    assert!(!state.bar_original_is_current());
+
+    state.update(
+        Action::CoverDecoded {
+            surface: CoverSurface::Bar,
+            generation: 3,
+            style_revision: state.style_revision,
+            image: DynamicImage::new_rgba8(4, 4),
+        },
+        &fx,
+    );
+    assert!(state.bar_original_is_current());
+
+    // A decode for a previous track must not resurrect on the current one.
+    state.generation = 4;
+    state.update(
+        Action::CoverDecoded {
+            surface: CoverSurface::Bar,
+            generation: 3,
+            style_revision: state.style_revision,
+            image: DynamicImage::new_rgba8(4, 4),
+        },
+        &fx,
+    );
+    assert!(!state.bar_original_is_current());
+}

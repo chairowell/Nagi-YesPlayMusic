@@ -637,6 +637,11 @@ impl AppState {
                                 original.replace(generation, image);
                             }
                         }
+                        CoverSurface::Bar if generation == self.generation => {
+                            if let Some(original) = &mut self.bar_original_cover {
+                                original.replace(generation, image);
+                            }
+                        }
                         _ => {}
                     }
                 }

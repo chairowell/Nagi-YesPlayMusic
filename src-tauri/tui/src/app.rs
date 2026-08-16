@@ -440,6 +440,7 @@ pub struct AppState {
     pixel_detail_scale: f32,
     original_cover: Option<OriginalCover>,
     selected_original_cover: Option<OriginalCover>,
+    bar_original_cover: Option<OriginalCover>,
     selected_cover: SelectionCoverState,
     hot_pixel_covers: HotPixelCovers,
     pub idle_art: PixelCover,
@@ -544,6 +545,7 @@ impl AppState {
             pixel_detail_scale: config.pixel_scale.clamp(0.5, 4.0),
             original_cover: None,
             selected_original_cover: None,
+            bar_original_cover: None,
             selected_cover: SelectionCoverState {
                 generation: 0,
                 key: None,
@@ -974,6 +976,9 @@ impl AppState {
         if let Some(original) = &mut self.original_cover {
             original.clear();
         }
+        if let Some(original) = &mut self.bar_original_cover {
+            original.clear();
+        }
     }
 
     fn clear_selected_cover(&mut self) {
@@ -1014,6 +1019,26 @@ impl AppState {
 
     fn apply_original_resize(&mut self, response: ResizeResponse) {
         if let Some(original) = &mut self.original_cover {
+            original.protocol.update_resized_protocol(response);
+        }
+    }
+
+    pub fn bar_original_is_current(&self) -> bool {
+        self.config.cover_mode == CoverMode::Original
+            && self
+                .bar_original_cover
+                .as_ref()
+                .is_some_and(|cover| cover.generation == Some(self.generation))
+    }
+
+    pub fn render_bar_original(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        if let Some(original) = &mut self.bar_original_cover {
+            frame.render_stateful_widget(StatefulImage::new(), area, &mut original.protocol);
+        }
+    }
+
+    fn apply_bar_original_resize(&mut self, response: ResizeResponse) {
+        if let Some(original) = &mut self.bar_original_cover {
             original.protocol.update_resized_protocol(response);
         }
     }
@@ -1062,7 +1087,7 @@ impl AppState {
         match surface {
             CoverSurface::Playing => self.original_cover.is_some(),
             CoverSurface::Selection => self.selected_original_cover.is_some(),
-            CoverSurface::Bar => false,
+            CoverSurface::Bar => self.bar_original_cover.is_some(),
         }
     }
 
@@ -1165,7 +1190,7 @@ impl AppState {
                     request: bar_request,
                     style: CoverStyle {
                         pixel: self.pixel_style(),
-                        original: false,
+                        original: self.uses_original_cover(CoverSurface::Bar),
                     },
                 },
             ],
@@ -2230,6 +2255,8 @@ async fn event_loop(
     let (selected_responses_tx, mut selected_responses) = mpsc::unbounded_channel();
     let (selected_pending_resize_tx, selected_pending_resize_rx) = mpsc::unbounded_channel();
     let (selected_pending_responses_tx, mut selected_pending_responses) = mpsc::unbounded_channel();
+    let (bar_resize_tx, bar_resize_rx) = mpsc::unbounded_channel();
+    let (bar_responses_tx, mut bar_responses) = mpsc::unbounded_channel();
 
     // Graphics protocol queries must finish before EventStream starts reading
     // the same terminal response bytes.
@@ -2242,12 +2269,14 @@ async fn event_loop(
     let original_cover = picker
         .clone()
         .map(|picker| OriginalCover::new(picker, playing_resize_tx));
-    let selected_original_cover = picker.map(|picker| {
+    let selected_original_cover = picker.clone().map(|picker| {
         OriginalCover::buffered(picker, selected_resize_tx, selected_pending_resize_tx)
     });
+    let bar_original_cover = picker.map(|picker| OriginalCover::new(picker, bar_resize_tx));
     spawn_resize_worker(playing_resize_rx, playing_responses_tx);
     spawn_resize_worker(selected_resize_rx, selected_responses_tx);
     spawn_resize_worker(selected_pending_resize_rx, selected_pending_responses_tx);
+    spawn_resize_worker(bar_resize_rx, bar_responses_tx);
 
     if config.update_check {
         let update_tx = actions_tx.clone();
@@ -2320,6 +2349,7 @@ async fn event_loop(
     state.theme = theme;
     state.original_cover = original_cover;
     state.selected_original_cover = selected_original_cover;
+    state.bar_original_cover = bar_original_cover;
     if let Some(playback) = fx.store.load_playback() {
         state.restore_playback(playback);
         fx.player.send(PlayerCommand::SetVolume(state.volume));
@@ -2379,6 +2409,14 @@ async fn event_loop(
                     continue;
                 };
                 state.apply_selected_pending_resize(response);
+            }
+            response = bar_responses.recv(), if state.bar_original_cover.is_some() => {
+                let Some(response) = response else {
+                    tracing::warn!("bar cover worker gone, disabling original cover");
+                    state.bar_original_cover = None;
+                    continue;
+                };
+                state.apply_bar_original_resize(response);
             }
             _ = ui_tick.tick(), if state.marquee_active() || state.command_feedback.is_some() => {
                 state.update(Action::UiTick, &fx);
