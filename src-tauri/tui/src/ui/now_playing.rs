@@ -152,6 +152,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
                 state.spectrum.render(
                     state.config.spectrum_style,
                     state.config.spectrum_glow,
+                    state.spectrum_render_options(),
                     panel_spectrum_area,
                     frame.buffer_mut(),
                     &state.theme,
@@ -180,6 +181,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
         state.spectrum.render(
             state.config.spectrum_style,
             state.config.spectrum_glow,
+            state.spectrum_render_options(),
             spectrum_area,
             frame.buffer_mut(),
             &state.theme,
@@ -513,18 +515,66 @@ fn current_lyric_spans(
         .collect()
 }
 
-/// Two-row strip for the non-playing views: what's playing plus the full
-/// progress/controls row (its mouse hit targets come along for free).
-pub(super) const PLAYER_BAR_HEIGHT: u16 = 2;
+/// Bottom strip for the browsing views. Short terminals get two content
+/// rows (title + controls); tall ones add the mini cover and a spectrum
+/// band. The last row always stays blank so the bar never touches the
+/// footer hints.
+pub(super) const PLAYER_BAR_HEIGHT: u16 = 3;
+pub(super) const PLAYER_BAR_EXPANDED_HEIGHT: u16 = 7;
+/// Mini pixel cover: 6 rows of half-blocks make a 12×12 pixel square.
+pub(crate) const PLAYER_BAR_COVER_CELLS: (u16, u16) = (12, 6);
+const PLAYER_BAR_EXPAND_MIN_TERMINAL_HEIGHT: u16 = 26;
 
-pub(super) fn draw_player_bar(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
+pub(super) fn player_bar_height(total_height: u16) -> u16 {
+    if total_height >= PLAYER_BAR_EXPAND_MIN_TERMINAL_HEIGHT {
+        PLAYER_BAR_EXPANDED_HEIGHT
+    } else {
+        PLAYER_BAR_HEIGHT
+    }
+}
+
+pub(super) fn draw_player_bar(
+    frame: &mut Frame,
+    state: &mut AppState,
+    area: Rect,
+    hits: &mut Hits,
+) {
     let Some(now) = &state.now else { return };
     if area.height < PLAYER_BAR_HEIGHT || area.width < 8 {
         return;
     }
-    let theme = &state.theme;
+    let theme = state.theme;
+    let expanded = area.height >= PLAYER_BAR_EXPANDED_HEIGHT;
+    // Last row is the breathing gap above the footer hints.
+    let content = Rect {
+        height: area.height - 1,
+        ..area
+    };
+    let (cover_area, right) = if expanded {
+        let cover_width = (PLAYER_BAR_COVER_CELLS.0 + 2).min(content.width / 3);
+        (
+            Some(Rect {
+                width: PLAYER_BAR_COVER_CELLS.0.min(content.width),
+                height: PLAYER_BAR_COVER_CELLS.1.min(content.height),
+                ..content
+            }),
+            Rect {
+                x: content.x + cover_width,
+                width: content.width.saturating_sub(cover_width),
+                ..content
+            },
+        )
+    } else {
+        (None, content)
+    };
+    if let Some(cover_area) = cover_area {
+        if let Some(cover) = &state.bar_cover {
+            frame.render_widget(cover, cover_area);
+        }
+    }
+
     let note = "♪ ";
-    let text_width = usize::from(area.width).saturating_sub(display_width(note) + 2);
+    let text_width = usize::from(right.width).saturating_sub(display_width(note) + 2);
     let title = crate::ui::text::pad_or_marquee(
         &format!("{} — {}", now.title, now.artist),
         text_width,
@@ -537,14 +587,32 @@ pub(super) fn draw_player_bar(frame: &mut Frame, state: &AppState, area: Rect, h
             Span::styled(note, Style::new().fg(theme.accent)),
             Span::styled(title, Style::new().fg(theme.dim)),
         ])),
-        Rect { height: 1, ..area },
+        Rect { height: 1, ..right },
     );
     let progress = Rect {
-        y: area.y + 1,
+        y: right.y + 1,
         height: 1,
-        ..area
+        ..right
     };
     draw_progress(frame, state, progress, hits);
+
+    if expanded {
+        let band = Rect {
+            y: right.y + 2,
+            height: content.height.saturating_sub(2),
+            ..right
+        };
+        if state.config.spectrum_enabled && !band.is_empty() {
+            state.spectrum.render(
+                state.config.spectrum_style,
+                state.config.spectrum_glow,
+                state.spectrum_render_options(),
+                band,
+                frame.buffer_mut(),
+                &theme,
+            );
+        }
+    }
 }
 
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
@@ -903,7 +971,7 @@ mod tests {
         });
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true);
+            .tick(&SampleBuffer::default(), false, true, true, false);
         let backend = TestBackend::new(80, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -936,7 +1004,7 @@ mod tests {
         });
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true);
+            .tick(&SampleBuffer::default(), false, true, true, false);
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();
@@ -974,7 +1042,7 @@ mod tests {
             });
             state
                 .spectrum
-                .tick(&SampleBuffer::default(), false, true, true);
+                .tick(&SampleBuffer::default(), false, true, true, false);
             let backend = TestBackend::new(200, 60);
             let mut terminal = Terminal::new(backend).unwrap();
             let mut hits = Hits::default();
@@ -1015,7 +1083,7 @@ mod tests {
         }];
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true);
+            .tick(&SampleBuffer::default(), false, true, true, false);
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut hits = Hits::default();

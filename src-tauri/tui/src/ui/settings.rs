@@ -61,7 +61,8 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
 
     let [hint_area, rows_area, _, preview_area, status_area, buttons_area] = Layout::vertical([
         Constraint::Length(SETTINGS_HINT_HEIGHT),
-        Constraint::Min(SettingField::ALL.len() as u16),
+        // The row list scrolls; never let it starve the hint/preview/actions.
+        Constraint::Fill(1),
         Constraint::Length(preview_gap_height),
         Constraint::Length(preview_height),
         Constraint::Length(SETTINGS_STATUS_HEIGHT),
@@ -177,6 +178,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, area: Rect, hits: &mut Hits
         state.spectrum.render(
             state.config.spectrum_style,
             state.config.spectrum_glow,
+            state.spectrum_render_options(),
             preview_inner,
             frame.buffer_mut(),
             &theme,
@@ -590,7 +592,7 @@ mod tests {
             .unwrap();
         state
             .spectrum
-            .tick(&SampleBuffer::default(), false, true, true);
+            .tick(&SampleBuffer::default(), false, true, true, false);
         let mut hits = Hits::default();
 
         terminal

@@ -30,11 +30,15 @@ pub(crate) enum SettingField {
     SpectrumStyle,
     SpectrumGlow,
     SpectrumFlatten,
+    SpectrumGradient,
+    SpectrumBars,
+    SpectrumSensitivity,
+    SpectrumStereo,
     UpdateCheck,
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 23] = [
         Self::Theme,
         Self::ThemeMode,
         Self::Language,
@@ -53,6 +57,10 @@ impl SettingField {
         Self::SpectrumStyle,
         Self::SpectrumGlow,
         Self::SpectrumFlatten,
+        Self::SpectrumGradient,
+        Self::SpectrumBars,
+        Self::SpectrumSensitivity,
+        Self::SpectrumStereo,
         Self::UpdateCheck,
     ];
 
@@ -76,6 +84,10 @@ impl SettingField {
             Self::SpectrumStyle => Key::SettingSpectrumStyle,
             Self::SpectrumGlow => Key::SettingSpectrumGlow,
             Self::SpectrumFlatten => Key::SettingSpectrumFlatten,
+            Self::SpectrumGradient => Key::SettingSpectrumGradient,
+            Self::SpectrumBars => Key::SettingSpectrumBars,
+            Self::SpectrumSensitivity => Key::SettingSpectrumSensitivity,
+            Self::SpectrumStereo => Key::SettingSpectrumStereo,
             Self::UpdateCheck => Key::SettingUpdateCheck,
         }
     }
@@ -263,6 +275,25 @@ impl AppState {
             SettingField::SpectrumFlatten => {
                 self.config.spectrum_flatten = !self.config.spectrum_flatten;
             }
+            SettingField::SpectrumGradient => {
+                self.config.spectrum_gradient = !self.config.spectrum_gradient;
+            }
+            SettingField::SpectrumBars => {
+                use crate::config::SpectrumBars;
+                self.config.spectrum_bars =
+                    cycle(&SpectrumBars::ALL, &self.config.spectrum_bars, delta);
+            }
+            SettingField::SpectrumSensitivity => {
+                use crate::config::SpectrumSensitivity;
+                self.config.spectrum_sensitivity = cycle(
+                    &SpectrumSensitivity::ALL,
+                    &self.config.spectrum_sensitivity,
+                    delta,
+                );
+            }
+            SettingField::SpectrumStereo => {
+                self.config.spectrum_stereo = !self.config.spectrum_stereo;
+            }
             SettingField::SpectrumGlow => {
                 self.config.spectrum_glow = !self.config.spectrum_glow;
             }
@@ -382,6 +413,14 @@ impl AppState {
             }
             SettingField::SpectrumGlow => self.on_off(self.config.spectrum_glow),
             SettingField::SpectrumFlatten => self.on_off(self.config.spectrum_flatten),
+            SettingField::SpectrumGradient => self.on_off(self.config.spectrum_gradient),
+            SettingField::SpectrumBars => {
+                i18n::t_spectrum_bars(self.config.spectrum_bars).to_owned()
+            }
+            SettingField::SpectrumSensitivity => {
+                i18n::t_spectrum_sensitivity(self.config.spectrum_sensitivity).to_owned()
+            }
+            SettingField::SpectrumStereo => self.on_off(self.config.spectrum_stereo),
             SettingField::UpdateCheck => self.on_off(self.config.update_check),
             SettingField::QueueBehavior => if self.config.enter_replaces_queue {
                 i18n::t(Key::SettingQueueList)

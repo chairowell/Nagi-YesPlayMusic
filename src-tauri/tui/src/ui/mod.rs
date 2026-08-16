@@ -188,7 +188,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, hits: &mut Hits) {
         } else {
             // Browsing views keep the playing track in reach at the bottom.
             let player_bar_height = if state.now.is_some() && state.view != View::NowPlaying {
-                now_playing::PLAYER_BAR_HEIGHT
+                now_playing::player_bar_height(area.height)
             } else {
                 0
             };

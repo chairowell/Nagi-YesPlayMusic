@@ -609,6 +609,14 @@ impl AppState {
                             self.selected_cover.pixel_key = Some(pixel_key);
                         }
                     }
+                    CoverSurface::Bar => apply_pixel_cover(
+                        &mut self.bar_cover,
+                        self.generation,
+                        crate::ui::now_playing::PLAYER_BAR_COVER_CELLS,
+                        self.style_revision,
+                        request,
+                        cover,
+                    ),
                 }
             }
             Action::CoverDecoded {
@@ -723,6 +731,7 @@ impl AppState {
                 let current = self.cover.as_ref().map(|cover| (cover.width, cover.height));
                 if current != Some(desired) {
                     self.cover = None;
+                    self.bar_cover = None;
                     if let Some(row) = self.active_row.clone() {
                         self.load_playing_cover(fx, &row);
                     }

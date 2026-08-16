@@ -28,6 +28,49 @@ pub enum IconStyle {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
+pub enum SpectrumBars {
+    Slim,
+    #[default]
+    Duo,
+    Wide,
+}
+
+impl SpectrumBars {
+    pub const ALL: [Self; 3] = [Self::Slim, Self::Duo, Self::Wide];
+
+    pub fn cells(self) -> (u16, u16) {
+        match self {
+            Self::Slim => (1, 0),
+            Self::Duo => (2, 1),
+            Self::Wide => (3, 1),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpectrumSensitivity {
+    Soft,
+    #[default]
+    Normal,
+    Sharp,
+}
+
+impl SpectrumSensitivity {
+    pub const ALL: [Self; 3] = [Self::Soft, Self::Normal, Self::Sharp];
+
+    /// (attack, decay) smoothing coefficients per 50ms frame.
+    pub fn coefficients(self) -> (f32, f32) {
+        match self {
+            Self::Soft => (0.25, 0.06),
+            Self::Normal => (0.4, 0.09),
+            Self::Sharp => (0.65, 0.16),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
     /// Follow the terminal background detected over OSC 11; unknown = dark.
     #[default]
@@ -88,6 +131,14 @@ pub struct Config {
     pub spectrum_glow: bool,
     /// +4 dB/octave tilt so highs read as lively as bass (cava-style).
     pub spectrum_flatten: bool,
+    /// Height gradient bar coloring; off = flat accent color.
+    pub spectrum_gradient: bool,
+    /// Bar footprint: slim 1+0, duo 2+1 (default), wide 3+1 cells.
+    pub spectrum_bars: SpectrumBars,
+    /// Attack/decay response preset.
+    pub spectrum_sensitivity: SpectrumSensitivity,
+    /// Split the spectrum into left/right channels meeting at the center.
+    pub spectrum_stereo: bool,
     /// Silent GitHub release check on startup; hints only, never self-updates.
     pub update_check: bool,
 }
@@ -134,6 +185,10 @@ impl Default for Config {
             spectrum_style: SpectrumKind::Blocks,
             spectrum_glow: false,
             spectrum_flatten: true,
+            spectrum_gradient: true,
+            spectrum_bars: SpectrumBars::default(),
+            spectrum_sensitivity: SpectrumSensitivity::default(),
+            spectrum_stereo: false,
             update_check: true,
         }
     }
@@ -243,6 +298,10 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 # spectrum_style = "blocks"   # blocks | mirror | led | braille | shade | scope | fire | waterfall | vu | reflect
 # spectrum_glow = false        # 荧光余辉残影
 # spectrum_flatten = true      # 高频补偿（+4dB/倍频程），关掉显示真实能量比例
+# spectrum_gradient = true     # 柱体高度渐变色；false 为纯主题色
+# spectrum_bars = "duo"        # slim（1格）| duo（2格+隙）| wide（3格+隙）
+# spectrum_sensitivity = "normal" # soft | normal | sharp 跳动灵敏度
+# spectrum_stereo = false      # 左右声道分离显示（中间低频、两侧高频）
 # update_check = true          # 启动时静默检查新版本
 "#;
 
@@ -364,6 +423,8 @@ mod tests {
         assert_eq!(config.spectrum_style, SpectrumKind::Blocks);
         assert!(!config.spectrum_glow);
         assert!(config.spectrum_flatten);
+        assert!(config.spectrum_gradient);
+        assert!(!config.spectrum_stereo);
 
         let parsed: Config = toml::from_str("quality = \"lossless\"").unwrap();
         assert_eq!(parsed.quality, AudioQuality::Lossless);
@@ -547,6 +608,10 @@ idle_art = "~/art.png"
                 spectrum_style: SpectrumKind::Fire,
                 spectrum_glow: true,
                 spectrum_flatten: false,
+                spectrum_gradient: false,
+                spectrum_bars: SpectrumBars::Wide,
+                spectrum_sensitivity: SpectrumSensitivity::Sharp,
+                spectrum_stereo: true,
                 update_check: false,
             };
 

@@ -434,6 +434,7 @@ pub struct AppState {
     pub search: SearchState,
     pub now: Option<NowPlaying>,
     pub cover: Option<PixelCover>,
+    pub bar_cover: Option<PixelCover>,
     pub layout: PlayLayout,
     pub thick_progress: bool,
     pixel_detail_scale: f32,
@@ -537,6 +538,7 @@ impl AppState {
             search: SearchState::new(),
             now: None,
             cover: None,
+            bar_cover: None,
             layout: PlayLayout::from_config(&config.layout),
             thick_progress: config.progress_style == "bar",
             pixel_detail_scale: config.pixel_scale.clamp(0.5, 4.0),
@@ -862,6 +864,15 @@ impl AppState {
         }
     }
 
+    pub(crate) fn spectrum_render_options(&self) -> crate::spectrum::RenderOptions {
+        let (bar_width, bar_gap) = self.config.spectrum_bars.cells();
+        crate::spectrum::RenderOptions {
+            gradient: self.config.spectrum_gradient,
+            bar_width,
+            bar_gap,
+        }
+    }
+
     #[cfg(unix)]
     fn remote_snapshot(&self) -> remote::Snapshot {
         remote::Snapshot {
@@ -959,6 +970,7 @@ impl AppState {
 
     fn clear_cover(&mut self) {
         self.cover = None;
+        self.bar_cover = None;
         if let Some(original) = &mut self.original_cover {
             original.clear();
         }
@@ -1050,6 +1062,7 @@ impl AppState {
         match surface {
             CoverSurface::Playing => self.original_cover.is_some(),
             CoverSurface::Selection => self.selected_original_cover.is_some(),
+            CoverSurface::Bar => false,
         }
     }
 
@@ -1136,6 +1149,23 @@ impl AppState {
             CoverStyle {
                 pixel: self.pixel_style(),
                 original: self.uses_original_cover(CoverSurface::Playing),
+            },
+        );
+        // The browsing-view player bar shows the same artwork in miniature.
+        let bar_request = self.cover_request(
+            CoverSurface::Bar,
+            self.generation,
+            row.id,
+            pic_url,
+            crate::ui::now_playing::PLAYER_BAR_COVER_CELLS,
+        );
+        spawn_cover_load(
+            fx,
+            bar_request,
+            pic_url.to_owned(),
+            CoverStyle {
+                pixel: self.pixel_style(),
+                original: false,
             },
         );
     }
@@ -2331,11 +2361,14 @@ async fn event_loop(
                 state.update(Action::UiTick, &fx);
             }
             _ = spectrum_ticks.tick(), if state.config.spectrum_enabled || state.view == View::Settings => {
+                let (attack, decay) = state.config.spectrum_sensitivity.coefficients();
+                state.spectrum.set_sensitivity(attack, decay);
                 state.spectrum.tick(
                     fx.player.samples(),
                     state.now.is_some() && !state.paused,
                     state.view == View::Settings,
                     state.config.spectrum_flatten,
+                    state.config.spectrum_stereo,
                 );
             }
         }

@@ -11,6 +11,8 @@ use crate::player::PlayerEvent;
 pub enum CoverSurface {
     Playing,
     Selection,
+    /// Mini pixel cover for the bottom player bar on browsing views.
+    Bar,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

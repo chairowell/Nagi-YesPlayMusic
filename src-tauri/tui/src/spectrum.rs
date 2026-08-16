@@ -22,15 +22,22 @@ const SILENCE_THRESHOLD: f32 = 0.01;
 /// Single-producer sample ring. The audio thread only performs atomic stores.
 pub struct SampleBuffer {
     slots: Box<[AtomicU32]>,
+    left: Box<[AtomicU32]>,
+    right: Box<[AtomicU32]>,
     sequence: AtomicU64,
 }
 
 impl Default for SampleBuffer {
     fn default() -> Self {
-        Self {
-            slots: (0..CAPTURE_SAMPLES)
+        let ring = || {
+            (0..CAPTURE_SAMPLES)
                 .map(|_| AtomicU32::new(0.0_f32.to_bits()))
-                .collect(),
+                .collect()
+        };
+        Self {
+            slots: ring(),
+            left: ring(),
+            right: ring(),
             sequence: AtomicU64::new(0),
         }
     }
@@ -41,34 +48,51 @@ impl SampleBuffer {
         Arc::new(Self::default())
     }
 
-    fn push(&self, sample: f32) {
+    fn push(&self, sample: f32, left: f32, right: f32) {
         let sequence = self.sequence.load(Ordering::Relaxed);
         let index = sequence as usize % self.slots.len();
         self.slots[index].store(sample.to_bits(), Ordering::Relaxed);
+        self.left[index].store(left.to_bits(), Ordering::Relaxed);
+        self.right[index].store(right.to_bits(), Ordering::Relaxed);
         self.sequence
             .store(sequence.wrapping_add(1), Ordering::Release);
     }
 
     pub fn clear(&self) {
-        for slot in &self.slots {
-            slot.store(0.0_f32.to_bits(), Ordering::Relaxed);
+        for ring in [&self.slots, &self.left, &self.right] {
+            for slot in ring.iter() {
+                slot.store(0.0_f32.to_bits(), Ordering::Relaxed);
+            }
         }
         self.sequence.store(0, Ordering::Release);
     }
 
     pub fn latest(&self, wanted: usize) -> Vec<f32> {
+        self.latest_from(&self.slots, wanted)
+    }
+
+    /// Latest complete frames of the first two channels; mono input
+    /// duplicates into both sides.
+    pub fn latest_stereo(&self, wanted: usize) -> (Vec<f32>, Vec<f32>) {
+        (
+            self.latest_from(&self.left, wanted),
+            self.latest_from(&self.right, wanted),
+        )
+    }
+
+    fn latest_from(&self, ring: &[AtomicU32], wanted: usize) -> Vec<f32> {
         for _ in 0..3 {
             let end = self.sequence.load(Ordering::Acquire);
-            let count = wanted.min(end as usize).min(self.slots.len());
+            let count = wanted.min(end as usize).min(ring.len());
             let start = end.saturating_sub(count as u64);
             let samples = (start..end)
                 .map(|sequence| {
-                    let index = sequence as usize % self.slots.len();
-                    f32::from_bits(self.slots[index].load(Ordering::Relaxed))
+                    let index = sequence as usize % ring.len();
+                    f32::from_bits(ring[index].load(Ordering::Relaxed))
                 })
                 .collect::<Vec<_>>();
             let after = self.sequence.load(Ordering::Acquire);
-            if after.wrapping_sub(end) <= (self.slots.len() - count) as u64 {
+            if after.wrapping_sub(end) <= (ring.len() - count) as u64 {
                 return samples;
             }
         }
@@ -82,6 +106,8 @@ pub struct SampleTap<S> {
     capture: Arc<SampleBuffer>,
     channel_cursor: u16,
     frame_sum: f32,
+    frame_left: f32,
+    frame_right: f32,
 }
 
 impl<S: Source> SampleTap<S> {
@@ -91,6 +117,8 @@ impl<S: Source> SampleTap<S> {
             capture,
             channel_cursor: 0,
             frame_sum: 0.0,
+            frame_left: 0.0,
+            frame_right: 0.0,
         }
     }
 }
@@ -101,10 +129,21 @@ impl<S: Source> Iterator for SampleTap<S> {
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.source.next()?;
         let channels = self.source.channels().get();
+        if self.channel_cursor == 0 {
+            self.frame_left = sample;
+            // Mono sources feed both sides until a second channel overwrites.
+            self.frame_right = sample;
+        } else if self.channel_cursor == 1 {
+            self.frame_right = sample;
+        }
         self.frame_sum += sample;
         self.channel_cursor += 1;
         if self.channel_cursor >= channels {
-            self.capture.push(self.frame_sum / f32::from(channels));
+            self.capture.push(
+                self.frame_sum / f32::from(channels),
+                self.frame_left,
+                self.frame_right,
+            );
             self.channel_cursor = 0;
             self.frame_sum = 0.0;
         }
@@ -188,31 +227,29 @@ struct SpectrumAnalyzer {
     fft: Arc<dyn Fft<f32>>,
     work: Vec<Complex<f32>>,
     bins: [f32; SPECTRUM_BINS],
-    flatten_weights: [f32; SPECTRUM_BINS],
     ceiling: f32,
+    attack: f32,
+    decay: f32,
 }
 
 impl Default for SpectrumAnalyzer {
     fn default() -> Self {
         let mut planner = FftPlanner::new();
-        let octaves_total = ((FFT_SAMPLES / 2) as f32).log2();
-        let mut flatten_weights = [1.0_f32; SPECTRUM_BINS];
-        for (index, weight) in flatten_weights.iter_mut().enumerate() {
-            let octaves = (index as f32 + 0.5) / SPECTRUM_BINS as f32 * octaves_total;
-            *weight = 10.0_f32.powf(FLATTEN_DB_PER_OCTAVE * octaves / 20.0);
-        }
         Self {
             fft: planner.plan_fft_forward(FFT_SAMPLES),
             work: vec![Complex::default(); FFT_SAMPLES],
             bins: [0.0; SPECTRUM_BINS],
-            flatten_weights,
             ceiling: CEILING_FLOOR,
+            attack: 0.4,
+            decay: 0.09,
         }
     }
 }
 
 impl SpectrumAnalyzer {
-    fn process(&mut self, samples: &[f32], flatten: bool) -> &[f32; SPECTRUM_BINS] {
+    /// Window + FFT one channel, then fill `targets` with log-spaced,
+    /// optionally tilt-compensated magnitudes.
+    fn channel_targets(&mut self, samples: &[f32], targets: &mut [f32], flatten: bool) {
         let input_start = samples.len().saturating_sub(FFT_SAMPLES);
         let input = &samples[input_start..];
         let pad = FFT_SAMPLES - input.len();
@@ -228,14 +265,12 @@ impl SpectrumAnalyzer {
         self.fft.process(&mut self.work);
 
         let high = (FFT_SAMPLES / 2) as f32;
-        let mut targets = [0.0_f32; SPECTRUM_BINS];
+        let octaves_total = high.log2();
+        let count = targets.len();
         for (index, target) in targets.iter_mut().enumerate() {
-            let start = high
-                .powf(index as f32 / SPECTRUM_BINS as f32)
-                .floor()
-                .max(1.0) as usize;
+            let start = high.powf(index as f32 / count as f32).floor().max(1.0) as usize;
             let end = high
-                .powf((index + 1) as f32 / SPECTRUM_BINS as f32)
+                .powf((index + 1) as f32 / count as f32)
                 .ceil()
                 .max((start + 1) as f32) as usize;
             let mut magnitude = self.work[start..end.min(FFT_SAMPLES / 2)]
@@ -244,10 +279,40 @@ impl SpectrumAnalyzer {
                 .fold(0.0_f32, f32::max)
                 / FFT_SAMPLES as f32;
             if flatten {
-                magnitude *= self.flatten_weights[index];
+                let octaves = (index as f32 + 0.5) / count as f32 * octaves_total;
+                magnitude *= 10.0_f32.powf(FLATTEN_DB_PER_OCTAVE * octaves / 20.0);
             }
             *target = (magnitude * 40.0).ln_1p() / 41.0_f32.ln();
         }
+    }
+
+    fn process(&mut self, samples: &[f32], flatten: bool) -> &[f32; SPECTRUM_BINS] {
+        let mut targets = [0.0_f32; SPECTRUM_BINS];
+        self.channel_targets(samples, &mut targets, flatten);
+        self.finish(targets)
+    }
+
+    /// Left channel mirrored into the left half (lows meeting at the
+    /// center), right channel in the right half — the cava stereo layout.
+    fn process_stereo(
+        &mut self,
+        left_samples: &[f32],
+        right_samples: &[f32],
+        flatten: bool,
+    ) -> &[f32; SPECTRUM_BINS] {
+        const HALF: usize = SPECTRUM_BINS / 2;
+        let mut targets = [0.0_f32; SPECTRUM_BINS];
+        let mut side = [0.0_f32; HALF];
+        self.channel_targets(left_samples, &mut side, flatten);
+        for (index, value) in side.iter().enumerate() {
+            targets[HALF - 1 - index] = *value;
+        }
+        self.channel_targets(right_samples, &mut side, flatten);
+        targets[HALF..].copy_from_slice(&side);
+        self.finish(targets)
+    }
+
+    fn finish(&mut self, mut targets: [f32; SPECTRUM_BINS]) -> &[f32; SPECTRUM_BINS] {
         // Two sweeps propagate each peak to its neighbors with exponential
         // falloff — equivalent to the O(n²) Monstercat smear.
         for index in 1..SPECTRUM_BINS {
@@ -262,15 +327,54 @@ impl SpectrumAnalyzer {
             .max(CEILING_FLOOR);
         for (bin, target) in self.bins.iter_mut().zip(targets) {
             let normalized = (target / self.ceiling).clamp(0.0, 1.0);
-            let coefficient = if normalized > *bin { 0.4 } else { 0.09 };
+            let coefficient = if normalized > *bin {
+                self.attack
+            } else {
+                self.decay
+            };
             *bin += (normalized - *bin) * coefficient;
         }
         &self.bins
+    }
+
+    fn set_sensitivity(&mut self, attack: f32, decay: f32) {
+        self.attack = attack;
+        self.decay = decay;
+    }
+}
+
+/// Render-time knobs shared by the bar-family styles.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderOptions {
+    pub gradient: bool,
+    pub bar_width: u16,
+    pub bar_gap: u16,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            gradient: true,
+            bar_width: 2,
+            bar_gap: 1,
+        }
+    }
+}
+
+impl RenderOptions {
+    fn stride(&self) -> u16 {
+        (self.bar_width + self.bar_gap).max(1)
+    }
+
+    fn columns(&self, width: u16) -> usize {
+        usize::from((width + self.bar_gap) / self.stride()).max(1)
     }
 }
 
 pub trait SpectrumStyle {
     fn set_terminal_background(&mut self, _background: Option<Color>) {}
+
+    fn set_options(&mut self, _options: RenderOptions) {}
 
     fn render(
         &mut self,
@@ -313,17 +417,41 @@ impl SpectrumView {
         self.terminal_background = background;
     }
 
-    pub fn tick(&mut self, capture: &SampleBuffer, playing: bool, preview: bool, flatten: bool) {
+    pub fn set_sensitivity(&mut self, attack: f32, decay: f32) {
+        self.analyzer.set_sensitivity(attack, decay);
+    }
+
+    pub fn tick(
+        &mut self,
+        capture: &SampleBuffer,
+        playing: bool,
+        preview: bool,
+        flatten: bool,
+        stereo: bool,
+    ) {
         self.ticks = self.ticks.wrapping_add(1);
         let real = capture.latest(FFT_SAMPLES);
-        self.samples = if playing && !real.is_empty() {
+        let live = playing && !real.is_empty();
+        self.samples = if live {
             real
         } else if playing || preview {
             simulated_samples(self.ticks)
         } else {
             vec![0.0; FFT_SAMPLES]
         };
-        self.bins = *self.analyzer.process(&self.samples, flatten);
+        self.bins = if stereo {
+            if live {
+                let (left, right) = capture.latest_stereo(FFT_SAMPLES);
+                *self.analyzer.process_stereo(&left, &right, flatten)
+            } else {
+                // Simulated/silent input has no channel separation: mirror it.
+                *self
+                    .analyzer
+                    .process_stereo(&self.samples.clone(), &self.samples.clone(), flatten)
+            }
+        } else {
+            *self.analyzer.process(&self.samples, flatten)
+        };
         let settled =
             !playing && !preview && self.bins.iter().all(|value| *value < SILENCE_THRESHOLD);
         if settled && !self.settled {
@@ -337,6 +465,7 @@ impl SpectrumView {
         &mut self,
         kind: SpectrumKind,
         glow: bool,
+        options: RenderOptions,
         area: Rect,
         buf: &mut Buffer,
         theme: &Theme,
@@ -350,6 +479,7 @@ impl SpectrumView {
             self.glow.clear();
         }
         self.style.set_terminal_background(self.terminal_background);
+        self.style.set_options(options);
         clear_area(buf, area, theme.bg);
         if self.settled {
             self.glow.clear();
@@ -383,8 +513,8 @@ fn simulated_samples(tick: u64) -> Vec<f32> {
 
 fn style_for(kind: SpectrumKind) -> Box<dyn SpectrumStyle> {
     match kind {
-        SpectrumKind::Blocks => Box::new(Blocks),
-        SpectrumKind::Mirror => Box::new(Mirror),
+        SpectrumKind::Blocks => Box::new(Blocks::default()),
+        SpectrumKind::Mirror => Box::new(Mirror::default()),
         SpectrumKind::Led => Box::new(Led::default()),
         SpectrumKind::Braille => Box::new(Braille),
         SpectrumKind::Shade => Box::new(Shade),
@@ -572,6 +702,7 @@ fn draw_eighth_bar(
     value: f32,
     height: u16,
     theme: &Theme,
+    gradient: bool,
 ) {
     let ramp = Ramp::new(theme);
     let eighths = (value.clamp(0.0, 1.0) * f32::from(height) * 8.0).round() as u16;
@@ -581,7 +712,11 @@ fn draw_eighth_bar(
         if fill == 0 {
             continue;
         }
-        let color = ramp.at((f32::from(from_bottom) + f32::from(fill) / 8.0) / f32::from(height));
+        let color = if gradient {
+            ramp.at((f32::from(from_bottom) + f32::from(fill) / 8.0) / f32::from(height))
+        } else {
+            theme.accent
+        };
         for offset in 0..width {
             put(
                 buf,
@@ -596,9 +731,16 @@ fn draw_eighth_bar(
     }
 }
 
-struct Blocks;
+#[derive(Default)]
+struct Blocks {
+    options: RenderOptions,
+}
 
 impl SpectrumStyle for Blocks {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -607,24 +749,32 @@ impl SpectrumStyle for Blocks {
         buf: &mut Buffer,
         theme: &Theme,
     ) {
-        let count = usize::from((area.width + 1) / 3).max(1);
+        let count = self.options.columns(area.width);
         for index in 0..count {
             draw_eighth_bar(
                 buf,
                 area,
-                index as u16 * 3,
-                2,
+                index as u16 * self.options.stride(),
+                self.options.bar_width,
                 bin_value(bins, index, count),
                 area.height,
                 theme,
+                self.options.gradient,
             );
         }
     }
 }
 
-struct Mirror;
+#[derive(Default)]
+struct Mirror {
+    options: RenderOptions,
+}
 
 impl SpectrumStyle for Mirror {
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
+    }
+
     fn render(
         &mut self,
         bins: &[f32],
@@ -637,7 +787,7 @@ impl SpectrumStyle for Mirror {
         if half == 0 {
             return;
         }
-        let count = usize::from((area.width + 1) / 3).max(1);
+        let count = self.options.columns(area.width);
         let ramp = Ramp::new(theme);
         for index in 0..count {
             let level = (bin_value(bins, index, count) * f32::from(half) * 2.0).round() as u16;
@@ -648,9 +798,13 @@ impl SpectrumStyle for Mirror {
                 }
                 let top_symbol = if remaining == 1 { "▄" } else { "█" };
                 let bottom_symbol = if remaining == 1 { "▀" } else { "█" };
-                let color = ramp.at((f32::from(distance) + 1.0) / f32::from(half));
-                for offset in 0..2 {
-                    let x = index as u16 * 3 + offset;
+                let color = if self.options.gradient {
+                    ramp.at((f32::from(distance) + 1.0) / f32::from(half))
+                } else {
+                    theme.accent
+                };
+                for offset in 0..self.options.bar_width {
+                    let x = index as u16 * self.options.stride() + offset;
                     put(
                         buf,
                         area,
@@ -1338,6 +1492,22 @@ mod tests {
     }
 
     #[test]
+    fn stereo_split_puts_each_channel_on_its_own_side() {
+        let mut analyzer = SpectrumAnalyzer::default();
+        let tone = (0..FFT_SAMPLES)
+            .map(|index| (2.0 * PI * 16.0 * index as f32 / FFT_SAMPLES as f32).sin())
+            .collect::<Vec<_>>();
+        let silence = vec![0.0; FFT_SAMPLES];
+        let bins = *analyzer.process_stereo(&tone, &silence, false);
+        let half = SPECTRUM_BINS / 2;
+        let left: f32 = bins[..half].iter().sum();
+        let right: f32 = bins[half..].iter().sum();
+        // The tone fed only to the left channel must dominate the left half;
+        // only the smear's decayed spill crosses the center.
+        assert!(left > right * 2.0, "left={left} right={right}");
+    }
+
+    #[test]
     fn flatten_tilts_highs_and_smear_props_up_neighbors() {
         let mix = (0..FFT_SAMPLES)
             .map(|index| {
@@ -1374,29 +1544,54 @@ mod tests {
     fn paused_spectrum_decays_until_the_entire_area_is_empty() {
         let capture = SampleBuffer::default();
         for index in 0..FFT_SAMPLES {
-            capture.push((2.0 * PI * 16.0 * index as f32 / FFT_SAMPLES as f32).sin());
+            capture.push(
+                (2.0 * PI * 16.0 * index as f32 / FFT_SAMPLES as f32).sin(),
+                0.0,
+                0.0,
+            );
         }
         let theme = Theme::db16();
         let area = Rect::new(0, 0, 24, 8);
         let mut buffer = Buffer::empty(area);
         let mut view = SpectrumView::new(SpectrumKind::Mirror);
 
-        view.tick(&capture, true, false, true);
-        view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
+        view.tick(&capture, true, false, true, false);
+        view.render(
+            SpectrumKind::Mirror,
+            true,
+            RenderOptions::default(),
+            area,
+            &mut buffer,
+            &theme,
+        );
         assert!(buffer.content().iter().any(|cell| cell.symbol() != " "));
         let playing_peak = view.bins.iter().copied().fold(0.0_f32, f32::max);
 
         capture.clear();
-        view.tick(&capture, false, false, true);
+        view.tick(&capture, false, false, true, false);
         let fading_peak = view.bins.iter().copied().fold(0.0_f32, f32::max);
         assert!(fading_peak > 0.0 && fading_peak < playing_peak);
-        view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
+        view.render(
+            SpectrumKind::Mirror,
+            true,
+            RenderOptions::default(),
+            area,
+            &mut buffer,
+            &theme,
+        );
         assert!(buffer.content().iter().any(|cell| cell.symbol() != " "));
 
         for _ in 1..200 {
-            view.tick(&capture, false, false, true);
+            view.tick(&capture, false, false, true, false);
         }
-        view.render(SpectrumKind::Mirror, true, area, &mut buffer, &theme);
+        view.render(
+            SpectrumKind::Mirror,
+            true,
+            RenderOptions::default(),
+            area,
+            &mut buffer,
+            &theme,
+        );
         assert!(buffer.content().iter().all(|cell| cell.symbol() == " "));
     }
 

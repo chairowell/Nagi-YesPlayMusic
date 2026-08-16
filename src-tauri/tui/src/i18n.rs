@@ -56,6 +56,10 @@ pub enum Key {
     SettingSpectrumStyle,
     SettingSpectrumGlow,
     SettingSpectrumFlatten,
+    SettingSpectrumGradient,
+    SettingSpectrumBars,
+    SettingSpectrumSensitivity,
+    SettingSpectrumStereo,
     SettingQueueBehavior,
     SettingIcons,
     SettingQueueList,
@@ -222,6 +226,36 @@ pub fn t_playing(kind: &str) -> String {
         Lang::Zh => format!("播放中 · {kind}"),
         Lang::En => format!("Playing · {kind}"),
         Lang::Ja => format!("再生中 · {kind}"),
+    }
+}
+
+pub fn t_spectrum_bars(bars: crate::config::SpectrumBars) -> &'static str {
+    use crate::config::SpectrumBars;
+    match (language(), bars) {
+        (Lang::Zh, SpectrumBars::Slim) => "细",
+        (Lang::Zh, SpectrumBars::Duo) => "标准",
+        (Lang::Zh, SpectrumBars::Wide) => "粗",
+        (Lang::En, SpectrumBars::Slim) => "Slim",
+        (Lang::En, SpectrumBars::Duo) => "Standard",
+        (Lang::En, SpectrumBars::Wide) => "Wide",
+        (Lang::Ja, SpectrumBars::Slim) => "細",
+        (Lang::Ja, SpectrumBars::Duo) => "標準",
+        (Lang::Ja, SpectrumBars::Wide) => "太",
+    }
+}
+
+pub fn t_spectrum_sensitivity(level: crate::config::SpectrumSensitivity) -> &'static str {
+    use crate::config::SpectrumSensitivity;
+    match (language(), level) {
+        (Lang::Zh, SpectrumSensitivity::Soft) => "柔和",
+        (Lang::Zh, SpectrumSensitivity::Normal) => "标准",
+        (Lang::Zh, SpectrumSensitivity::Sharp) => "灵敏",
+        (Lang::En, SpectrumSensitivity::Soft) => "Soft",
+        (Lang::En, SpectrumSensitivity::Normal) => "Normal",
+        (Lang::En, SpectrumSensitivity::Sharp) => "Sharp",
+        (Lang::Ja, SpectrumSensitivity::Soft) => "ソフト",
+        (Lang::Ja, SpectrumSensitivity::Normal) => "標準",
+        (Lang::Ja, SpectrumSensitivity::Sharp) => "シャープ",
     }
 }
 
@@ -435,6 +469,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingSpectrumStyle => "频谱样式",
             Key::SettingSpectrumGlow => "荧光余辉",
             Key::SettingSpectrumFlatten => "频谱高频补偿",
+            Key::SettingSpectrumGradient => "频谱渐变色",
+            Key::SettingSpectrumBars => "频谱条宽",
+            Key::SettingSpectrumSensitivity => "频谱灵敏度",
+            Key::SettingSpectrumStereo => "频谱立体声分离",
             Key::SettingQueueBehavior => "Enter 行为",
             Key::SettingIcons => "图标",
             Key::SettingQueueList => "整列入队",
@@ -601,6 +639,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingSpectrumStyle => "Spectrum style",
             Key::SettingSpectrumGlow => "Phosphor glow",
             Key::SettingSpectrumFlatten => "Spectrum tilt",
+            Key::SettingSpectrumGradient => "Spectrum gradient",
+            Key::SettingSpectrumBars => "Spectrum bars",
+            Key::SettingSpectrumSensitivity => "Spectrum response",
+            Key::SettingSpectrumStereo => "Spectrum stereo",
             Key::SettingQueueBehavior => "Enter behavior",
             Key::SettingIcons => "Icons",
             Key::SettingQueueList => "Queue the list",
@@ -769,6 +811,10 @@ fn t_for(lang: Lang, key: Key) -> &'static str {
             Key::SettingSpectrumStyle => "スペクトラム表示",
             Key::SettingSpectrumGlow => "蛍光残像",
             Key::SettingSpectrumFlatten => "スペクトラム高域補正",
+            Key::SettingSpectrumGradient => "スペクトラムグラデーション",
+            Key::SettingSpectrumBars => "バー幅",
+            Key::SettingSpectrumSensitivity => "感度",
+            Key::SettingSpectrumStereo => "ステレオ分離",
             Key::SettingQueueBehavior => "Enter の動作",
             Key::SettingIcons => "アイコン",
             Key::SettingQueueList => "一覧をキューへ",
