@@ -1142,16 +1142,8 @@ impl AppState {
             pic_url,
             self.desired_cover_cells(),
         );
-        spawn_cover_load(
-            fx,
-            request,
-            pic_url.to_owned(),
-            CoverStyle {
-                pixel: self.pixel_style(),
-                original: self.uses_original_cover(CoverSurface::Playing),
-            },
-        );
-        // The browsing-view player bar shows the same artwork in miniature.
+        // The browsing-view player bar shows the same artwork in miniature;
+        // both sizes ride one shared download.
         let bar_request = self.cover_request(
             CoverSurface::Bar,
             self.generation,
@@ -1159,14 +1151,25 @@ impl AppState {
             pic_url,
             crate::ui::now_playing::PLAYER_BAR_COVER_CELLS,
         );
-        spawn_cover_load(
+        spawn_cover_loads(
             fx,
-            bar_request,
+            vec![
+                CoverLoad {
+                    request,
+                    style: CoverStyle {
+                        pixel: self.pixel_style(),
+                        original: self.uses_original_cover(CoverSurface::Playing),
+                    },
+                },
+                CoverLoad {
+                    request: bar_request,
+                    style: CoverStyle {
+                        pixel: self.pixel_style(),
+                        original: false,
+                    },
+                },
+            ],
             pic_url.to_owned(),
-            CoverStyle {
-                pixel: self.pixel_style(),
-                original: false,
-            },
         );
     }
 
@@ -1789,14 +1792,38 @@ struct PixelStyle {
 }
 
 fn spawn_cover_load(fx: &Effects, request: CoverRenderRequest, pic_url: String, style: CoverStyle) {
+    spawn_cover_loads(fx, vec![CoverLoad { request, style }], pic_url);
+}
+
+/// Several surfaces of the same artwork share one fetch: the URL downloads
+/// once and every pending size is derived from the same bytes, so they
+/// cannot double-download or fail independently.
+fn spawn_cover_loads(fx: &Effects, loads: Vec<CoverLoad>, pic_url: String) {
     let cache = fx.covers.clone();
     let actions = fx.actions.clone();
-    let load = CoverLoad { request, style };
     tokio::spawn(async move {
-        if send_cached_cover(cache.clone(), &actions, &load).await {
+        let mut pending = Vec::new();
+        for load in loads {
+            if !send_cached_cover(cache.clone(), &actions, &load).await {
+                pending.push(load);
+            }
+        }
+        if pending.is_empty() {
             return;
         }
-        download_and_send_cover(cache, &actions, load, pic_url).await;
+        let bytes = match api::fetch_cover(&pic_url, COVER_SOURCE_EDGE).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(%error, "cover fetch failed");
+                return;
+            }
+        };
+        for load in pending {
+            if let Some(processed) = process_cover(cache.clone(), &load, bytes.clone(), true).await
+            {
+                send_cover(&actions, &load.request, processed);
+            }
+        }
     });
 }
 

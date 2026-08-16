@@ -72,12 +72,29 @@ impl SampleBuffer {
     }
 
     /// Latest complete frames of the first two channels; mono input
-    /// duplicates into both sides.
+    /// duplicates into both sides. Both rings are read under one sequence
+    /// snapshot so the two channels always pair the same audio frames.
     pub fn latest_stereo(&self, wanted: usize) -> (Vec<f32>, Vec<f32>) {
-        (
-            self.latest_from(&self.left, wanted),
-            self.latest_from(&self.right, wanted),
-        )
+        for _ in 0..3 {
+            let end = self.sequence.load(Ordering::Acquire);
+            let count = wanted.min(end as usize).min(self.left.len());
+            let start = end.saturating_sub(count as u64);
+            let read = |ring: &[AtomicU32]| {
+                (start..end)
+                    .map(|sequence| {
+                        let index = sequence as usize % ring.len();
+                        f32::from_bits(ring[index].load(Ordering::Relaxed))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let left = read(&self.left);
+            let right = read(&self.right);
+            let after = self.sequence.load(Ordering::Acquire);
+            if after.wrapping_sub(end) <= (self.left.len() - count) as u64 {
+                return (left, right);
+            }
+        }
+        (Vec::new(), Vec::new())
     }
 
     fn latest_from(&self, ring: &[AtomicU32], wanted: usize) -> Vec<f32> {
@@ -367,7 +384,7 @@ impl RenderOptions {
     }
 
     fn columns(&self, width: u16) -> usize {
-        usize::from((width + self.bar_gap) / self.stride()).max(1)
+        usize::from(width.saturating_add(self.bar_gap) / self.stride()).max(1)
     }
 }
 
@@ -530,6 +547,16 @@ fn style_for(kind: SpectrumKind) -> Box<dyn SpectrumStyle> {
 struct Ramp([Color; 5]);
 
 impl Ramp {
+    /// Gradient off collapses every stop to the accent: call sites keep
+    /// their intensity math and the bars come out flat-colored.
+    fn for_options(theme: &Theme, gradient: bool) -> Self {
+        if gradient {
+            Self::new(theme)
+        } else {
+            Self([theme.accent; 5])
+        }
+    }
+
     fn new(theme: &Theme) -> Self {
         Self([
             theme.faint,
@@ -665,9 +692,9 @@ fn draw_brick_bar(
     value: f32,
     height: u16,
     theme: &Theme,
+    ramp: Ramp,
 ) -> u16 {
     let filled = (value.clamp(0.0, 1.0) * f32::from(height)).ceil() as u16;
-    let ramp = Ramp::new(theme);
     for from_bottom in 0..filled.min(height) {
         draw_brick(
             buf,
@@ -704,7 +731,7 @@ fn draw_eighth_bar(
     theme: &Theme,
     gradient: bool,
 ) {
-    let ramp = Ramp::new(theme);
+    let ramp = Ramp::for_options(theme, gradient);
     let eighths = (value.clamp(0.0, 1.0) * f32::from(height) * 8.0).round() as u16;
     for row in 0..height {
         let from_bottom = height - 1 - row;
@@ -712,11 +739,7 @@ fn draw_eighth_bar(
         if fill == 0 {
             continue;
         }
-        let color = if gradient {
-            ramp.at((f32::from(from_bottom) + f32::from(fill) / 8.0) / f32::from(height))
-        } else {
-            theme.accent
-        };
+        let color = ramp.at((f32::from(from_bottom) + f32::from(fill) / 8.0) / f32::from(height));
         for offset in 0..width {
             put(
                 buf,
@@ -834,11 +857,16 @@ struct Led {
     peaks: Vec<f32>,
     holds: Vec<u8>,
     terminal_background: Option<Color>,
+    options: RenderOptions,
 }
 
 impl SpectrumStyle for Led {
     fn set_terminal_background(&mut self, background: Option<Color>) {
         self.terminal_background = background;
+    }
+
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
     }
 
     fn render(
@@ -852,7 +880,7 @@ impl SpectrumStyle for Led {
         let count = brick_count(area.width);
         self.peaks.resize(count, 0.0);
         self.holds.resize(count, 0);
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         let afterglow = mix_with_background(ramp.at(0.25), theme, self.terminal_background, 0.68);
         for index in 0..count {
             let value = bin_value(bins, index, count);
@@ -1217,11 +1245,16 @@ impl Vu {
 #[derive(Default)]
 struct Reflect {
     terminal_background: Option<Color>,
+    options: RenderOptions,
 }
 
 impl SpectrumStyle for Reflect {
     fn set_terminal_background(&mut self, background: Option<Color>) {
         self.terminal_background = background;
+    }
+
+    fn set_options(&mut self, options: RenderOptions) {
+        self.options = options;
     }
 
     fn render(
@@ -1235,7 +1268,7 @@ impl SpectrumStyle for Reflect {
         // Bars get two thirds of the area, the reflection one third, so
         // the band reads as anchored to its bottom edge (the cover's).
         let line = area.height.saturating_mul(2) / 3;
-        let ramp = Ramp::new(theme);
+        let ramp = Ramp::for_options(theme, self.options.gradient);
         for x in 0..area.width {
             put(buf, area, x, line, "─", theme.faint, theme.bg);
         }
@@ -1245,8 +1278,15 @@ impl SpectrumStyle for Reflect {
         let count = brick_count(area.width);
         for index in 0..count {
             let value = bin_value(bins, index, count);
-            let main_height =
-                draw_brick_bar(buf, area, index as u16 * BRICK_STRIDE, value, line, theme);
+            let main_height = draw_brick_bar(
+                buf,
+                area,
+                index as u16 * BRICK_STRIDE,
+                value,
+                line,
+                theme,
+                ramp,
+            );
             let reflected = main_height
                 .div_ceil(2)
                 .min(area.height.saturating_sub(line + 1));

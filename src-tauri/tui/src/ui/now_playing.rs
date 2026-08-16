@@ -550,17 +550,21 @@ pub(super) fn draw_player_bar(
         height: area.height - 1,
         ..area
     };
-    let (cover_area, right) = if expanded {
-        let cover_width = (PLAYER_BAR_COVER_CELLS.0 + 2).min(content.width / 3);
+    // The cover renders at its fixed cell size, so it only appears when the
+    // row also leaves the text column usable width; otherwise it would
+    // overlap the title and controls.
+    const COVER_SLOT: u16 = PLAYER_BAR_COVER_CELLS.0 + 2;
+    const MIN_TEXT_COLUMN: u16 = 24;
+    let (cover_area, right) = if expanded && content.width >= COVER_SLOT + MIN_TEXT_COLUMN {
         (
             Some(Rect {
-                width: PLAYER_BAR_COVER_CELLS.0.min(content.width),
+                width: PLAYER_BAR_COVER_CELLS.0,
                 height: PLAYER_BAR_COVER_CELLS.1.min(content.height),
                 ..content
             }),
             Rect {
-                x: content.x + cover_width,
-                width: content.width.saturating_sub(cover_width),
+                x: content.x + COVER_SLOT,
+                width: content.width - COVER_SLOT,
                 ..content
             },
         )
@@ -647,6 +651,16 @@ pub(super) fn draw_player_bar(
     draw_progress(frame, state, progress, hits);
 }
 
+/// Register a mouse target only where it was actually drawn: on narrow
+/// bars the span math can spill past the row, and an unclipped rect would
+/// catch clicks outside the player area.
+fn push_clipped(targets: &mut Vec<(Rect, ())>, area: Rect, rect: Rect) {
+    let clipped = rect.intersection(area);
+    if !clipped.is_empty() {
+        targets.push((clipped, ()));
+    }
+}
+
 fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) {
     let theme = &state.theme;
     let icons = crate::icons::for_style(state.config.icons);
@@ -721,15 +735,16 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
             ),
         ]
     };
-    hits.play.push((
+    push_clipped(
+        &mut hits.play,
+        area,
         Rect {
             x: area.x + 1,
             y: area.y,
             width: display_width(play_icon) as u16,
             height: 1,
         },
-        (),
-    ));
+    );
     let mut spans = vec![
         Span::raw(" "),
         Span::styled(play_icon, Style::new().fg(theme.fg)),
@@ -742,15 +757,16 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
             .iter()
             .map(|span| display_width(&span.content) as u16)
             .sum::<u16>();
-    hits.progress.push((
+    push_clipped(
+        &mut hits.progress,
+        area,
         Rect {
             x: bar_x,
             y: area.y,
             width: bar_width as u16,
             height: 1,
         },
-        (),
-    ));
+    );
     spans.extend(bar_spans);
     spans.push(Span::raw(" "));
     spans.push(Span::styled(total, Style::new().fg(theme.faint)));
@@ -761,15 +777,16 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         .sum::<u16>()
         + area.x
         + 2;
-    hits.heart.push((
+    push_clipped(
+        &mut hits.heart,
+        area,
         Rect {
             x: heart_x,
             y: area.y,
             width: display_width(icons.heart) as u16,
             height: 1,
         },
-        (),
-    ));
+    );
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
         icons.heart,
@@ -781,15 +798,16 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
             .iter()
             .map(|span| display_width(&span.content) as u16)
             .sum::<u16>();
-    hits.playback_mode.push((
+    push_clipped(
+        &mut hits.playback_mode,
+        area,
         Rect {
             x: mode_x,
             y: area.y,
             width: display_width(mode_icon) as u16,
             height: 1,
         },
-        (),
-    ));
+    );
     spans.push(Span::styled(
         mode_icon,
         Style::new().fg(if mode == crate::app::PlaybackModeSlot::Sequential {
@@ -811,15 +829,16 @@ fn draw_progress(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hit
         .map(|span| display_width(&span.content) as u16)
         .sum::<u16>()
         + area.x;
-    hits.volume.push((
+    push_clipped(
+        &mut hits.volume,
+        area,
         Rect {
             x: volume_x,
             y: area.y,
             width: VOLUME_CELLS as u16,
             height: 1,
         },
-        (),
-    ));
+    );
     spans.push(Span::styled(
         icons.volume_full.repeat(filled),
         Style::new().fg(theme.dim),
