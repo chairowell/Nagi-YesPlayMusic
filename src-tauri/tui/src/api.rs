@@ -266,6 +266,18 @@ fn classify_account_error(error: NcmError) -> AccountError {
     }
 }
 
+/// NCM's logged-out answer is a well-formed code-200 body with no account.
+/// Anything else missing the account — captive-portal HTML passed through as
+/// a string body, an EAPI decrypt that fell back to null — never proves the
+/// session dead.
+fn account_from_body(body: &Value) -> std::result::Result<(i64, String), AccountError> {
+    match parse_account(body) {
+        Ok(account) => Ok(account),
+        Err(error) if body["code"].as_i64() == Some(200) => Err(AccountError::Expired(error)),
+        Err(error) => Err(AccountError::Unreachable(error)),
+    }
+}
+
 pub struct Ncm {
     client: ApiClient,
     store: SessionStore,
@@ -381,7 +393,7 @@ impl Ncm {
             .user_account(&Self::query_with_session(session))
             .await
             .map_err(classify_account_error)?;
-        parse_account(&response.body).map_err(AccountError::Expired)
+        account_from_body(&response.body)
     }
 
     /// The user's "我喜欢的音乐" — by NCM convention the first playlist.
@@ -1289,6 +1301,30 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    #[test]
+    fn a_captive_portal_body_does_not_expire_the_session() {
+        // Real logged-out answer: code-200 JSON without an account.
+        assert!(matches!(
+            account_from_body(&serde_json::json!({ "code": 200, "account": null })),
+            Err(AccountError::Expired(_))
+        ));
+        // Portal HTML arrives as a string body; decrypt failures as null.
+        for garbage in [
+            Value::String("<html>login to hotel wifi</html>".into()),
+            Value::Null,
+        ] {
+            assert!(matches!(
+                account_from_body(&garbage),
+                Err(AccountError::Unreachable(_))
+            ));
+        }
+        let account = account_from_body(
+            &serde_json::json!({ "code": 200, "account": { "id": 7 }, "profile": { "nickname": "n" } }),
+        )
+        .unwrap();
+        assert_eq!(account, (7, "n".to_owned()));
+    }
 
     #[test]
     fn only_an_auth_rejection_counts_as_an_expired_session() {

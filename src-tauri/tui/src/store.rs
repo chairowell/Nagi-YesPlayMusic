@@ -149,9 +149,41 @@ impl LibraryStore {
     }
 
     pub fn load_profile(&self) -> Option<StoredProfile> {
-        let bytes = fs::read(self.root.join("profile.json")).ok()?;
-        let snapshot: ProfileSnapshot = serde_json::from_slice(&bytes).ok()?;
-        (snapshot.version == SNAPSHOT_VERSION).then_some(snapshot.profile)
+        let stored = fs::read(self.root.join("profile.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<ProfileSnapshot>(&bytes).ok())
+            .filter(|snapshot| snapshot.version == SNAPSHOT_VERSION)
+            .map(|snapshot| snapshot.profile);
+        stored.or_else(|| self.profile_from_snapshots())
+    }
+
+    /// Pre-profile installs already have per-uid library snapshots. Adopt the
+    /// most recently synced uid so the first offline start after an upgrade
+    /// still reaches the local library.
+    fn profile_from_snapshots(&self) -> Option<StoredProfile> {
+        let entries = fs::read_dir(&self.root).ok()?;
+        let mut best: Option<(SystemTime, i64)> = None;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(uid) = name
+                .to_str()
+                .and_then(|name| name.strip_suffix("-liked.json"))
+                .and_then(|uid| uid.parse::<i64>().ok())
+            else {
+                continue;
+            };
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(UNIX_EPOCH);
+            if best.is_none_or(|(freshest, _)| modified > freshest) {
+                best = Some((modified, uid));
+            }
+        }
+        best.map(|(_, uid)| StoredProfile {
+            uid,
+            nickname: String::new(),
+        })
     }
 
     pub fn save_profile(&self, profile: &StoredProfile) -> io::Result<()> {
@@ -370,6 +402,37 @@ mod tests {
         store.save_profile(&second).unwrap();
 
         assert_eq!(store.load_profile(), Some(second));
+    }
+
+    #[test]
+    fn missing_profile_falls_back_to_the_library_snapshot_uid() {
+        let directory = tempdir().unwrap();
+        let store = LibraryStore::new(directory.path().join("library"));
+        store.save(21, "liked", &[song(1)]).unwrap();
+        store.save(33, "daily", &[song(2)]).unwrap();
+
+        assert_eq!(
+            store.load_profile(),
+            Some(StoredProfile {
+                uid: 21,
+                nickname: String::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn saved_profile_outranks_the_snapshot_scan() {
+        let directory = tempdir().unwrap();
+        let store = LibraryStore::new(directory.path().join("library"));
+        store.save(21, "liked", &[]).unwrap();
+        store
+            .save_profile(&StoredProfile {
+                uid: 9,
+                nickname: "Nagi".into(),
+            })
+            .unwrap();
+
+        assert_eq!(store.load_profile().map(|profile| profile.uid), Some(9));
     }
 
     #[test]

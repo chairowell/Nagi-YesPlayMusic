@@ -182,6 +182,9 @@ impl AppState {
                         return;
                     };
                     self.enter_library(fx, stamp);
+                    // Nothing is being fetched: without this the empty-library
+                    // hint would claim 「正在同步」 forever while offline.
+                    self.library_synced = true;
                     self.status = Some(i18n::t(Key::OfflineLibrary).into());
                 }
                 None => {
@@ -652,10 +655,23 @@ fn spawn_login(fx: &Effects, attempt: u64) {
                             uid,
                             nickname,
                         },
-                        Err(error) => Action::LoginFailed {
+                        Err(AccountError::Expired(error)) => Action::LoginFailed {
                             attempt,
                             message: error.to_string(),
                         },
+                        Err(AccountError::Unreachable(error)) => {
+                            // The QR grant is real even though the profile
+                            // read dropped: persist the cookie so the next
+                            // start restores instead of demanding a rescan.
+                            if let Err(commit_error) = ncm.commit_session(&session) {
+                                tracing::warn!(%commit_error, "session persist after QR failed");
+                            }
+                            tracing::warn!(%error, "account read after QR unreachable");
+                            Action::LoginFailed {
+                                attempt,
+                                message: i18n::t(Key::NetworkUnavailable).into(),
+                            }
+                        }
                     };
                     let _ = actions.send(action);
                     return;
