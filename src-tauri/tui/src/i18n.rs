@@ -387,11 +387,11 @@ pub fn t_candidates_unavailable(keywords: &str) -> String {
 pub fn t_update_available(version: &str, brew: bool) -> String {
     match (language(), brew) {
         (Lang::Zh, true) => format!("新版本 {version} 可用 · brew upgrade ypm"),
-        (Lang::Zh, false) => format!("新版本 {version} 可用 · GitHub Releases 下载"),
+        (Lang::Zh, false) => format!("新版本 {version} 可用 · 运行 ypm update 升级"),
         (Lang::En, true) => format!("Update {version} available · brew upgrade ypm"),
-        (Lang::En, false) => format!("Update {version} available · download from GitHub Releases"),
+        (Lang::En, false) => format!("Update {version} available · run ypm update"),
         (Lang::Ja, true) => format!("新バージョン {version} · brew upgrade ypm"),
-        (Lang::Ja, false) => format!("新バージョン {version} · GitHub Releases からダウンロード"),
+        (Lang::Ja, false) => format!("新バージョン {version} · ypm update で更新"),
     }
 }
 

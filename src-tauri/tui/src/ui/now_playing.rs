@@ -236,13 +236,16 @@ fn draw_dashboard(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hi
     let art_rect = centered(art_area, state.idle_art.width, art_height);
     frame.render_widget(&state.idle_art, art_rect);
 
-    if let Some(version) = &state.update_available {
-        let hint = i18n::t_update_available(version, state.brew_install);
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(hint, Style::new().fg(theme.dim)))).centered(),
-            hint_area,
-        );
-    }
+    // The reserved hint row carries the build's own version until an
+    // update exists, which is the more useful thing to show there.
+    let hint = match &state.update_available {
+        Some(version) => i18n::t_update_available(version, state.brew_install),
+        None => format!("ypm v{}", env!("CARGO_PKG_VERSION")),
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(hint, Style::new().fg(theme.dim)))).centered(),
+        hint_area,
+    );
 
     const MENU_WIDTH: u16 = 30;
     for (index, (label, key, entry)) in menu.iter().enumerate() {
@@ -929,6 +932,17 @@ mod tests {
             .collect()
     }
 
+    fn buffer_text(buffer: &Buffer) -> String {
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn click(rect: Rect) -> MouseEvent {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -936,6 +950,32 @@ mod tests {
             row: rect.y,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn the_idle_dashboard_shows_the_build_version_until_an_update_exists() {
+        let mut state = AppState::new(&Config::default());
+        let mut hits = Hits::default();
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
+
+        terminal
+            .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+        let idle = buffer_text(terminal.backend().buffer());
+        assert!(
+            idle.contains(&format!("ypm v{}", env!("CARGO_PKG_VERSION"))),
+            "idle dashboard shows its own version"
+        );
+
+        // An available update owns the row instead: it is the more useful
+        // thing to read there, and it names the newer version anyway.
+        state.update_available = Some("v9.9.9".into());
+        terminal
+            .draw(|frame| super::draw(frame, &mut state, frame.area(), &mut hits))
+            .unwrap();
+        let updating = buffer_text(terminal.backend().buffer());
+        assert!(updating.contains("9.9.9"));
+        assert!(!updating.contains(&format!("ypm v{}", env!("CARGO_PKG_VERSION"))));
     }
 
     #[test]
