@@ -29,7 +29,7 @@ use anyhow::Result;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "ypm", version, about = "YesPlayMusic 终端版")]
+#[command(name = "ypm", version, about = "YesPlayMusic TUI")]
 struct Args {
     /// Write a debug log to the state directory (never to the screen).
     #[arg(long)]

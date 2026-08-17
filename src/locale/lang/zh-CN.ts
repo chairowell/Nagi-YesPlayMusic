@@ -186,8 +186,8 @@ export default {
     cache: '缓存',
     automaticallyCacheSongs: '自动缓存歌曲',
     sharedCache: {
-      title: '与终端版共享歌曲缓存',
-      detected: '检测到终端版 ypm，可开启共享缓存',
+      title: '与 TUI 共享歌曲缓存',
+      detected: '检测到 ypm TUI，可开启共享缓存',
       migrating: '正在迁移现有歌曲缓存（{completed}/{total}）',
       migrated: '迁移完成：已导入 {imported}/{total} 首，旧缓存已保留',
       failed: '迁移中断（{completed}/{total}），旧缓存已保留',

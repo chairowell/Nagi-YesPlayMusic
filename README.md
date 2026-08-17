@@ -6,12 +6,12 @@
 
 <h2 align="center" style="font-weight: 600">YesPlayMusic</h2>
 
-<p align="center">高颜值的第三方网易云播放器 · 桌面版与终端版同一个仓库、共用一套 Rust 核心</p>
-<p align="center"><sub>Tauri 2 桌面应用 + <code>ypm</code> 终端版 · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
+<p align="center">高颜值的第三方网易云播放器 · 桌面版与 TUI 同一个仓库、共用一套 Rust 核心</p>
+<p align="center"><sub>Tauri 2 桌面应用 + <code>ypm</code> TUI · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
 
 <p align="center">
-  <img src="images/tui-now-playing.png" alt="ypm 终端版：正在播放" height="300">
-  <img src="images/tui-spectrum.png" alt="ypm 终端版：频谱与双语歌词" height="300">
+  <img src="images/tui-now-playing.png" alt="ypm TUI：正在播放" height="300">
+  <img src="images/tui-spectrum.png" alt="ypm TUI：频谱与双语歌词" height="300">
 </p>
 
 ---
@@ -49,9 +49,9 @@ Apple Silicon Mac 是正式支持平台，Windows x64 和 Ubuntu x64 由 CI 提�
 另外多了 Anon 和 Creeper（Minecraft 苦力怕）两种进度条皮肤（和彩虹猫三者互斥，设置里
 切换），并修掉了网络慢时快速切歌会把新歌歌词覆盖成上一首的老问题。
 
-## ypm 终端版
+## ypm TUI
 
-![ypm 终端版：曲库](images/tui-library.png)
+![ypm TUI：曲库](images/tui-library.png)
 
 封面直接画在终端里，歌词双语滚动，带频谱。8 套内置主题，支持 Nerd Font 图标和自定义配色。
 
@@ -139,7 +139,7 @@ mkdir -p ~/.agents/skills/ypm && curl -fsSL \
 
 ## 安装
 
-> **[尝鲜版（canary）](https://github.com/nagi-studio/YesPlayMusic/releases?q=prerelease%3Atrue&expanded=true)** 带上面那个终端版。
+> **[尝鲜版（canary）](https://github.com/nagi-studio/YesPlayMusic/releases?q=prerelease%3Atrue&expanded=true)** 带上面那个 TUI。
 > canary 走独立更新通道，和 stable 互不干扰。稳定版请用下面的 Releases 页面。
 
 到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 DMG，
@@ -177,7 +177,7 @@ stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 
 | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `v0.6.0`：桌面外壳          | Electron → Tauri 2；升级 Vue 3、Vite 7、TypeScript 6 和 Pinia 4，改用系统 WebView                               |
 | `v0.8.0`：后台服务          | Bun Sidecar → Rust Sidecar；页面托管、网易云 API、同源 `/api` 和 UNM 全部改写为 Rust，桌面包不再携带 Bun runtime |
-| `v0.9.0`：业务核心          | 网易云客户端逻辑下沉 `core::ncm`；桌面端与终端版共用同一份 Rust 实现，通用转发路由从 57 条减到 45 条              |
+| `v0.9.0`：业务核心          | 网易云客户端逻辑下沉 `core::ncm`；桌面端与 TUI 共用同一份 Rust 实现，通用转发路由从 57 条减到 45 条              |
 
 `.app` 从 82.6 MiB 降到 23.0 MiB，DMG 12.0 MiB，Sidecar 常驻内存约 9 MiB。
 详见[功能迁移表](docs/feature-migration.md)和[性能迁移基线](docs/performance-baseline.md)。
@@ -198,7 +198,7 @@ bun run package:tauri:dmg  # 生成 DMG、完整 Sidecar 源码包、下载指�
 `.env` 不进版本库。运行仓库里的 `npx` 辅助命令时另需 Node 20 以上。
 
 Tauri 产物在 `src-tauri/target/<target-triple>/release/bundle/`，macOS 的 DMG 和源码包在
-`dist_tauri/`。终端版单独构建：
+`dist_tauri/`。TUI 单独构建：
 
 ```bash
 cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui

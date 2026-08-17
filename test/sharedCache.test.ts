@@ -24,7 +24,7 @@ describe('GUI 共享歌曲缓存协议', () => {
     expect(normalizeSharedCacheQuality(123456)).toBe(320000);
   });
 
-  test('状态响应严格校验终端版检测标志', async () => {
+  test('状态响应严格校验 TUI 检测标志', async () => {
     const status = await getSharedCacheStatus(async () =>
       Response.json({ enabled: false, terminalCacheDetected: true })
     );
