@@ -2138,6 +2138,35 @@ async fn first_click_on_the_selected_library_row_only_moves_focus_from_the_sideb
 }
 
 #[tokio::test]
+async fn a_bare_pointer_move_leaves_the_help_overlay_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.show_help = true;
+    let hits = ui::Hits::default();
+
+    // Brushing the mouse used to close the key map mid-read.
+    for kind in [
+        MouseEventKind::Moved,
+        MouseEventKind::ScrollDown,
+        MouseEventKind::Drag(MouseButton::Left),
+    ] {
+        apply(
+            &mut state,
+            Action::Mouse(MouseEvent {
+                kind,
+                column: 5,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &fx,
+            &hits,
+        );
+        assert!(state.show_help, "{kind:?} keeps the overlay open");
+    }
+}
+
+#[tokio::test]
 async fn mouse_click_over_a_help_overlay_only_dismisses_the_overlay() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);

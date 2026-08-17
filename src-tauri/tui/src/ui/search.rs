@@ -137,10 +137,10 @@ fn draw_panel(frame: &mut Frame, state: &AppState, area: Rect, hits: &mut Hits) 
 fn draw_input(frame: &mut Frame, state: &AppState, area: Rect) {
     let theme = &state.theme;
     let icons = crate::icons::for_style(state.config.icons);
-    let cursor = if state.search.input { "▎" } else { "" };
     if state.search.input {
-        // Park the real terminal cursor on the caret so IME candidate
-        // windows anchor to the input point instead of drifting.
+        // The terminal's own cursor is the caret: drawing one here too
+        // painted two colours into the same cell. Parking the real cursor
+        // also keeps IME candidate windows anchored to the input point.
         let prefix = super::text::display_width(icons.search)
             + 1
             + super::text::display_width(&state.search.query);
@@ -155,7 +155,7 @@ fn draw_input(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(format!("{} ", icons.search), Style::new().fg(theme.faint)),
-            Span::styled(format!("{}{cursor}", state.search.query), query_style),
+            Span::styled(state.search.query.clone(), query_style),
             Span::styled(
                 if state.search.query.is_empty() && state.search.input {
                     format!("  {}", i18n::t(Key::TypeToSearch))

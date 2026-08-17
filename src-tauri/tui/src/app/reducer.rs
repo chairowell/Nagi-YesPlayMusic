@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 
 use crate::action::{Action, CoverSurface, View};
 use crate::api::Source;
@@ -88,10 +88,22 @@ impl AppState {
                 }
             }
         }
-        // The help overlay is modal: any key dismisses it.
-        if self.show_help && matches!(action, Action::RawKey(_) | Action::Mouse(_)) {
-            self.show_help = false;
-            return;
+        // The help overlay is modal: any key dismisses it, and so does a
+        // click — but never a bare pointer move, which would close the map
+        // the moment the hand brushes the mouse.
+        if self.show_help {
+            let dismissed = match &action {
+                Action::RawKey(_) => true,
+                Action::Mouse(mouse) => matches!(mouse.kind, MouseEventKind::Down(_)),
+                _ => false,
+            };
+            if dismissed {
+                self.show_help = false;
+                return;
+            }
+            if matches!(action, Action::Mouse(_)) {
+                return;
+            }
         }
         // Text-input mode: the search box owns the keyboard.
         if let Action::RawKey(key) = &action {
