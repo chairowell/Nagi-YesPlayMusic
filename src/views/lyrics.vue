@@ -568,7 +568,11 @@ export default defineComponent({
       return Math.min(100, (progress / duration) * 100);
     },
     miniProgressRiderStyle() {
-      return getMiniProgressRiderStyle(this.miniProgressPercent);
+      const base = getMiniProgressRiderStyle(this.miniProgressPercent);
+      if (this.settings.creeperStyle) {
+        return { ...base, transform: 'translateX(-50%)' };
+      }
+      return base;
     },
     currentTrack() {
       return this.player.currentTrack;
@@ -1330,7 +1334,9 @@ export default defineComponent({
 
       &.creeper {
         width: 48px;
+        height: 48px;
         background: url('/img/logos/creeper.gif') center / 48px 48px no-repeat;
+        margin: 0 0 -6px 0;
       }
     }
 
