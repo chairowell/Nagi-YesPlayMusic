@@ -29,6 +29,7 @@ export interface SettingsState {
   enableReversedMode: boolean;
   nyancatStyle: boolean;
   anonStyle: boolean;
+  creeperStyle: boolean;
   showLyricsTranslation: boolean;
   lyricsBackground: boolean | 'blur' | 'dynamic';
   showLyricsTime: boolean;

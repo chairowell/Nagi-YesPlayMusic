@@ -235,6 +235,7 @@ export function decodeSettingsState(
     ),
     nyancatStyle: booleanValue(stored['nyancatStyle'], defaults.nyancatStyle),
     anonStyle: booleanValue(stored['anonStyle'], defaults.anonStyle),
+    creeperStyle: booleanValue(stored['creeperStyle'], defaults.creeperStyle),
     showLyricsTranslation: booleanValue(
       stored['showLyricsTranslation'],
       defaults.showLyricsTranslation

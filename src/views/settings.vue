@@ -706,6 +706,23 @@
         </div>
       </div>
 
+      <div class="item">
+        <div class="left">
+          <div class="title">🟩 Creeper</div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="creeper-style"
+              v-model="creeperStyle"
+              type="checkbox"
+              name="creeper-style"
+            />
+            <label for="creeper-style"></label>
+          </div>
+        </div>
+      </div>
+
       <div v-if="isDesktop">
         <h3>{{ $t('settings.proxy.title') }}</h3>
         <div class="item">
@@ -1330,6 +1347,10 @@ export default defineComponent({
             key: 'anonStyle',
             value: false,
           });
+          this.updateSettings({
+            key: 'creeperStyle',
+            value: false,
+          });
         }
       },
     },
@@ -1343,6 +1364,29 @@ export default defineComponent({
         if (value) {
           this.updateSettings({
             key: 'nyancatStyle',
+            value: false,
+          });
+          this.updateSettings({
+            key: 'creeperStyle',
+            value: false,
+          });
+        }
+      },
+    },
+    creeperStyle: {
+      get() {
+        if (this.settings.creeperStyle === undefined) return false;
+        return this.settings.creeperStyle;
+      },
+      set(value: boolean) {
+        this.updateSettings({ key: 'creeperStyle', value });
+        if (value) {
+          this.updateSettings({
+            key: 'nyancatStyle',
+            value: false,
+          });
+          this.updateSettings({
+            key: 'anonStyle',
             value: false,
           });
         }

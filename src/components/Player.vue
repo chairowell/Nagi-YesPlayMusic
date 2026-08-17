@@ -6,6 +6,7 @@
         nyancat: settings.nyancatStyle,
         'nyancat-stop': settings.nyancatStyle && !player.playing,
         anon: settings.anonStyle,
+        creeper: settings.creeperStyle,
       }"
       @click.stop
     >

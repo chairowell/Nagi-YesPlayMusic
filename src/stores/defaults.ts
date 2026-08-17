@@ -23,6 +23,7 @@ const settings = {
   enableReversedMode: false,
   nyancatStyle: false,
   anonStyle: false,
+  creeperStyle: false,
   showLyricsTranslation: true,
   lyricsBackground: true,
   showLyricsTime: false,

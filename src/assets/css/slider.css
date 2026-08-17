@@ -136,6 +136,34 @@
   image-rendering: pixelated;
 }
 
+/* creeper */
+
+.creeper .vue-slider-rail {
+  background-color: rgba(128, 128, 128, 0.18);
+  padding: 2.5px 0px;
+  border-radius: 0;
+}
+
+.creeper .vue-slider-process {
+  padding: 0px 1px;
+  top: -2px;
+  border-radius: 0;
+  background: linear-gradient(90deg, #4a7c2a 0%, #6cb347 40%, #8dd968 100%);
+}
+
+.creeper .vue-slider-dot-handle {
+  background: url('/img/logos/creeper.gif');
+  background-size: 48px;
+  width: 48px;
+  height: 48px;
+  margin: -32px 0 0 -16px;
+  box-shadow: none;
+  border-radius: 0;
+  box-sizing: border-box;
+  visibility: visible;
+  image-rendering: pixelated;
+}
+
 /* lyrics */
 .lyrics-page .vue-slider-rail {
   background-color: rgba(128, 128, 128, 0.18);
