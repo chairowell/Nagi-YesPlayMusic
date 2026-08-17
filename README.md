@@ -121,10 +121,13 @@ agent（Claude Code、Cursor、Codex、dsh 等）通过 `ypm` CLI 控制播放�
 查在放的歌、暂停/继续、切歌。
 
 ```sh
-npx skills add nagi-studio/YesPlayMusic
+# 通用（装到 ~/.agents/skills，Claude Code / dsh 等都能读到）
+npx skills add nagi-studio/YesPlayMusic -g -a universal
 ```
 
-也可以把 `skills/ypm/` 目录手动拷进你的 agent 的 skills 目录。
+也可以手动把 `skills/ypm/` 拷进 agent 的 skills 目录：dsh 认
+`~/.dsh/skills/`、`~/.agents/skills/` 或项目内 `.dsh/skills/`；
+Claude Code 认 `.claude/skills/`。
 
 ## 安装
 
