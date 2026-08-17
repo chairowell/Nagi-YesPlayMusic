@@ -6,8 +6,8 @@
 
 <h2 align="center" style="font-weight: 600">YesPlayMusic</h2>
 
-<p align="center">高颜值的第三方网易云播放器</p>
-<p align="center"><sub>Tauri 2 重构版 · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
+<p align="center">高颜值的第三方网易云播放器 · 桌面版与终端版同一个仓库、共用一套 Rust 核心</p>
+<p align="center"><sub>Tauri 2 桌面应用 + <code>ypm</code> 终端版 · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
 
 <p align="center">
   <img src="images/tui-now-playing.png" alt="ypm 终端版：正在播放" height="300">
@@ -19,6 +19,10 @@
 这是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 分出来独立维护的
 macOS Tauri 重构版，不再跟随上游发版。界面和主要功能保留，桌面运行时、本地服务、缓存和
 窗口交互全部重新实现。想要原版跨平台安装包请去[上游仓库](https://github.com/qier222/YesPlayMusic)。
+
+仓库里是两个前端：Tauri 2 桌面应用，和终端里跑的 `ypm`。网易云的账号、搜索、
+歌单、播放源、歌词这些业务逻辑收在同一份 Rust 核心（`core::ncm`）里，两边共用，
+所以两个界面的行为一致，修一次两边都好。
 
 Apple Silicon Mac 是正式支持平台，Windows x64 和 Ubuntu x64 由 CI 提供实验构建。欢迎提 Issue 和 PR。
 
