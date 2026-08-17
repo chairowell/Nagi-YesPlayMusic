@@ -647,6 +647,9 @@ jobs:
           # linker GC; lld + ICF keeps the Linux binary near the other
           # platforms instead of ~60% larger.
           RUSTFLAGS: ${{ runner.os == 'Linux' && '-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--icf=all' || '' }}
+          # Embedded at compile time: `ypm update` verifies release
+          # signatures against it and refuses to update without one.
+          TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui --target ${{ matrix.target }}
 
       - name: Smoke ypm runtime
@@ -738,6 +741,18 @@ jobs:
           pattern: ypm-*
           path: release/ypm
           merge-multiple: true
+
+      - name: Sign ypm binaries for `ypm update`
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          for bin in release/ypm/ypm-macos-aarch64 release/ypm/ypm-linux-x64 release/ypm/ypm-windows-x64.exe; do
+            test -s "$bin" || { echo "Missing ypm binary: $bin" >&2; exit 1; }
+            bunx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$bin"
+            test -s "$bin.sig" || { echo "Signing produced no signature for $bin" >&2; exit 1; }
+          done
 
       - name: Install updater artifact inspection tools
         run: |
