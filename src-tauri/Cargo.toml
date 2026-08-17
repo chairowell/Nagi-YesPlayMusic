@@ -1,6 +1,6 @@
 [package]
 name = "yesplaymusic-tauri"
-version = "0.9.0-canary.6"
+version = "0.9.0-canary.7"
 description = "YesPlayMusic 的跨平台 Tauri 客户端"
 authors = ["YesPlayMusic contributors"]
 edition = "2021"
