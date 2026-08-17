@@ -50,11 +50,11 @@ pub(crate) const FOOTER_ITEM_GAP: u16 = 2;
 /// Reserve breathing room between contextual hints and right-aligned badges.
 pub(crate) const FOOTER_STATUS_GAP: u16 = 2;
 /// Help stays readable without stretching across a wide terminal.
-const HELP_MODAL_WIDTH: u16 = 72;
 /// Border rows plus the closing hint determine help-panel chrome height.
 const HELP_CHROME_HEIGHT: u16 = 3;
 /// Help keycaps share a stable column before their dim descriptions.
-const HELP_KEY_COLUMN_WIDTH: usize = 30;
+/// Borders plus the panel's own horizontal padding.
+const HELP_CHROME_WIDTH: usize = 2 + PANEL_PADDING_X as usize * 2;
 /// The quit question and its two compact actions fit this focused dialog width.
 const QUIT_MODAL_WIDTH: u16 = 34;
 /// Two borders, the question, breathing room, and actions form the quit dialog.
@@ -293,8 +293,27 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
         (",", Key::Settings),
         ("q", Key::Quit),
     ];
-    let height = (rows.len() as u16 + HELP_CHROME_HEIGHT).min(area.height);
-    let width = HELP_MODAL_WIDTH.min(area.width);
+    // Size the modal to its own content: a fixed key column silently
+    // truncated the longest labels once the terminal got narrower than the
+    // modal, and the widest keycap is shorter than the old fixed column.
+    let keycaps: Vec<String> = rows.iter().map(|(keys, _)| format!(" {keys} ")).collect();
+    let key_col = keycaps
+        .iter()
+        .map(|keycap| text::display_width(keycap))
+        .max()
+        .unwrap_or(0);
+    let label_col = rows
+        .iter()
+        .map(|(_, label)| text::display_width(i18n::t(*label)))
+        .max()
+        .unwrap_or(0);
+    let width = ((key_col + 1 + label_col + HELP_CHROME_WIDTH) as u16).min(area.width);
+    let label_space = usize::from(width).saturating_sub(key_col + 1 + HELP_CHROME_WIDTH);
+    let wrapped = rows
+        .iter()
+        .filter(|(_, label)| text::display_width(i18n::t(*label)) > label_space)
+        .count();
+    let height = ((rows.len() + wrapped) as u16 + HELP_CHROME_HEIGHT).min(area.height);
     let modal = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -309,14 +328,18 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(block, modal);
 
     let mut lines = Vec::new();
-    for (keys, label) in rows {
-        let keycap = format!(" {keys} ");
-        let gap = HELP_KEY_COLUMN_WIDTH.saturating_sub(text::display_width(&keycap));
-        lines.push(Line::from(vec![
-            Span::styled(keycap, Style::new().fg(theme.fg).bg(theme.faint)),
-            Span::raw(" ".repeat(gap)),
-            Span::styled(i18n::t(label), Style::new().fg(theme.dim)),
-        ]));
+    for (keycap, (_, label)) in keycaps.into_iter().zip(rows) {
+        let gap = key_col.saturating_sub(text::display_width(&keycap));
+        let cap = Span::styled(keycap, Style::new().fg(theme.fg).bg(theme.faint));
+        let text = Span::styled(i18n::t(label), Style::new().fg(theme.dim));
+        // A label too wide for the row moves under its keycap instead of
+        // being clipped: reading the whole binding beats keeping the grid.
+        if text::display_width(i18n::t(label)) > label_space {
+            lines.push(Line::from(cap));
+            lines.push(Line::from(vec![Span::raw("  ".to_owned()), text]));
+        } else {
+            lines.push(Line::from(vec![cap, Span::raw(" ".repeat(gap + 1)), text]));
+        }
     }
     lines.push(Line::from(Span::styled(
         format!("  {}", i18n::t(Key::HelpAnyKey)),
@@ -639,7 +662,7 @@ mod tests {
     use super::{
         centered_content, draw, draw_help, draw_hints, draw_quit_confirm, filter_title,
         footer_hint_spans, footer_hints, panel_block, text, Hits, FOOTER_HEIGHT, HEADER_HEIGHT,
-        HELP_MODAL_WIDTH, MAX_CONTENT_WIDTH, PANEL_GAP_Y, QUIT_MODAL_HEIGHT, QUIT_MODAL_WIDTH,
+        MAX_CONTENT_WIDTH, PANEL_GAP_Y, QUIT_MODAL_HEIGHT, QUIT_MODAL_WIDTH,
     };
     use crate::action::View;
     use crate::api::{ArtistHit, SearchChannel, SongRow};
@@ -1154,6 +1177,44 @@ mod tests {
     }
 
     #[test]
+    fn help_labels_survive_a_terminal_narrower_than_the_key_map() {
+        // A fixed 30-column key gutter used to eat the label space once the
+        // modal shrank with the terminal: "曲库焦点 / 搜索类型" rendered as
+        // "曲库焦点 / " with nothing marking the cut.
+        for width in [46_u16, 60, 100] {
+            let state = AppState::new(&Config::default());
+            let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
+            terminal
+                .draw(|frame| draw_help(frame, &state, frame.area()))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let screen = (0..buffer.area.height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            // Wide glyphs occupy two cells, so compare without the padding.
+            // The language is process-global in tests, so read the labels
+            // through i18n rather than pinning one locale's strings.
+            let squished: String = screen.chars().filter(|c| !c.is_whitespace()).collect();
+            let squish =
+                |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+            assert!(
+                squished.contains(&squish(i18n::t(Key::LibraryFocus))),
+                "longest label stays whole at width {width}:\n{screen}"
+            );
+            assert!(
+                squished.contains(&squish(i18n::t(Key::Quit))),
+                "the map still reaches its last row at width {width}"
+            );
+        }
+    }
+
+    #[test]
     fn help_overlay_renders_the_refactored_key_map() {
         let state = AppState::new(&Config::default());
         let backend = TestBackend::new(80, 24);
@@ -1182,9 +1243,16 @@ mod tests {
         ] {
             assert!(rendered.contains(keys), "{keys}");
         }
-        let modal_x = (80 - HELP_MODAL_WIDTH) / 2;
-        assert_eq!(buffer[(modal_x, 0)].symbol(), "╭");
-        assert_eq!(buffer[(modal_x + HELP_MODAL_WIDTH - 1, 0)].symbol(), "╮");
+        // The modal is sized to its content now, so derive its frame from
+        // the render and check it stays centred.
+        let modal_x = (0..80)
+            .find(|x| buffer[(*x, 0)].symbol() == "╭")
+            .expect("left border");
+        let modal_right = (0..80)
+            .rev()
+            .find(|x| buffer[(*x, 0)].symbol() == "╮")
+            .expect("right border");
+        assert_eq!(modal_x, (80 - (modal_right - modal_x + 1)) / 2);
         assert_eq!(buffer[(modal_x, 0)].fg, state.theme.faint);
         let key_y = (0..24)
             .find(|y| rect_text(buffer, Rect::new(0, *y, 80, 1)).contains("PgUp/PgDn"))
