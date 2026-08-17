@@ -134,7 +134,7 @@ mkdir -p ~/.agents/skills/ypm && curl -fsSL \
 
 ## 安装
 
-> **尝鲜版 [v0.9.0-canary.1](https://github.com/nagi-studio/YesPlayMusic/releases/tag/v0.9.0-canary.1)** 带上面那个终端版。
+> **[尝鲜版（canary）](https://github.com/nagi-studio/YesPlayMusic/releases?q=prerelease%3Atrue&expanded=true)** 带上面那个终端版。
 > canary 走独立更新通道，和 stable 互不干扰。稳定版请用下面的 Releases 页面。
 
 到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 DMG，
