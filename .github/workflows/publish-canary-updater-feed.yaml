@@ -3,6 +3,13 @@ name: Publish canary updater feed
 on:
   release:
     types: [published]
+  # Recovery path: GitHub fires `published` only once per release, so a
+  # release whose tag was fixed after publishing needs a manual re-run.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to (re)publish into the canary feed
+        required: true
 
 concurrency:
   group: yesplaymusic-canary-updater-feed
@@ -14,11 +21,12 @@ jobs:
   # here or they strand until the next canary.
   publish-canary-feed:
     if: >-
-      startsWith(github.event.release.tag_name, 'v') &&
-      ((github.event.release.prerelease &&
-        contains(github.event.release.tag_name, '-canary.')) ||
-       (!github.event.release.prerelease &&
-        !contains(github.event.release.tag_name, '-')))
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.event.release.tag_name, 'v') &&
+       ((github.event.release.prerelease &&
+         contains(github.event.release.tag_name, '-canary.')) ||
+        (!github.event.release.prerelease &&
+         !contains(github.event.release.tag_name, '-'))))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -38,7 +46,7 @@ jobs:
       - name: Download published updater artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          YPM_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          YPM_RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/yesplaymusic-canary-release"
           gh release download "$YPM_RELEASE_TAG" --dir "$RUNNER_TEMP/yesplaymusic-canary-release"
@@ -46,9 +54,13 @@ jobs:
       - name: Rebuild and verify canary manifest
         env:
           TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
-          YPM_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          YPM_RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           YPM_RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [ -z "$YPM_RELEASE_PUBLISHED_AT" ]; then
+            YPM_RELEASE_PUBLISHED_AT="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$YPM_RELEASE_TAG" -q .published_at)"
+          fi
           YPM_RELEASE_VERSION="${YPM_RELEASE_TAG#v}"
           bun scripts/generate-updater-manifest.mjs \
             "$RUNNER_TEMP/yesplaymusic-canary-release" \
@@ -60,7 +72,7 @@ jobs:
       - name: Publish immutable-version manifest to canary channel
         env:
           GH_TOKEN: ${{ github.token }}
-          YPM_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          YPM_RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           YPM_FEED_BRANCH="updater-feed"
           YPM_FEED_PATH="channels/canary.json"
