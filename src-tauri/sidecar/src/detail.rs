@@ -2,29 +2,26 @@
 //! `core::ncm`, shared with the TUI. Container metadata passes through
 //! verbatim; the song lists are the parsed business payload.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{Query as UrlQuery, State},
-    http::{header, HeaderMap, HeaderValue, Response, StatusCode},
-    response::IntoResponse,
+    http::{HeaderMap, Response},
     routing::get,
-    Json, Router,
+    Router,
 };
 use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use yesplaymusic_core::ncm::{
     album_with, artist_with, playlist_detail_with, song_detail_with, AlbumDetailPayload,
-    ArtistDetailPayload, NcmClientError, PlaylistDetailPayload, SongHit, TrackDetailPayload,
+    ArtistDetailPayload, NcmClientError, PlaylistDetailPayload, SongItem, TrackDetailPayload,
 };
 
+use crate::native::{respond, song_item_body};
 use crate::playback::ncm_query;
-use crate::search::song_item_body;
-
-const DETAIL_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 pub struct DetailState {
@@ -33,9 +30,7 @@ pub struct DetailState {
 
 impl DetailState {
     pub fn production(client: Arc<ApiClient>) -> Self {
-        Self {
-            resolver: Arc::new(ProductionResolver { client }),
-        }
+        Self { resolver: client }
     }
 
     #[cfg(test)]
@@ -56,30 +51,26 @@ trait DetailResolver: Send + Sync {
     async fn songs(&self, query: Query, ids: &str) -> Result<TrackDetailPayload, NcmClientError>;
 }
 
-struct ProductionResolver {
-    client: Arc<ApiClient>,
-}
-
 #[async_trait]
-impl DetailResolver for ProductionResolver {
+impl DetailResolver for ApiClient {
     async fn playlist(
         &self,
         query: Query,
         id: i64,
     ) -> Result<PlaylistDetailPayload, NcmClientError> {
-        playlist_detail_with(&self.client, query, id).await
+        playlist_detail_with(self, query, id).await
     }
 
     async fn album(&self, query: Query, id: i64) -> Result<AlbumDetailPayload, NcmClientError> {
-        album_with(&self.client, query, id).await
+        album_with(self, query, id).await
     }
 
     async fn artist(&self, query: Query, id: i64) -> Result<ArtistDetailPayload, NcmClientError> {
-        artist_with(&self.client, query, id).await
+        artist_with(self, query, id).await
     }
 
     async fn songs(&self, query: Query, ids: &str) -> Result<TrackDetailPayload, NcmClientError> {
-        song_detail_with(&self.client, query, ids).await
+        song_detail_with(self, query, ids).await
     }
 }
 
@@ -114,25 +105,16 @@ async fn playlist_handler(
     UrlQuery(query): UrlQuery<DetailQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let resolved = tokio::time::timeout(
-        DETAIL_TIMEOUT,
-        state
-            .resolver
-            .playlist(ncm_query(&headers, query.real_ip, query.proxy), query.id),
-    )
-    .await;
-    detail_response(
-        "playlist",
-        resolved.map(|answer| {
-            answer.map(|payload| {
-                json!({
-                    "playlist": payload.playlist,
-                    "songs": song_bodies(&payload.songs),
-                    "embeddedCount": payload.embedded_count,
-                })
-            })
-        }),
-    )
+    let request = ncm_query(&headers, query.real_ip, query.proxy);
+    respond("playlist detail", async move {
+        let payload = state.resolver.playlist(request, query.id).await?;
+        Ok(json!({
+            "playlist": payload.playlist,
+            "songs": song_bodies(&payload.songs),
+            "embeddedCount": payload.embedded_count,
+        }))
+    })
+    .await
 }
 
 async fn album_handler(
@@ -140,21 +122,15 @@ async fn album_handler(
     UrlQuery(query): UrlQuery<DetailQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let resolved = tokio::time::timeout(
-        DETAIL_TIMEOUT,
-        state
-            .resolver
-            .album(ncm_query(&headers, query.real_ip, query.proxy), query.id),
-    )
-    .await;
-    detail_response(
-        "album",
-        resolved.map(|answer| {
-            answer.map(
-                |payload| json!({ "album": payload.album, "songs": song_bodies(&payload.songs) }),
-            )
-        }),
-    )
+    let request = ncm_query(&headers, query.real_ip, query.proxy);
+    respond("album detail", async move {
+        let payload = state.resolver.album(request, query.id).await?;
+        Ok(json!({
+            "album": payload.album,
+            "songs": song_bodies(&payload.songs),
+        }))
+    })
+    .await
 }
 
 async fn artist_handler(
@@ -162,21 +138,15 @@ async fn artist_handler(
     UrlQuery(query): UrlQuery<DetailQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let resolved = tokio::time::timeout(
-        DETAIL_TIMEOUT,
-        state
-            .resolver
-            .artist(ncm_query(&headers, query.real_ip, query.proxy), query.id),
-    )
-    .await;
-    detail_response(
-        "artist",
-        resolved.map(|answer| {
-            answer.map(|payload| {
-            json!({ "artist": payload.artist, "hotSongs": song_bodies(&payload.hot_songs) })
-        })
-        }),
-    )
+    let request = ncm_query(&headers, query.real_ip, query.proxy);
+    respond("artist detail", async move {
+        let payload = state.resolver.artist(request, query.id).await?;
+        Ok(json!({
+            "artist": payload.artist,
+            "hotSongs": song_bodies(&payload.hot_songs),
+        }))
+    })
+    .await
 }
 
 async fn songs_handler(
@@ -184,72 +154,38 @@ async fn songs_handler(
     UrlQuery(query): UrlQuery<SongsQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let resolved = tokio::time::timeout(
-        DETAIL_TIMEOUT,
-        state
-            .resolver
-            .songs(ncm_query(&headers, query.real_ip, query.proxy), &query.ids),
-    )
-    .await;
-    detail_response(
-        "songs",
-        resolved.map(|answer| {
-            answer.map(|payload| {
-                // Verbatim rows: the renderer caches them and computes
-                // playability itself at read time.
-                json!({ "songs": payload.songs, "privileges": payload.privileges })
-            })
-        }),
-    )
+    let request = ncm_query(&headers, query.real_ip, query.proxy);
+    respond("song detail", async move {
+        let payload = state.resolver.songs(request, &query.ids).await?;
+        // Verbatim rows: the renderer caches them and computes playability
+        // itself at read time.
+        Ok(json!({
+            "songs": payload.songs,
+            "privileges": payload.privileges,
+        }))
+    })
+    .await
 }
 
-fn song_bodies(songs: &[SongHit]) -> Vec<Value> {
+fn song_bodies(songs: &[SongItem]) -> Vec<Value> {
     songs.iter().map(song_item_body).collect()
-}
-
-fn detail_response(
-    kind: &'static str,
-    resolved: Result<Result<Value, NcmClientError>, tokio::time::error::Elapsed>,
-) -> Response<Body> {
-    let body = match resolved {
-        Ok(Ok(payload)) => (StatusCode::OK, payload),
-        Ok(Err(error)) => {
-            tracing::warn!(kind, %error, "detail resolution failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                json!({ "status": "error", "message": "could not resolve the detail page" }),
-            )
-        }
-        Err(_) => {
-            tracing::warn!(kind, "detail resolution timed out");
-            (
-                StatusCode::GATEWAY_TIMEOUT,
-                json!({ "status": "error", "message": "the detail page timed out" }),
-            )
-        }
-    };
-    with_no_store((body.0, Json(body.1)).into_response())
-}
-
-fn with_no_store(mut response: Response<Body>) -> Response<Body> {
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
-    use axum::body::to_bytes;
+    use axum::{
+        body::to_bytes,
+        http::{header, StatusCode},
+    };
     use tower::ServiceExt;
     use yesplaymusic_core::ncm::{AlbumRef, ArtistRef};
 
     use super::*;
 
-    fn hit(id: i64) -> SongHit {
-        SongHit {
+    fn hit(id: i64) -> SongItem {
+        SongItem {
             id,
             name: format!("Song {id}"),
             artists: vec![ArtistRef {

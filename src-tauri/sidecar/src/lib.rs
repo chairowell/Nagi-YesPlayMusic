@@ -4,6 +4,7 @@ pub mod detail;
 pub mod fm;
 pub mod health;
 pub mod library;
+mod native;
 pub mod ncm;
 pub mod playback;
 pub mod player_api;

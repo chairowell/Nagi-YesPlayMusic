@@ -22,7 +22,7 @@ pub use yesplaymusic_core::ncm::{
     AlbumHit, ArtistHit, LyricsPayload, PlaylistHit, QrStatus, SearchChannel, SearchPage, SongRow,
 };
 
-use yesplaymusic_core::ncm::{SearchPayload as CoreSearchPayload, SongHit};
+use yesplaymusic_core::ncm::{SearchPayload as CoreSearchPayload, SongItem};
 
 /// Tab order for the TUI's search view; the MV/user channels core also
 /// models have no TUI tab.
@@ -60,7 +60,7 @@ pub enum SearchPayload {
     Playlists(SearchPage<PlaylistHit>),
 }
 
-fn song_row_from_hit(hit: SongHit) -> SongRow {
+fn song_row_from_hit(hit: SongItem) -> SongRow {
     SongRow {
         id: hit.id,
         title: hit.name,

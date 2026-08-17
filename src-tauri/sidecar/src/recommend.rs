@@ -1,26 +1,23 @@
 //! Typed daily-recommendation endpoint backed by `core::ncm`, shared with
 //! the TUI.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{Query as UrlQuery, State},
-    http::{header, HeaderMap, HeaderValue, Response, StatusCode},
-    response::IntoResponse,
+    http::{HeaderMap, Response},
     routing::get,
-    Json, Router,
+    Router,
 };
 use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::json;
-use yesplaymusic_core::ncm::{daily_songs_with, NcmClientError, SongHit};
+use yesplaymusic_core::ncm::{daily_songs_with, NcmClientError, SongItem};
 
+use crate::native::{respond, song_item_body};
 use crate::playback::ncm_query;
-use crate::search::song_item_body;
-
-const RECOMMEND_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 pub struct RecommendState {
@@ -29,9 +26,7 @@ pub struct RecommendState {
 
 impl RecommendState {
     pub fn production(client: Arc<ApiClient>) -> Self {
-        Self {
-            resolver: Arc::new(ProductionResolver { client }),
-        }
+        Self { resolver: client }
     }
 
     #[cfg(test)]
@@ -42,17 +37,13 @@ impl RecommendState {
 
 #[async_trait]
 trait RecommendResolver: Send + Sync {
-    async fn daily_songs(&self, query: Query) -> Result<Vec<SongHit>, NcmClientError>;
-}
-
-struct ProductionResolver {
-    client: Arc<ApiClient>,
+    async fn daily_songs(&self, query: Query) -> Result<Vec<SongItem>, NcmClientError>;
 }
 
 #[async_trait]
-impl RecommendResolver for ProductionResolver {
-    async fn daily_songs(&self, query: Query) -> Result<Vec<SongHit>, NcmClientError> {
-        daily_songs_with(&self.client, query).await
+impl RecommendResolver for ApiClient {
+    async fn daily_songs(&self, query: Query) -> Result<Vec<SongItem>, NcmClientError> {
+        daily_songs_with(self, query).await
     }
 }
 
@@ -74,61 +65,37 @@ async fn daily_songs_handler(
     UrlQuery(query): UrlQuery<RecommendQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let resolved = tokio::time::timeout(
-        RECOMMEND_TIMEOUT,
-        state
-            .resolver
-            .daily_songs(ncm_query(&headers, query.real_ip, query.proxy)),
-    )
-    .await;
-    let body = match resolved {
-        Ok(Ok(hits)) => (
-            StatusCode::OK,
-            json!({ "data": hits.iter().map(song_item_body).collect::<Vec<_>>() }),
-        ),
-        Ok(Err(error)) => {
-            tracing::warn!(%error, "daily recommendations resolution failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                json!({ "status": "error", "message": "could not resolve daily recommendations" }),
-            )
-        }
-        Err(_) => {
-            tracing::warn!("daily recommendations timed out");
-            (
-                StatusCode::GATEWAY_TIMEOUT,
-                json!({ "status": "error", "message": "daily recommendations timed out" }),
-            )
-        }
-    };
-    with_no_store((body.0, Json(body.1)).into_response())
-}
-
-fn with_no_store(mut response: Response<Body>) -> Response<Body> {
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+    let query = ncm_query(&headers, query.real_ip, query.proxy);
+    respond("daily recommendations", async move {
+        let items = state.resolver.daily_songs(query).await?;
+        Ok(json!({
+            "data": items.iter().map(song_item_body).collect::<Vec<_>>()
+        }))
+    })
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
-    use axum::body::to_bytes;
+    use axum::{
+        body::to_bytes,
+        http::{header, StatusCode},
+    };
     use tower::ServiceExt;
     use yesplaymusic_core::ncm::{AlbumRef, ArtistRef, SongPrivilege};
 
     use super::*;
 
     struct FakeResolver {
-        answer: Mutex<Option<Result<Vec<SongHit>, NcmClientError>>>,
+        answer: Mutex<Option<Result<Vec<SongItem>, NcmClientError>>>,
         seen_query: Mutex<Option<Query>>,
     }
 
     #[async_trait]
     impl RecommendResolver for FakeResolver {
-        async fn daily_songs(&self, query: Query) -> Result<Vec<SongHit>, NcmClientError> {
+        async fn daily_songs(&self, query: Query) -> Result<Vec<SongItem>, NcmClientError> {
             *self.seen_query.lock().unwrap() = Some(query);
             self.answer.lock().unwrap().take().expect("single call")
         }
@@ -154,7 +121,7 @@ mod tests {
     #[tokio::test]
     async fn daily_songs_answer_the_shared_song_shape_with_privileges() {
         let resolver = Arc::new(FakeResolver {
-            answer: Mutex::new(Some(Ok(vec![SongHit {
+            answer: Mutex::new(Some(Ok(vec![SongItem {
                 id: 1,
                 name: "Daily".into(),
                 artists: vec![ArtistRef {

@@ -149,11 +149,11 @@ pub struct SongPrivilege {
     pub st: i64,
 }
 
-/// One song search result with everything the richest frontend renders:
-/// linkable artist/album ids, subtitle aliases, the explicit-content mark
-/// and raw permission fields.
+/// One song item with everything the richest frontend renders: linkable
+/// artist/album ids, subtitle aliases, the explicit-content mark and raw
+/// permission fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SongHit {
+pub struct SongItem {
     pub id: i64,
     pub name: String,
     pub artists: Vec<ArtistRef>,
@@ -176,7 +176,7 @@ pub struct SongHit {
 pub struct PlaylistDetailPayload {
     /// The raw `playlist` object with its embedded `tracks` removed.
     pub playlist: Value,
-    pub songs: Vec<SongHit>,
+    pub songs: Vec<SongItem>,
     /// Raw embedded-row count before per-row drops. The GUI pages the rest
     /// of the playlist by index into `trackIds`, so its cursor must count
     /// the source rows, not the surviving ones.
@@ -186,13 +186,13 @@ pub struct PlaylistDetailPayload {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlbumDetailPayload {
     pub album: Value,
-    pub songs: Vec<SongHit>,
+    pub songs: Vec<SongItem>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArtistDetailPayload {
     pub artist: Value,
-    pub hot_songs: Vec<SongHit>,
+    pub hot_songs: Vec<SongItem>,
 }
 
 /// `/song/detail` passes through verbatim: the GUI caches these rows in
@@ -257,7 +257,7 @@ pub struct UserHit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SearchPayload {
-    Songs(SearchPage<SongHit>),
+    Songs(SearchPage<SongItem>),
     Artists(SearchPage<ArtistHit>),
     Albums(SearchPage<AlbumHit>),
     Playlists(SearchPage<PlaylistHit>),
@@ -394,7 +394,12 @@ impl NcmClient {
             .param("limit", &PLAYLIST_PAGE_SIZE.to_string())
             .param("offset", &offset.to_string());
         let response = self.client.playlist_track_all(&query).await?;
-        parse_song_collection(&response.body, &["songs"])
+        require_success(&response.body)?;
+        response_array(&response.body, &["songs"])?;
+        Ok(song_hits_from(&response.body["songs"])
+            .into_iter()
+            .map(song_row_from_hit)
+            .collect())
     }
 
     pub async fn set_like(
@@ -498,7 +503,12 @@ impl NcmClient {
     pub async fn artist_top_songs(&self, artist_id: i64) -> Result<Vec<SongRow>, NcmClientError> {
         let query = self.query().param("id", &artist_id.to_string());
         let response = self.client.artist_top_song(&query).await?;
-        parse_song_collection(&response.body, &["songs"])
+        require_success(&response.body)?;
+        response_array(&response.body, &["songs"])?;
+        Ok(song_hits_from(&response.body["songs"])
+            .into_iter()
+            .map(song_row_from_hit)
+            .collect())
     }
 
     pub async fn album_songs(&self, album_id: i64) -> Result<Vec<SongRow>, NcmClientError> {
@@ -649,8 +659,9 @@ fn parse_search_payload(
             Ok(SearchPayload::Songs(SearchPage {
                 items: search_result_array(body, &["result", "songs"], total)?
                     .iter()
-                    .map(parse_song_hit)
-                    .collect::<Result<_, _>>()?,
+                    .map(song_hit_flex)
+                    .filter(|item| item.id > 0)
+                    .collect(),
                 total,
             }))
         }
@@ -723,14 +734,6 @@ fn search_result_array<'a>(
     }
 }
 
-fn parse_song_collection(body: &Value, path: &[&str]) -> Result<Vec<SongRow>, NcmClientError> {
-    require_success(body)?;
-    required_array(body, path)?
-        .iter()
-        .map(parse_song_row)
-        .collect()
-}
-
 async fn complete_playlist_detail<F, Fut>(
     embedded: Vec<SongRow>,
     total: usize,
@@ -745,61 +748,6 @@ where
     } else {
         fetch_all().await
     }
-}
-
-fn parse_song_row(song: &Value) -> Result<SongRow, NcmClientError> {
-    let artists = required_array(song, &["ar"])?;
-    let artist = artists.first().ok_or_else(|| invalid_payload("$.ar[0]"))?;
-    let album = required_value(song, &["al"])?;
-    let id = required_i64(song, &["id"])?;
-    if id <= 0 {
-        return Err(invalid_payload("$.id"));
-    }
-    let duration_ms = required_i64(song, &["dt"])?;
-    if duration_ms < 0 {
-        return Err(invalid_payload("$.dt"));
-    }
-
-    Ok(SongRow {
-        id,
-        title: required_string(song, &["name"])?,
-        artist: required_string(artist, &["name"])?,
-        album: required_string(album, &["name"])?,
-        duration_ms,
-        pic_url: optional_string(album, "picUrl")?,
-    })
-}
-
-fn parse_song_hit(song: &Value) -> Result<SongHit, NcmClientError> {
-    let row = parse_song_row(song)?;
-    // The row parser already guaranteed a named first artist; the rest of
-    // the credits list tolerates id-0 or unnamed entries instead of turning
-    // one malformed guest credit into a failed page.
-    let artists = required_array(song, &["ar"])?
-        .iter()
-        .map(|artist| ArtistRef {
-            id: artist["id"].as_i64().unwrap_or(0),
-            name: artist["name"].as_str().unwrap_or("").to_owned(),
-        })
-        .collect();
-    Ok(SongHit {
-        id: row.id,
-        name: row.title,
-        artists,
-        album: AlbumRef {
-            id: song["al"]["id"].as_i64().unwrap_or(0),
-            name: row.album,
-            pic_url: row.pic_url,
-        },
-        duration_ms: row.duration_ms,
-        alias: string_list(song, "alia"),
-        trans_names: string_list(song, "tns"),
-        mark: song["mark"].as_i64().unwrap_or(0),
-        fee: song["fee"].as_i64(),
-        no_copyright_rcmd: !song["noCopyrightRcmd"].is_null(),
-        privilege: parse_song_privilege(&song["privilege"]),
-        cd: song["cd"].as_str().map(str::to_owned),
-    })
 }
 
 fn parse_song_privilege(privilege: &Value) -> Option<SongPrivilege> {
@@ -951,13 +899,6 @@ fn required_value<'a>(value: &'a Value, path: &[&str]) -> Result<&'a Value, NcmC
             .ok_or_else(|| invalid_payload_path(path))?;
     }
     Ok(current)
-}
-
-fn required_array<'a>(value: &'a Value, path: &[&str]) -> Result<&'a [Value], NcmClientError> {
-    required_value(value, path)?
-        .as_array()
-        .map(Vec::as_slice)
-        .ok_or_else(|| invalid_payload_path(path))
 }
 
 fn required_string(value: &Value, path: &[&str]) -> Result<String, NcmClientError> {
@@ -1148,7 +1089,7 @@ pub async fn fm_trash_with(
 pub async fn personal_fm_with(
     client: &ApiClient,
     query: Query,
-) -> Result<Vec<SongHit>, NcmClientError> {
+) -> Result<Vec<SongItem>, NcmClientError> {
     let response = client.personal_fm(&query).await?;
     let songs = response_array(&response.body, &["data"])?;
     Ok(songs
@@ -1164,10 +1105,10 @@ pub async fn personal_fm_with(
 pub async fn daily_songs_with(
     client: &ApiClient,
     query: Query,
-) -> Result<Vec<SongHit>, NcmClientError> {
+) -> Result<Vec<SongItem>, NcmClientError> {
     let response = client.recommend_songs(&query).await?;
     let songs = response_array(&response.body, &["data", "dailySongs"])?;
-    let mut hits: Vec<SongHit> = songs
+    let mut hits: Vec<SongItem> = songs
         .iter()
         .map(song_hit_flex)
         .filter(|hit| hit.id > 0)
@@ -1178,7 +1119,7 @@ pub async fn daily_songs_with(
 
 /// The parallel privilege array is fresher than what's embedded per song, so
 /// a match replaces the embedded value; songs without a match keep theirs.
-fn overlay_privileges(hits: &mut [SongHit], privileges: &Value) {
+fn overlay_privileges(hits: &mut [SongItem], privileges: &Value) {
     let Some(privileges) = privileges.as_array() else {
         return;
     };
@@ -1281,7 +1222,7 @@ pub async fn song_detail_with(
 
 /// Song lists inside detail payloads degrade row-by-row: an id-less entry
 /// cannot be played and is dropped instead of failing the page.
-fn song_hits_from(tracks: &Value) -> Vec<SongHit> {
+fn song_hits_from(tracks: &Value) -> Vec<SongItem> {
     tracks
         .as_array()
         .map(|items| {
@@ -1387,7 +1328,7 @@ fn song_row_flex(song: &Value) -> SongRow {
 /// Rich variant of [`song_row_flex`]: same naming tolerance, but keeps the
 /// linkable ids and permission fields the GUI renders. Everything degrades
 /// instead of erroring — one odd FM row must not sink the batch.
-fn song_hit_flex(song: &Value) -> SongHit {
+fn song_hit_flex(song: &Value) -> SongItem {
     let row = song_row_flex(song);
     let artists = song["ar"]
         .as_array()
@@ -1405,7 +1346,7 @@ fn song_hit_flex(song: &Value) -> SongHit {
         .as_i64()
         .or_else(|| song["album"]["id"].as_i64())
         .unwrap_or(0);
-    SongHit {
+    SongItem {
         id: row.id,
         // No "?" placeholder here: that is TUI display semantics, restored
         // in song_row_from_hit; the GUI must not render literal "?".
@@ -1435,7 +1376,7 @@ fn string_list_flex(value: &Value, fields: &[&str]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn song_row_from_hit(hit: SongHit) -> SongRow {
+fn song_row_from_hit(hit: SongItem) -> SongRow {
     let artist = hit
         .artists
         .first()
@@ -1898,8 +1839,8 @@ mod tests {
     }
 
     #[test]
-    fn song_hits_carry_link_ids_marks_and_raw_permission_fields() {
-        let hit = parse_song_hit(&serde_json::json!({
+    fn song_items_carry_link_ids_marks_and_raw_permission_fields() {
+        let item = song_hit_flex(&serde_json::json!({
             "id": 186_016,
             "name": "晴天",
             "ar": [
@@ -1914,18 +1855,17 @@ mod tests {
             "fee": 1,
             "noCopyrightRcmd": Value::Null,
             "privilege": { "pl": 128_000, "fee": 1, "st": 0 }
-        }))
-        .unwrap();
+        }));
 
-        assert_eq!(hit.artists.len(), 2);
-        assert_eq!(hit.album.id, 18_905);
-        assert_eq!(hit.alias, vec!["别名"]);
-        assert_eq!(hit.trans_names, vec!["Sunny Day"]);
-        assert_eq!(hit.mark, 1_048_576);
-        assert_eq!(hit.fee, Some(1));
-        assert!(!hit.no_copyright_rcmd);
+        assert_eq!(item.artists.len(), 2);
+        assert_eq!(item.album.id, 18_905);
+        assert_eq!(item.alias, vec!["别名"]);
+        assert_eq!(item.trans_names, vec!["Sunny Day"]);
+        assert_eq!(item.mark, 1_048_576);
+        assert_eq!(item.fee, Some(1));
+        assert!(!item.no_copyright_rcmd);
         assert_eq!(
-            hit.privilege,
+            item.privilege,
             Some(SongPrivilege {
                 pl: 128_000,
                 cs: false,
@@ -2088,23 +2028,17 @@ mod tests {
     }
 
     #[test]
-    fn detail_payloads_narrow_artist_album_and_playlist_tracks() {
-        let song = song_payload();
-        // Artist top songs keep the strict row parser…
-        let artist = parse_song_collection(
-            &serde_json::json!({ "code": 200, "songs": [song.clone()] }),
-            &["songs"],
-        )
-        .unwrap();
-        // …while album/playlist detail folds flexible hits to the same rows.
-        let album: Vec<SongRow> = song_hits_from(&serde_json::json!([song.clone()]))
-            .into_iter()
-            .map(song_row_from_hit)
-            .collect();
-        let playlist: Vec<SongRow> = song_hits_from(&serde_json::json!([song]))
-            .into_iter()
-            .map(song_row_from_hit)
-            .collect();
+    fn detail_payloads_fold_artist_album_and_playlist_tracks_identically() {
+        let songs = serde_json::json!([song_payload()]);
+        let fold = |songs: &Value| {
+            song_hits_from(songs)
+                .into_iter()
+                .map(song_row_from_hit)
+                .collect::<Vec<_>>()
+        };
+        let artist = fold(&songs);
+        let album = fold(&songs);
+        let playlist = fold(&songs);
 
         assert_eq!(artist, album);
         assert_eq!(album, playlist);
@@ -2171,36 +2105,55 @@ mod tests {
     }
 
     #[test]
-    fn artist_top_songs_reject_unknown_song_shapes_while_detail_hits_degrade() {
-        let missing_duration = serde_json::json!({
-            "code": 200,
-            "songs": [{
-                "id": 186_016,
-                "name": "晴天",
-                "ar": [{ "name": "周杰伦" }],
-                "al": { "name": "叶惠美" }
-            }]
-        });
-        let wrong_artists = serde_json::json!({
-            "code": 200,
-            "songs": [{
-                "id": 186_016,
-                "name": "晴天",
-                "ar": { "name": "周杰伦" },
-                "al": { "name": "叶惠美" },
-                "dt": 269_000
-            }]
-        });
+    fn song_list_paths_share_tolerant_row_semantics() {
+        let rows = serde_json::json!([
+            {
+                "id": 1,
+                "name": "No duration",
+                "ar": [{ "name": "Artist" }],
+                "al": { "name": "Album" }
+            },
+            {
+                "id": 2,
+                "name": "Wrong artists",
+                "ar": { "name": "Artist" },
+                "al": { "name": "Album" },
+                "dt": 2_000
+            },
+            { "name": "No id" },
+            song_payload()
+        ]);
+        let body = serde_json::json!({ "code": 200, "songs": rows.clone() });
+        require_success(&body).unwrap();
+        response_array(&body, &["songs"]).unwrap();
+        let items = song_hits_from(&body["songs"]);
 
-        // The strict artist-top-songs path still fails the whole answer…
-        assert!(parse_song_collection(&missing_duration, &["songs"]).is_err());
-        assert!(parse_song_collection(&wrong_artists, &["songs"]).is_err());
-        // …but detail-page hits degrade per row: a playable id survives with
-        // defaults, only id-less entries are dropped.
-        let degraded = song_hits_from(&missing_duration["songs"]);
-        assert_eq!(degraded.len(), 1);
-        assert_eq!(degraded[0].duration_ms, 0);
-        assert!(song_hits_from(&serde_json::json!([{ "name": "no id" }])).is_empty());
+        assert_eq!(
+            items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [1, 2, 186_016]
+        );
+        assert_eq!(items[0].duration_ms, 0);
+        assert!(items[1].artists.is_empty());
+
+        let search = parse_search_payload(
+            &serde_json::json!({
+                "code": 200,
+                "result": { "songCount": 4, "songs": rows }
+            }),
+            SearchChannel::Songs,
+        )
+        .unwrap();
+        let SearchPayload::Songs(search) = search else {
+            panic!("song search returned the wrong variant");
+        };
+        assert_eq!(search.items.len(), 3);
+        assert_eq!(search.total, 4);
+
+        let missing = serde_json::json!({ "code": 200 });
+        assert!(matches!(
+            response_array(&missing, &["songs"]),
+            Err(NcmClientError::MissingPayload(_))
+        ));
     }
 
     fn rows(range: std::ops::Range<usize>) -> Vec<SongRow> {
@@ -2338,14 +2291,13 @@ mod tests {
 
     #[test]
     fn song_rows_preserve_album_names_from_both_payload_shapes() {
-        let standard = parse_song_row(&serde_json::json!({
+        let standard = song_row_from_hit(song_hit_flex(&serde_json::json!({
             "id": 1,
             "name": "Track",
             "ar": [{ "name": "Artist" }],
             "al": { "name": "Standard Album", "picUrl": null },
             "dt": 180_000
-        }))
-        .unwrap();
+        })));
         let flexible = song_row_flex(&serde_json::json!({
             "id": 2,
             "name": "Cloud Track",
@@ -2438,7 +2390,7 @@ mod tests {
             }
         });
         let songs = response_array(&body, &["data", "dailySongs"]).unwrap();
-        let mut hits: Vec<SongHit> = songs.iter().map(song_hit_flex).collect();
+        let mut hits: Vec<SongItem> = songs.iter().map(song_hit_flex).collect();
         overlay_privileges(&mut hits, &body["data"]["privileges"]);
         assert_eq!(hits[0].privilege.unwrap().pl, 320_000);
         assert_eq!(hits[0].privilege.unwrap().fee, 8);

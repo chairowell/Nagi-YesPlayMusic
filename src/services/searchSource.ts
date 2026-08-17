@@ -1,5 +1,6 @@
 import { getAppStore } from '@/stores/accessor';
 import { unlockParams } from '@/services/playbackSource';
+import { adaptTrackItems } from '@/services/songItems';
 import { mapTrackPlayableStatus } from '@/utils/common';
 import type {
   Album,
@@ -7,7 +8,6 @@ import type {
   MusicVideo,
   Playlist,
   Track,
-  TrackPrivilege,
   UserProfile,
 } from '@/types/domain';
 
@@ -63,47 +63,6 @@ function optionalText(field: string, value: unknown): Record<string, string> {
   // Empty strings pass through: MvRow renders the literal 'null' for a
   // missing artistName but blank for an empty one, matching the old path.
   return typeof value === 'string' ? { [field]: value } : {};
-}
-
-/**
- * Map the flat song items every typed endpoint answers (search, daily
- * recommendations) back onto the legacy `ar`/`al`/`dt` track shape.
- */
-export function adaptTrackItems(items: Record<string, unknown>[]): Track[] {
-  return items
-    .filter(item => typeof item['id'] === 'number')
-    .map(item => {
-      const album =
-        typeof item['album'] === 'object' && item['album'] !== null
-          ? (item['album'] as Record<string, unknown>)
-          : {};
-      const track: Track = {
-        id: item['id'] as number,
-        ...optionalText('name', item['name']),
-        ar: Array.isArray(item['artists']) ? (item['artists'] as Artist[]) : [],
-        al: {
-          id: typeof album['id'] === 'number' ? album['id'] : 0,
-          ...optionalText('name', album['name']),
-          ...optionalText('picUrl', album['picUrl']),
-        },
-        dt: typeof item['durationMs'] === 'number' ? item['durationMs'] : 0,
-        alia: Array.isArray(item['alias']) ? (item['alias'] as string[]) : [],
-        tns: Array.isArray(item['transNames'])
-          ? (item['transNames'] as string[])
-          : [],
-        mark: typeof item['mark'] === 'number' ? item['mark'] : 0,
-        ...(typeof item['fee'] === 'number' ? { fee: item['fee'] } : {}),
-        // Presence alone marks "no copyright" downstream, so only set it
-        // when the server says true.
-        ...(item['noCopyrightRcmd'] === true ? { noCopyrightRcmd: true } : {}),
-        ...(typeof item['privilege'] === 'object' && item['privilege'] !== null
-          ? { privilege: item['privilege'] as TrackPrivilege }
-          : {}),
-        // Album pages group their track list by disc via this field.
-        ...(typeof item['cd'] === 'string' ? { cd: item['cd'] } : {}),
-      };
-      return track;
-    });
 }
 
 export async function searchTracks(

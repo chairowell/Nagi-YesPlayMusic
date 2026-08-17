@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{Query as UrlQuery, State},
-    http::{header, HeaderMap, HeaderValue, Response, StatusCode},
+    http::{HeaderMap, Response, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -16,6 +16,8 @@ use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::json;
 use yesplaymusic_core::ncm::{fm_trash_with, liked_ids_with, set_like_with, NcmClientError};
+
+use crate::native::{respond, with_no_store};
 
 const LIBRARY_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -26,9 +28,7 @@ pub struct LibraryState {
 
 impl LibraryState {
     pub fn production(client: Arc<ApiClient>) -> Self {
-        Self {
-            resolver: Arc::new(ProductionResolver { client }),
-        }
+        Self { resolver: client }
     }
 
     #[cfg(test)]
@@ -44,22 +44,18 @@ trait LibraryResolver: Send + Sync {
     async fn fm_trash(&self, query: Query, id: i64) -> Result<(), NcmClientError>;
 }
 
-struct ProductionResolver {
-    client: Arc<ApiClient>,
-}
-
 #[async_trait]
-impl LibraryResolver for ProductionResolver {
+impl LibraryResolver for ApiClient {
     async fn liked_ids(&self, query: Query, uid: i64) -> Result<Vec<i64>, NcmClientError> {
-        liked_ids_with(&self.client, query, uid).await
+        liked_ids_with(self, query, uid).await
     }
 
     async fn set_like(&self, query: Query, id: i64, like: bool) -> Result<(), NcmClientError> {
-        set_like_with(&self.client, query, id, like).await
+        set_like_with(self, query, id, like).await
     }
 
     async fn fm_trash(&self, query: Query, id: i64) -> Result<(), NcmClientError> {
-        fm_trash_with(&self.client, query, id).await
+        fm_trash_with(self, query, id).await
     }
 }
 
@@ -101,29 +97,12 @@ async fn liked_ids_handler(
     UrlQuery(query): UrlQuery<LikedIdsQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let resolved = tokio::time::timeout(
-        LIBRARY_TIMEOUT,
-        state.resolver.liked_ids(
-            crate::playback::ncm_query(&headers, query.real_ip, query.proxy),
-            query.uid,
-        ),
-    )
-    .await;
-    let body = match resolved {
-        Ok(Ok(ids)) => (StatusCode::OK, json!({ "ids": ids })),
-        Ok(Err(error)) => {
-            tracing::warn!(uid = query.uid, %error, "liked ids resolution failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                json!({ "status": "error", "message": "could not resolve liked songs" }),
-            )
-        }
-        Err(_) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            json!({ "status": "error", "message": "liked songs timed out" }),
-        ),
-    };
-    with_no_store((body.0, Json(body.1)).into_response())
+    let request = crate::playback::ncm_query(&headers, query.real_ip, query.proxy);
+    respond("liked songs", async move {
+        let ids = state.resolver.liked_ids(request, query.uid).await?;
+        Ok(json!({ "ids": ids }))
+    })
+    .await
 }
 
 async fn like_handler(
@@ -194,18 +173,11 @@ fn mutation_response(
     with_no_store(response)
 }
 
-fn with_no_store(mut response: Response<Body>) -> Response<Body> {
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
-    use axum::body::to_bytes;
+    use axum::{body::to_bytes, http::header};
     use tower::ServiceExt;
 
     use super::*;

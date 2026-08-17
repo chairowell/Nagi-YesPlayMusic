@@ -1,25 +1,22 @@
 //! Typed personal-FM endpoint backed by `core::ncm`, shared with the TUI.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{Query as UrlQuery, State},
-    http::{header, HeaderMap, HeaderValue, Response, StatusCode},
-    response::IntoResponse,
+    http::{HeaderMap, Response},
     routing::get,
-    Json, Router,
+    Router,
 };
 use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::json;
-use yesplaymusic_core::ncm::{personal_fm_with, NcmClientError, SongHit};
+use yesplaymusic_core::ncm::{personal_fm_with, NcmClientError, SongItem};
 
+use crate::native::{respond, song_item_body};
 use crate::playback::ncm_query;
-use crate::search::song_item_body;
-
-const FM_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 pub struct FmState {
@@ -28,9 +25,7 @@ pub struct FmState {
 
 impl FmState {
     pub fn production(client: Arc<ApiClient>) -> Self {
-        Self {
-            resolver: Arc::new(ProductionResolver { client }),
-        }
+        Self { resolver: client }
     }
 
     #[cfg(test)]
@@ -41,17 +36,13 @@ impl FmState {
 
 #[async_trait]
 trait FmResolver: Send + Sync {
-    async fn personal_fm(&self, query: Query) -> Result<Vec<SongHit>, NcmClientError>;
-}
-
-struct ProductionResolver {
-    client: Arc<ApiClient>,
+    async fn personal_fm(&self, query: Query) -> Result<Vec<SongItem>, NcmClientError>;
 }
 
 #[async_trait]
-impl FmResolver for ProductionResolver {
-    async fn personal_fm(&self, query: Query) -> Result<Vec<SongHit>, NcmClientError> {
-        personal_fm_with(&self.client, query).await
+impl FmResolver for ApiClient {
+    async fn personal_fm(&self, query: Query) -> Result<Vec<SongItem>, NcmClientError> {
+        personal_fm_with(self, query).await
     }
 }
 
@@ -73,61 +64,37 @@ async fn personal_fm_handler(
     UrlQuery(query): UrlQuery<FmQuery>,
     headers: HeaderMap,
 ) -> Response<Body> {
-    let resolved = tokio::time::timeout(
-        FM_TIMEOUT,
-        state
-            .resolver
-            .personal_fm(ncm_query(&headers, query.real_ip, query.proxy)),
-    )
-    .await;
-    let body = match resolved {
-        Ok(Ok(hits)) => (
-            StatusCode::OK,
-            json!({ "data": hits.iter().map(song_item_body).collect::<Vec<_>>() }),
-        ),
-        Ok(Err(error)) => {
-            tracing::warn!(%error, "personal fm resolution failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                json!({ "status": "error", "message": "could not resolve personal fm" }),
-            )
-        }
-        Err(_) => {
-            tracing::warn!("personal fm resolution timed out");
-            (
-                StatusCode::GATEWAY_TIMEOUT,
-                json!({ "status": "error", "message": "personal fm timed out" }),
-            )
-        }
-    };
-    with_no_store((body.0, Json(body.1)).into_response())
-}
-
-fn with_no_store(mut response: Response<Body>) -> Response<Body> {
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+    let query = ncm_query(&headers, query.real_ip, query.proxy);
+    respond("personal fm", async move {
+        let items = state.resolver.personal_fm(query).await?;
+        Ok(json!({
+            "data": items.iter().map(song_item_body).collect::<Vec<_>>()
+        }))
+    })
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
-    use axum::body::to_bytes;
+    use axum::{
+        body::to_bytes,
+        http::{header, StatusCode},
+    };
     use tower::ServiceExt;
     use yesplaymusic_core::ncm::{AlbumRef, ArtistRef};
 
     use super::*;
 
     struct FakeResolver {
-        answer: Mutex<Option<Result<Vec<SongHit>, NcmClientError>>>,
+        answer: Mutex<Option<Result<Vec<SongItem>, NcmClientError>>>,
         seen_query: Mutex<Option<Query>>,
     }
 
     #[async_trait]
     impl FmResolver for FakeResolver {
-        async fn personal_fm(&self, query: Query) -> Result<Vec<SongHit>, NcmClientError> {
+        async fn personal_fm(&self, query: Query) -> Result<Vec<SongItem>, NcmClientError> {
             *self.seen_query.lock().unwrap() = Some(query);
             self.answer.lock().unwrap().take().expect("single call")
         }
@@ -153,7 +120,7 @@ mod tests {
     #[tokio::test]
     async fn fm_answers_the_shared_song_shape_with_the_cookie_forwarded() {
         let resolver = Arc::new(FakeResolver {
-            answer: Mutex::new(Some(Ok(vec![SongHit {
+            answer: Mutex::new(Some(Ok(vec![SongItem {
                 id: 42,
                 name: "FM Track".into(),
                 artists: vec![ArtistRef {

@@ -4,13 +4,13 @@
 //! answer itself; this endpoint serves all six channels from the same
 //! implementation the TUI uses.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{Query as UrlQuery, State},
-    http::{header, HeaderMap, HeaderValue, Response, StatusCode},
+    http::{HeaderMap, Response, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -22,9 +22,9 @@ use yesplaymusic_core::ncm::{
     search_with, NcmClientError, SearchChannel, SearchPage, SearchPayload,
 };
 
+use crate::native::{respond, song_item_body, with_no_store};
 use crate::playback::ncm_query;
 
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// The Node adapter's defaults, kept so results page identically.
 const DEFAULT_LIMIT: u32 = 30;
 
@@ -35,9 +35,7 @@ pub struct SearchState {
 
 impl SearchState {
     pub fn production(client: Arc<ApiClient>) -> Self {
-        Self {
-            resolver: Arc::new(ProductionResolver { client }),
-        }
+        Self { resolver: client }
     }
 
     #[cfg(test)]
@@ -58,12 +56,8 @@ trait SearchResolver: Send + Sync {
     ) -> Result<SearchPayload, NcmClientError>;
 }
 
-struct ProductionResolver {
-    client: Arc<ApiClient>,
-}
-
 #[async_trait]
-impl SearchResolver for ProductionResolver {
+impl SearchResolver for ApiClient {
     async fn search(
         &self,
         query: Query,
@@ -72,7 +66,7 @@ impl SearchResolver for ProductionResolver {
         limit: u32,
         offset: u32,
     ) -> Result<SearchPayload, NcmClientError> {
-        search_with(&self.client, query, keywords, channel, limit, offset).await
+        search_with(self, query, keywords, channel, limit, offset).await
     }
 }
 
@@ -109,74 +103,21 @@ async fn search_handler(
                 .into_response(),
         );
     };
-    let resolved = tokio::time::timeout(
-        SEARCH_TIMEOUT,
-        state.resolver.search(
-            ncm_query(&headers, query.real_ip, query.proxy),
-            &query.keywords,
-            channel,
-            query.limit.unwrap_or(DEFAULT_LIMIT),
-            query.offset.unwrap_or(0),
-        ),
-    )
-    .await;
-    let body = match resolved {
-        Ok(Ok(payload)) => (StatusCode::OK, payload_body(payload)),
-        Ok(Err(error)) => {
-            tracing::warn!(%error, "search resolution failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                json!({ "status": "error", "message": "could not resolve the search" }),
+    let request = ncm_query(&headers, query.real_ip, query.proxy);
+    respond("search", async move {
+        let payload = state
+            .resolver
+            .search(
+                request,
+                &query.keywords,
+                channel,
+                query.limit.unwrap_or(DEFAULT_LIMIT),
+                query.offset.unwrap_or(0),
             )
-        }
-        Err(_) => {
-            tracing::warn!("search resolution timed out");
-            (
-                StatusCode::GATEWAY_TIMEOUT,
-                json!({ "status": "error", "message": "search timed out" }),
-            )
-        }
-    };
-    with_no_store((body.0, Json(body.1)).into_response())
-}
-
-fn with_no_store(mut response: Response<Body>) -> Response<Body> {
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
-}
-
-/// The flat song shape shared by every typed endpoint that answers songs
-/// (search, personal FM); the renderer adapts it back per component.
-pub(crate) fn song_item_body(song: &yesplaymusic_core::ncm::SongHit) -> Value {
-    json!({
-        "id": song.id,
-        "name": song.name,
-        "artists": song
-            .artists
-            .iter()
-            .map(|artist| json!({ "id": artist.id, "name": artist.name }))
-            .collect::<Vec<_>>(),
-        "album": {
-            "id": song.album.id,
-            "name": song.album.name,
-            "picUrl": song.album.pic_url,
-        },
-        "durationMs": song.duration_ms,
-        "alias": song.alias,
-        "transNames": song.trans_names,
-        "mark": song.mark,
-        "fee": song.fee,
-        "noCopyrightRcmd": song.no_copyright_rcmd,
-        "privilege": song.privilege.map(|privilege| json!({
-            "pl": privilege.pl,
-            "cs": privilege.cs,
-            "fee": privilege.fee,
-            "st": privilege.st,
-        })),
-        "cd": song.cd,
+            .await?;
+        Ok(payload_body(payload))
     })
+    .await
 }
 
 fn payload_body(payload: SearchPayload) -> Value {
@@ -245,9 +186,9 @@ fn page_body<T>(channel: &str, page: SearchPage<T>, item: impl Fn(&T) -> Value) 
 mod tests {
     use std::sync::Mutex;
 
-    use axum::body::to_bytes;
+    use axum::{body::to_bytes, http::header};
     use tower::ServiceExt;
-    use yesplaymusic_core::ncm::{ArtistRef, SongHit, SongPrivilege};
+    use yesplaymusic_core::ncm::{ArtistRef, SongItem, SongPrivilege};
 
     use super::*;
 
@@ -302,7 +243,7 @@ mod tests {
     #[tokio::test]
     async fn song_search_answers_rich_rows_and_forwards_paging() {
         let resolver = FakeResolver::new(Ok(SearchPayload::Songs(SearchPage {
-            items: vec![SongHit {
+            items: vec![SongItem {
                 id: 186_016,
                 name: "晴天".into(),
                 artists: vec![ArtistRef {

@@ -1,6 +1,6 @@
 import { getAppStore } from '@/stores/accessor';
 import { unlockParams } from '@/services/playbackSource';
-import { adaptTrackItems } from '@/services/searchSource';
+import { adaptTrackItems } from '@/services/songItems';
 import { decodeTrackCollectionResponse } from '@/api/decoders';
 import type { Artist, Track } from '@/types/domain';
 import type { DetailedAlbum } from '@/api/album';
