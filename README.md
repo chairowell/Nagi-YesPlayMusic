@@ -166,12 +166,13 @@ stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 
 
 </details>
 
-## 两次桌面重构
+## 三次桌面重构
 
 | 阶段                        | 改动                                                                                                            |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `v0.6.0`：桌面外壳          | Electron → Tauri 2；升级 Vue 3、Vite 7、TypeScript 6 和 Pinia 4，改用系统 WebView                               |
 | `v0.8.0`：后台服务          | Bun Sidecar → Rust Sidecar；页面托管、网易云 API、同源 `/api` 和 UNM 全部改写为 Rust，桌面包不再携带 Bun runtime |
+| `v0.9.0`：业务核心          | 网易云客户端逻辑下沉 `core::ncm`；桌面端与终端版共用同一份 Rust 实现，通用转发路由从 57 条减到 45 条              |
 
 `.app` 从 82.6 MiB 降到 23.0 MiB，DMG 12.0 MiB，Sidecar 常驻内存约 9 MiB。
 详见[功能迁移表](docs/feature-migration.md)和[性能迁移基线](docs/performance-baseline.md)。

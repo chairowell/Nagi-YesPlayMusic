@@ -385,11 +385,12 @@ test('DMG 文件名明确标记版本和 Apple Silicon 架构', () => {
   expect(tauriDmgName('0.6.0')).toBe('YesPlayMusic_0.6.0_aarch64.dmg');
 });
 
-test('README 区分两次重构与各平台支持状态', () => {
+test('README 区分三次重构与各平台支持状态', () => {
   expect(readme).toContain('macOS Tauri 重构版');
-  expect(readme).toContain('## 两次桌面重构');
+  expect(readme).toContain('## 三次桌面重构');
   expect(readme).toContain('Electron → Tauri 2');
   expect(readme).toContain('Bun Sidecar → Rust Sidecar');
+  expect(readme).toContain('core::ncm');
   // Exact figures live in docs/performance-baseline.md; README keeps rounded ones.
   expect(readme).toContain('82.6 MiB 降到 23.0 MiB');
   expect(readme).toContain('DMG 12.0 MiB');
