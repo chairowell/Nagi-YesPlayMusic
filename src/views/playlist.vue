@@ -473,7 +473,11 @@ export default defineComponent({
           NProgress.done();
           if (next !== undefined) next();
           this.show = true;
-          this.lastLoadedTrackIndex = data.playlist.tracks.length - 1;
+          // Cursor over trackIds must count source rows: the endpoint may
+          // drop unplayable embedded rows, but they still occupy indices.
+          this.lastLoadedTrackIndex =
+            (data.playlist.embeddedTrackCount ?? data.playlist.tracks.length) -
+            1;
           return data;
         })
         .then(() => {

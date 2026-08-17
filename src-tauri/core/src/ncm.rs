@@ -177,6 +177,10 @@ pub struct PlaylistDetailPayload {
     /// The raw `playlist` object with its embedded `tracks` removed.
     pub playlist: Value,
     pub songs: Vec<SongHit>,
+    /// Raw embedded-row count before per-row drops. The GUI pages the rest
+    /// of the playlist by index into `trackIds`, so its cursor must count
+    /// the source rows, not the surviving ones.
+    pub embedded_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1204,9 +1208,14 @@ pub async fn playlist_detail_with(
         return Err(NcmClientError::MissingPayload("the playlist"));
     };
     let tracks = fields.remove("tracks").unwrap_or(Value::Null);
+    let embedded_count = tracks.as_array().map_or(0, Vec::len);
     let mut songs = song_hits_from(&tracks);
     overlay_privileges(&mut songs, &response.body["privileges"]);
-    Ok(PlaylistDetailPayload { playlist, songs })
+    Ok(PlaylistDetailPayload {
+        playlist,
+        songs,
+        embedded_count,
+    })
 }
 
 /// Album detail: verbatim metadata plus its full song list (albums answer

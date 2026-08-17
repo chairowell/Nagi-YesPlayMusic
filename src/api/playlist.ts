@@ -25,6 +25,9 @@ export interface DetailedPlaylist extends Playlist {
   creator: UserProfile;
   trackIds: Array<{ id: number }>;
   tracks: Track[];
+  // Pre-drop embedded row count from the typed endpoint; the paging
+  // cursor must use it instead of tracks.length.
+  embeddedTrackCount?: number;
 }
 
 export interface PlaylistDetailResponse extends ApiResponse {

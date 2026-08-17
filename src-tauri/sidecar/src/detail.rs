@@ -125,8 +125,12 @@ async fn playlist_handler(
         "playlist",
         resolved.map(|answer| {
             answer.map(|payload| {
-            json!({ "playlist": payload.playlist, "songs": song_bodies(&payload.songs) })
-        })
+                json!({
+                    "playlist": payload.playlist,
+                    "songs": song_bodies(&payload.songs),
+                    "embeddedCount": payload.embedded_count,
+                })
+            })
         }),
     )
 }
@@ -348,6 +352,7 @@ mod tests {
                     "unknownFutureField": true
                 }),
                 songs: vec![hit(1)],
+                embedded_count: 2,
             }))),
             ..FakeResolver::default()
         });
@@ -362,6 +367,8 @@ mod tests {
         assert_eq!(body["playlist"]["unknownFutureField"], true);
         assert_eq!(body["playlist"]["trackIds"][1]["id"], 2);
         assert_eq!(body["songs"][0]["id"], 1);
+        // Pre-drop row count: the GUI's paging cursor indexes trackIds.
+        assert_eq!(body["embeddedCount"], 2);
         let query = resolver.seen_query.lock().unwrap().take().unwrap();
         assert_eq!(query.cookie.as_deref(), Some("MUSIC_U=token"));
         assert_eq!(query.real_ip.as_deref(), Some("1.2.3.4"));

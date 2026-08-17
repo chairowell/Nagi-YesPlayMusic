@@ -84,16 +84,22 @@ describe('详情页端点服务', () => {
         unknownFutureField: true,
       },
       songs: [song],
+      embeddedCount: 2,
     });
     const data = await fetchPlaylistDetail(3);
     expect(fetchCalls[0]).toBe('/api/native/playlist/detail?id=3');
     expect(data.playlist?.['unknownFutureField']).toBe(true);
     expect(data.playlist?.trackIds).toEqual([{ id: 1 }, { id: 2 }]);
     expect(data.playlist?.tracks[0]?.al?.picUrl).toBe('http://cover');
+    // Source-row count survives the per-row drops for the paging cursor.
+    expect(data.playlist?.embeddedTrackCount).toBe(2);
   });
 
   test('专辑与歌手：各自的页面形状', async () => {
-    answerWith(200, { album: { id: 9, name: 'Album' }, songs: [song] });
+    answerWith(200, {
+      album: { id: 9, name: 'Album', artist: { id: 7, name: 'Artist' } },
+      songs: [song],
+    });
     const album = await fetchAlbumDetail(9);
     expect(fetchCalls[0]).toBe('/api/native/album/detail?id=9');
     expect(album.album.name).toBe('Album');
@@ -128,5 +134,17 @@ describe('详情页端点服务', () => {
 
     answerWith(200, { songs: [] });
     await expect(fetchAlbumDetail(9)).rejects.toThrow('详情响应缺少 album');
+  });
+
+  test('页面无条件解引用的脊柱字段缺失时整体报错', async () => {
+    // The old decoders guaranteed these; a partial code-200 body must not
+    // reach the views and TypeError there.
+    answerWith(200, { playlist: { id: 3, name: '歌单' }, songs: [] });
+    await expect(fetchPlaylistDetail(3)).rejects.toThrow(
+      '歌单详情响应缺少 creator'
+    );
+
+    answerWith(200, { album: { id: 9, name: 'Album' }, songs: [] });
+    await expect(fetchAlbumDetail(9)).rejects.toThrow('专辑详情响应缺少 artist');
   });
 });

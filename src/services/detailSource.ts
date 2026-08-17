@@ -51,13 +51,40 @@ function songsOf(body: Record<string, unknown>, field: string): Track[] {
   return adaptTrackItems(items);
 }
 
+/**
+ * Metadata passes through verbatim, but the fields the pages dereference
+ * unconditionally (the old decoders' guarantee) still gate the response:
+ * a code-200 body missing them must fail the request, not crash a view.
+ */
+function requireSpine(checks: Record<string, boolean>, what: string): void {
+  for (const [field, ok] of Object.entries(checks)) {
+    if (!ok) {
+      throw new Error(`${what}响应缺少 ${field}`);
+    }
+  }
+}
+
 export async function fetchPlaylistDetail(
   id: number
 ): Promise<PlaylistDetailResponse> {
   const body = await fetchDetail('playlist', id);
+  const meta = metaOf(body, 'playlist');
+  requireSpine(
+    {
+      id: typeof meta['id'] === 'number',
+      creator: typeof meta['creator'] === 'object' && meta['creator'] !== null,
+      trackIds: Array.isArray(meta['trackIds']),
+    },
+    '歌单详情'
+  );
   const playlist = {
-    ...metaOf(body, 'playlist'),
+    ...meta,
     tracks: songsOf(body, 'songs'),
+    // Pre-drop embedded row count: the playlist page's paging cursor
+    // indexes trackIds, so it must count source rows, not survivors.
+    ...(typeof body['embeddedCount'] === 'number'
+      ? { embeddedTrackCount: body['embeddedCount'] }
+      : {}),
   } as unknown as DetailedPlaylist;
   return { playlist };
 }
@@ -66,8 +93,16 @@ export async function fetchAlbumDetail(
   id: number
 ): Promise<{ album: DetailedAlbum; songs: Track[] }> {
   const body = await fetchDetail('album', id);
+  const meta = metaOf(body, 'album');
+  requireSpine(
+    {
+      id: typeof meta['id'] === 'number',
+      artist: typeof meta['artist'] === 'object' && meta['artist'] !== null,
+    },
+    '专辑详情'
+  );
   return {
-    album: metaOf(body, 'album') as unknown as DetailedAlbum,
+    album: meta as unknown as DetailedAlbum,
     songs: songsOf(body, 'songs'),
   };
 }
@@ -96,8 +131,10 @@ export async function fetchArtistDetail(
   id: number
 ): Promise<{ artist: Artist; hotSongs: Track[] }> {
   const body = await fetchDetail('artist', id);
+  const meta = metaOf(body, 'artist');
+  requireSpine({ id: typeof meta['id'] === 'number' }, '歌手详情');
   return {
-    artist: metaOf(body, 'artist') as unknown as Artist,
+    artist: meta as unknown as Artist,
     hotSongs: songsOf(body, 'hotSongs'),
   };
 }
