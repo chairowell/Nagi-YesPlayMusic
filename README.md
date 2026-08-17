@@ -114,6 +114,18 @@ sel = 3
 
 </details>
 
+## 给 AI agent 的 skill
+
+仓库自带一个 [Agent Skill](skills/ypm/SKILL.md)，让任何支持 SKILL.md 标准的
+agent（Claude Code、Cursor、Codex、dsh 等）通过 `ypm` CLI 控制播放：
+查在放的歌、暂停/继续、切歌。
+
+```sh
+npx skills add nagi-studio/YesPlayMusic
+```
+
+也可以把 `skills/ypm/` 目录手动拷进你的 agent 的 skills 目录。
+
 ## 安装
 
 > **尝鲜版 [v0.9.0-canary.1](https://github.com/nagi-studio/YesPlayMusic/releases/tag/v0.9.0-canary.1)** 带上面那个终端版。
