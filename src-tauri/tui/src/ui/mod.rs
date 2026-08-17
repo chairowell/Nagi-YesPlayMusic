@@ -330,7 +330,9 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
     let mut lines = Vec::new();
     for (keycap, (_, label)) in keycaps.into_iter().zip(rows) {
         let gap = key_col.saturating_sub(text::display_width(&keycap));
-        let cap = Span::styled(keycap, Style::new().fg(theme.fg).bg(theme.faint));
+        // No chip background here: the footer's chips sit in one short row,
+        // while a column of ragged-width blocks just reads as noise.
+        let cap = Span::styled(keycap, Style::new().fg(theme.fg));
         let text = Span::styled(i18n::t(label), Style::new().fg(theme.dim));
         // A label too wide for the row moves under its keycap instead of
         // being clipped: reading the whole binding beats keeping the grid.
@@ -1261,7 +1263,8 @@ mod tests {
             .find(|x| buffer[(*x, key_y)].symbol() == "P")
             .unwrap();
         assert_eq!(buffer[(key_x, key_y)].fg, state.theme.fg);
-        assert_eq!(buffer[(key_x, key_y)].bg, state.theme.faint);
+        // Keys read by colour alone; a filled chip per row looked ragged.
+        assert_ne!(buffer[(key_x, key_y)].bg, state.theme.faint);
     }
 
     #[test]
