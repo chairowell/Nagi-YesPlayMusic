@@ -10,8 +10,8 @@
 <p align="center"><sub>Tauri 2 桌面应用 + <code>ypm</code> 终端版 · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
 
 <p align="center">
-  <img src="images/tui-now-playing.png" alt="ypm 终端版：正在播放" height="300">
-  <img src="images/tui-spectrum.png" alt="ypm 终端版：频谱与双语歌词" height="300">
+  <img src="images/lyrics.png" alt="桌面版：歌词页" height="260">
+  <img src="images/tui-spectrum.png" alt="ypm 终端版：频谱与双语歌词" height="260">
 </p>
 
 ---
@@ -52,6 +52,8 @@ Apple Silicon Mac 是正式支持平台，Windows x64 和 Ubuntu x64 由 CI 提�
 ## ypm 终端版
 
 ![ypm 终端版：曲库](images/tui-library.png)
+
+![ypm 终端版：正在播放](images/tui-now-playing.png)
 
 封面直接画在终端里，歌词双语滚动，带频谱。8 套内置主题，支持 Nerd Font 图标和自定义配色。
 
