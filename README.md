@@ -41,8 +41,8 @@ Apple Silicon Mac 是正式支持平台，Windows x64 和 Ubuntu x64 由 CI 提�
 
 ![菜单栏歌词](images/menubar.png)
 
-另外多了一种 Anon 进度条皮肤（和彩虹猫互斥，设置里切换），并修掉了网络慢时快速切歌
-会把新歌歌词覆盖成上一首的老问题。
+另外多了 Anon 和 Creeper（Minecraft 苦力怕）两种进度条皮肤（和彩虹猫三者互斥，设置里
+切换），并修掉了网络慢时快速切歌会把新歌歌词覆盖成上一首的老问题。
 
 ## ypm 终端版
 

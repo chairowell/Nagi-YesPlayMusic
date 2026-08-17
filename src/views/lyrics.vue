@@ -107,15 +107,21 @@
             :class="{
               anon: settings.anonStyle,
               nyancat: settings.nyancatStyle,
+              creeper: settings.creeperStyle,
             }"
             :style="{ width: miniProgressPercent + '%' }"
           ></div>
           <span
-            v-if="settings.anonStyle || settings.nyancatStyle"
+            v-if="
+              settings.anonStyle ||
+              settings.nyancatStyle ||
+              settings.creeperStyle
+            "
             class="mini-progress-rider"
             :class="{
               anon: settings.anonStyle,
               nyancat: settings.nyancatStyle,
+              creeper: settings.creeperStyle,
               'nyancat-stop': !player.playing,
             }"
             :style="miniProgressRiderStyle"
@@ -562,7 +568,11 @@ export default defineComponent({
       return Math.min(100, (progress / duration) * 100);
     },
     miniProgressRiderStyle() {
-      return getMiniProgressRiderStyle(this.miniProgressPercent);
+      const base = getMiniProgressRiderStyle(this.miniProgressPercent);
+      if (this.settings.creeperStyle) {
+        return { ...base, transform: 'translateX(-50%)' };
+      }
+      return base;
     },
     currentTrack() {
       return this.player.currentTrack;
@@ -1285,6 +1295,16 @@ export default defineComponent({
           #f0f 100%
         );
       }
+
+      &.creeper {
+        height: 3px;
+        background: linear-gradient(
+          90deg,
+          #4a7c2a 0%,
+          #6cb347 40%,
+          #8dd968 100%
+        );
+      }
     }
 
     // Keep the rider inside the track until 100%.
@@ -1310,6 +1330,13 @@ export default defineComponent({
 
       &.nyancat.nyancat-stop {
         background-image: url('/img/logos/nyancat-stop.png');
+      }
+
+      &.creeper {
+        width: 48px;
+        height: 48px;
+        background: url('/img/logos/creeper.gif') center / 48px 48px no-repeat;
+        margin: 0 0 -6px 0;
       }
     }
 
