@@ -16,6 +16,7 @@ pub mod pixel;
 mod player;
 #[cfg(unix)]
 mod remote;
+mod self_update;
 mod spectrum;
 mod store;
 mod terminal_background;
@@ -61,6 +62,8 @@ enum Ctl {
     Next,
     /// Go back to the previous track.
     Prev,
+    /// Update ypm itself to the newest release.
+    Update,
 }
 
 #[cfg(unix)]
@@ -73,12 +76,18 @@ impl From<Ctl> for remote::Command {
             Ctl::Toggle => Self::Toggle,
             Ctl::Next => Self::Next,
             Ctl::Prev => Self::Prev,
+            // Handled in main() before this conversion runs.
+            Ctl::Update => unreachable!("update is not a remote command"),
         }
     }
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(Ctl::Update) = args.command {
+        let runtime = tokio::runtime::Runtime::new()?;
+        return runtime.block_on(self_update::run());
+    }
     if let Some(command) = args.command {
         #[cfg(unix)]
         {

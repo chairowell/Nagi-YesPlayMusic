@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { resolveRuntime as realResolveRuntime } from '../src/utils/runtime';
 
 const getTestAppStore = () => ({
   settings: {
@@ -13,7 +14,11 @@ mock.module('@/stores/accessor', () => ({
   getAppStore: getTestAppStore,
   getAppStoreIfReady: getTestAppStore,
 }));
+// Cover every export (a later test file may import this module after the
+// mock replaced it), but forward the real resolveRuntime: runtime.test.ts
+// exercises it and bun's mock.module is process-global.
 mock.module('@/utils/runtime', () => ({
+  resolveRuntime: realResolveRuntime,
   isDesktopRuntime: true,
   isTauriRuntime: true,
 }));

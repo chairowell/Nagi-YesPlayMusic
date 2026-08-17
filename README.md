@@ -114,9 +114,27 @@ sel = 3
 
 </details>
 
+## 给 AI agent 的 skill
+
+仓库自带一个 [Agent Skill](skills/ypm/SKILL.md)，让任何支持 SKILL.md 标准的
+agent（Claude Code、Cursor、Codex、dsh 等）通过 `ypm` CLI 控制播放：
+查在放的歌、暂停/继续、切歌。
+
+```sh
+mkdir -p ~/.agents/skills/ypm && curl -fsSL \
+  https://raw.githubusercontent.com/nagi-studio/YesPlayMusic/master/skills/ypm/SKILL.md \
+  -o ~/.agents/skills/ypm/SKILL.md
+```
+
+`~/.agents/skills/` 是各家 agent 通用的位置；dsh 另外还认 `~/.dsh/skills/`
+和项目内 `.dsh/skills/`，Claude Code 认 `~/.claude/skills/`，换个目标目录即可。
+
+用 `npx skills add nagi-studio/YesPlayMusic -s ypm -g -a universal` 也能装，
+但那会为这一个文件克隆整个仓库。
+
 ## 安装
 
-> **尝鲜版 [v0.9.0-canary.1](https://github.com/nagi-studio/YesPlayMusic/releases/tag/v0.9.0-canary.1)** 带上面那个终端版。
+> **[尝鲜版（canary）](https://github.com/nagi-studio/YesPlayMusic/releases?q=prerelease%3Atrue&expanded=true)** 带上面那个终端版。
 > canary 走独立更新通道，和 stable 互不干扰。稳定版请用下面的 Releases 页面。
 
 到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 DMG，
@@ -148,12 +166,13 @@ stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 
 
 </details>
 
-## 两次桌面重构
+## 三次桌面重构
 
 | 阶段                        | 改动                                                                                                            |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `v0.6.0`：桌面外壳          | Electron → Tauri 2；升级 Vue 3、Vite 7、TypeScript 6 和 Pinia 4，改用系统 WebView                               |
 | `v0.8.0`：后台服务          | Bun Sidecar → Rust Sidecar；页面托管、网易云 API、同源 `/api` 和 UNM 全部改写为 Rust，桌面包不再携带 Bun runtime |
+| `v0.9.0`：业务核心          | 网易云客户端逻辑下沉 `core::ncm`；桌面端与终端版共用同一份 Rust 实现，通用转发路由从 57 条减到 45 条              |
 
 `.app` 从 82.6 MiB 降到 23.0 MiB，DMG 12.0 MiB，Sidecar 常驻内存约 9 MiB。
 详见[功能迁移表](docs/feature-migration.md)和[性能迁移基线](docs/performance-baseline.md)。
