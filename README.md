@@ -10,8 +10,8 @@
 <p align="center"><sub>Tauri 2 桌面应用 + <code>ypm</code> TUI · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
 
 <p align="center">
-  <img src="images/tui-now-playing.png" alt="ypm TUI：正在播放" height="300">
-  <img src="images/tui-spectrum.png" alt="ypm TUI：频谱与双语歌词" height="300">
+  <img src="images/tui-now-playing.png" alt="ypm TUI：正在播放" width="423">
+  <img src="images/tui-spectrum.png" alt="ypm TUI：频谱与双语歌词" width="375">
 </p>
 
 ---

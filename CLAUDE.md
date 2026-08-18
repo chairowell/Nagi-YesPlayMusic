@@ -13,6 +13,7 @@ Ubuntu x64 由 CI 提供 Tauri 实验构建。
 | Windows x64 NSIS 安装包         | `bun run build:tauri:windows` |
 | Ubuntu x64 AppImage + deb       | `bun run build:tauri:linux`   |
 | 只构建渲染进程（浏览器里调 UI） | `bun run build:renderer`      |
+| 构建 ypm TUI                    | `cargo build --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui` |
 
 Tauri 产物在 `src-tauri/target/<target-triple>/release/bundle/`。macOS 正式发布仍通过
 `bun run package:tauri:dmg` 收集到 `dist_tauri/`。
@@ -29,6 +30,10 @@ Tauri 产物在 `src-tauri/target/<target-triple>/release/bundle/`。macOS 正�
 
 CI（`.github/workflows/build.yaml`）只验证每次 push 的**最后一个 commit**，一次推 21 个
 中间那 20 个不会被碰，所以这道关必须在本地。
+
+改了 Rust 还要自己跑 `cargo test --workspace`、`cargo clippy --workspace --all-targets`
+和 `cargo fmt --all -- --check`（都在 `src-tauri/` 下）。**fmt 是 CI 门禁但不在 pre-commit
+里**，忘了跑就会在 CI 上红。
 
 ## 发版
 
@@ -48,6 +53,13 @@ canary 发布后的 `release.published` 会触发 `.github/workflows/publish-can
 当前 macOS 发布政策固定使用 adhoc Hardened Runtime DMG，`APPLE_SIGNING_ENABLED` 保持非
 `true`；Developer ID 与公证不是验收门禁。CI 中的 Apple 签名分支只保留为未来可选能力。
 Tauri updater 的 Minisign 密钥是另一套完整性门禁，不能因为不做 Developer ID 而关闭。
+
+`draft-release` 汇总产物时会用 updater 私钥给三个 `ypm-*` 二进制出 `.sig`，
+`ypm update` 靠它验签；`generate-updater-manifest.mjs` 按 `ypm-` 前缀跳过这些文件。
+草稿 release 无法用 `gh release edit <tag>` 定位（tag 还没绑上），改用
+`gh api -X PATCH repos/<owner>/<repo>/releases/<id>`。GitHub 对同一个 release 只发一次
+`release.published`，所以发布后才修 tag 会让 canary feed 永远不推进——
+`publish-canary-updater-feed.yaml` 留了 `workflow_dispatch`（输入 tag）作为补救。
 
 **发布前必须手写 release 正文**，不能只留自动生成的 Full Changelog 链接。
 仓库没有 CHANGELOG 文件，变更记录只存在于 release 正文里。格式照 v0.6.2 / v0.6.3：
@@ -74,6 +86,14 @@ Tauri 主进程入口是 `src-tauri/src/main.rs`，负责窗口、托盘、快�
 生命周期。`src-tauri/sidecar/` 会编译成各平台独立的 Rust 可执行文件，负责网易云 API、
 托管渲染产物、同源 `/api` 代理和 UNM。正式版页面来自 `http://127.0.0.1:28232`；
 `12754` API 端口在 dev 和 release 都会监听。
+
+网易云业务（登录、搜索、歌单/专辑/歌手详情、播放源、歌词、收藏、每日推荐、私人 FM）
+收在 `src-tauri/core/src/ncm.rs`，GUI 与 TUI 共用同一份实现：Sidecar 用 `/native/*`
+类型化端点把它暴露给渲染层（`src/services/*.ts` 负责适配回组件形状），TUI 直接调。
+`src-tauri/sidecar/src/ncm.rs` 只剩 manifest 驱动的通用转发壳（45 条路由，
+`src/sidecar-route-manifest.json` 是唯一事实来源，改动要同步 `FRONTEND_ROUTE_COUNT`
+和 `test/sidecarRouteManifest.test.ts` 的计数）。新迁端点照 `/native/*` 模板：
+cookie + realIP + proxy 必须透传，逐行降级而不是整页报错。
 
 **生产模式不走 `app://` 协议**，而是加载 Sidecar 的 loopback HTTP 页面。
 dev 的 Vite server 也配了 `/api` 同源代理指向 12754 —— 这个不能省，否则跨端口属于跨站，登录 cookie 会被
@@ -105,6 +125,11 @@ WebView 按 origin 隔离存储，而 dev 和正式版端口不同：
 4. 单实例锁：`/Applications` 里的正式版开着时，新起的实例会把焦点交给已有窗口后退出，
    看起来像打包失败。测试前先退掉。
 5. 卸载 brew cask 时**不要加 `--zap`**，会连数据目录一起删。
+6. macOS 上 `cp` 覆盖已存在的可执行文件会让它的代码签名失效，运行时被直接
+   SIGKILL（表现为「什么都不输出、exit 137」）。换 `mv`（原子 rename）或
+   `codesign -s - --force`；`ypm update` 的临时文件 + rename 正是为此。
+7. ypm 启动时要向终端查询图形能力，之后会清扫残留回应（否则变成幽灵按键），
+   这一扫会吃掉那一刻的真实按键——启动后第一次按键偶尔没反应是这个原因。
 
 ## 约定
 
@@ -114,3 +139,4 @@ WebView 按 origin 隔离存储，而 dev 和正式版端口不同：
   `.githooks/commit-msg` 会拦下不合规的标题（rebase / merge 进行中自动放行）。
   正文用中文说清动机和影响
 - 上游仓库是 `upstream` remote，同步用 `git fetch upstream`
+- 终端前端一律写 **TUI**（`ypm TUI`），中文文案里也不要翻成「终端版」
