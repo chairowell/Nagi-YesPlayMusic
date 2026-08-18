@@ -516,6 +516,7 @@ pub struct AppState {
     terminal_size: (u16, u16),
     pub confirm_quit: bool,
     pub show_help: bool,
+    pub force_redraw: bool,
     pub spectrum: SpectrumView,
     pending_g: bool,
     pending_auto_next: bool,
@@ -642,6 +643,7 @@ impl AppState {
             terminal_size,
             confirm_quit: false,
             show_help: false,
+            force_redraw: false,
             spectrum: SpectrumView::new(config.spectrum_style),
             pending_g: false,
             pending_auto_next: false,
@@ -2368,7 +2370,8 @@ pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::EnableMouseCapture,
-        crossterm::event::EnableBracketedPaste
+        crossterm::event::EnableBracketedPaste,
+        crossterm::event::EnableFocusChange
     );
     let result = event_loop(
         &mut terminal,
@@ -2380,7 +2383,8 @@ pub async fn run(mut loaded: LoadedConfig) -> Result<()> {
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::DisableMouseCapture,
-        crossterm::event::DisableBracketedPaste
+        crossterm::event::DisableBracketedPaste,
+        crossterm::event::DisableFocusChange
     );
     ratatui::restore();
     result
@@ -2612,6 +2616,10 @@ async fn event_loop(
                     true
                 }
             });
+        }
+        if state.force_redraw {
+            state.force_redraw = false;
+            terminal.clear()?;
         }
         terminal.draw(|frame| ui::draw(frame, &mut state, &mut hits))?;
     }

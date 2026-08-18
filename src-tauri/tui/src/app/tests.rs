@@ -2194,6 +2194,55 @@ async fn mouse_click_over_a_help_overlay_only_dismisses_the_overlay() {
 }
 
 #[tokio::test]
+async fn fullwidth_question_mark_from_an_ime_opens_the_help_overlay() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+
+    // A Chinese IME sends ？ where the binding says ?.
+    state.update(raw_key(KeyCode::Char('？')), &fx);
+    assert!(state.show_help);
+}
+
+#[tokio::test]
+async fn ctrl_l_repaints_without_dismissing_the_help_overlay() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.show_help = true;
+
+    state.update(
+        Action::RawKey(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)),
+        &fx,
+    );
+    assert!(state.force_redraw, "Ctrl+L must request a full repaint");
+    assert!(state.show_help, "the overlay survives a repaint request");
+
+    // Regained focus arrives pre-mapped and must do the same.
+    state.force_redraw = false;
+    state.update(Action::ForceRedraw, &fx);
+    assert!(state.force_redraw);
+    assert!(state.show_help);
+}
+
+#[tokio::test]
+async fn ctrl_l_repaints_instead_of_typing_into_the_search_box() {
+    let directory = tempfile::tempdir().unwrap();
+    let fx = effects(&directory);
+    let mut state = AppState::new(&Config::default());
+    state.view = View::Search;
+    state.search.input = true;
+    state.search.query = "needle".into();
+
+    state.update(
+        Action::RawKey(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)),
+        &fx,
+    );
+    assert!(state.force_redraw);
+    assert_eq!(state.search.query, "needle");
+}
+
+#[tokio::test]
 async fn narrowing_the_terminal_clears_hidden_sidebar_focus() {
     let directory = tempfile::tempdir().unwrap();
     let fx = effects(&directory);

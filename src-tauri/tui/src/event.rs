@@ -16,6 +16,9 @@ pub fn action_for(event: Event) -> Option<Action> {
         Event::Mouse(mouse) => Some(Action::Mouse(mouse)),
         Event::Resize(cols, rows) => Some(Action::Resize { cols, rows }),
         Event::Paste(text) => Some(Action::Paste(text)),
+        // Clicking back into the pane is exactly when a stale frame (e.g. a
+        // multiplexer dropped our redraw) gets noticed: repaint to heal it.
+        Event::FocusGained => Some(Action::ForceRedraw),
         _ => None,
     }
 }
@@ -160,20 +163,26 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return match key.code {
             KeyCode::Char('c') => Some(Action::Quit),
+            KeyCode::Char('l') => Some(Action::ForceRedraw),
             // vim half-page jumps
             KeyCode::Char('d') => Some(Action::MoveSelection(10)),
             KeyCode::Char('u') => Some(Action::MoveSelection(-10)),
             _ => None,
         };
     }
+    // A Chinese IME turns the shifted punctuation keys into their fullwidth
+    // twins (？ ， ：) before the terminal ever sees them; accept both so the
+    // bindings survive a forgotten input-method switch.
     match key.code {
-        KeyCode::Char(':') => Some(Action::OpenCommandPalette),
+        KeyCode::Char(':') | KeyCode::Char('：') => Some(Action::OpenCommandPalette),
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('1') => Some(Action::SwitchView(View::NowPlaying)),
         KeyCode::Char('2') => Some(Action::SwitchView(View::Library)),
         KeyCode::Char('3') => Some(Action::SwitchView(View::Search)),
         KeyCode::Char('4') => Some(Action::SwitchView(View::Queue)),
-        KeyCode::Char('5') | KeyCode::Char(',') => Some(Action::SwitchView(View::Settings)),
+        KeyCode::Char('5') | KeyCode::Char(',') | KeyCode::Char('，') => {
+            Some(Action::SwitchView(View::Settings))
+        }
         // vim: h backs out, l dives in.
         KeyCode::Backspace | KeyCode::Char('h') => Some(Action::Back),
         KeyCode::Esc => Some(Action::Escape),
@@ -182,7 +191,7 @@ pub fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('G') | KeyCode::End => Some(Action::JumpBottom),
         KeyCode::Home => Some(Action::JumpTop),
         KeyCode::Char('y') => Some(Action::ConfirmYes),
-        KeyCode::Char('?') => Some(Action::ToggleHelp),
+        KeyCode::Char('?') | KeyCode::Char('？') => Some(Action::ToggleHelp),
         KeyCode::Char('z') => Some(Action::ToggleZen),
         KeyCode::Char('v') => Some(Action::ToggleSpectrum),
         KeyCode::Char('s') => Some(Action::ToggleShuffle),
@@ -308,6 +317,33 @@ mod tests {
             map(KeyCode::Char(',')),
             Some(Action::SwitchView(View::Settings))
         ));
+    }
+
+    #[test]
+    fn fullwidth_ime_punctuation_maps_like_its_ascii_twin() {
+        let map = |code| key_action(KeyEvent::new(code, KeyModifiers::NONE));
+        assert!(matches!(map(KeyCode::Char('？')), Some(Action::ToggleHelp)));
+        assert!(matches!(
+            map(KeyCode::Char('，')),
+            Some(Action::SwitchView(View::Settings))
+        ));
+        assert!(matches!(
+            map(KeyCode::Char('：')),
+            Some(Action::OpenCommandPalette)
+        ));
+    }
+
+    #[test]
+    fn repaint_arrives_from_ctrl_l_and_regained_focus() {
+        assert!(matches!(
+            key_action(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)),
+            Some(Action::ForceRedraw)
+        ));
+        assert!(matches!(
+            action_for(Event::FocusGained),
+            Some(Action::ForceRedraw)
+        ));
+        assert!(action_for(Event::FocusLost).is_none());
     }
 
     #[test]

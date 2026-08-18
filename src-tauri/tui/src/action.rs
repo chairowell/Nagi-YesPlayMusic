@@ -94,6 +94,9 @@ pub enum Action {
     SelectSearchChannel(SearchChannel),
     ToggleLibraryFocus,
     ToggleHelp,
+    /// Repaint from scratch (Ctrl+L / regained focus): a multiplexer that
+    /// drops a frame leaves stale cells ratatui's diff will never touch.
+    ForceRedraw,
     ToggleLike,
     /// Replace the queue with a fresh personal-FM batch and start playing.
     StartPersonalFm,

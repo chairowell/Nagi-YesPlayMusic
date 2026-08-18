@@ -23,6 +23,14 @@ impl AppState {
             self.advance_command_feedback();
             return;
         }
+        // Ctrl+L repaints through every modal and input owner: it exists to
+        // heal a desynced screen, so nothing may swallow it.
+        if let Action::RawKey(key) = &action {
+            if matches!(event::key_action(*key), Some(Action::ForceRedraw)) {
+                self.force_redraw = true;
+                return;
+            }
+        }
         // The command palette is the topmost input owner. Background async
         // results still reduce normally while keys, paste, and mouse stay modal.
         let action = if self.command_palette.open {
@@ -177,6 +185,7 @@ impl AppState {
                 }
             }
             Action::ConfirmYes => {}
+            Action::ForceRedraw => self.force_redraw = true,
             Action::Quit => self.confirm_quit = true,
             Action::OpenCommandPalette => {
                 self.show_help = false;

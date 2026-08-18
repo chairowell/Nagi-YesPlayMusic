@@ -290,6 +290,7 @@ fn draw_help(frame: &mut Frame, state: &AppState, area: Rect) {
         ("z", Key::Zen),
         ("v", Key::Spectrum),
         ("?", Key::LabelHelp),
+        ("Ctrl+L", Key::Redraw),
         (",", Key::Settings),
         ("q", Key::Quit),
     ];
