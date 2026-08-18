@@ -116,6 +116,9 @@ pub struct Config {
     /// Playing layout: "side" = cover fills the height, lyrics beside;
     /// "stacked" = cover centered on top, lyrics below.
     pub layout: String,
+    /// Cap on visible lyric rows (current line and translations included),
+    /// centered in the panel. None = fill whatever the layout offers.
+    pub lyric_rows: Option<u16>,
     /// Optional image for the idle dashboard; run through the same pixel
     /// pipeline as covers. Falls back to the built-in vinyl.
     pub idle_art: Option<String>,
@@ -187,6 +190,7 @@ impl Default for Config {
             cache_limit_mib: None,
             enter_replaces_queue: true,
             layout: "side".into(),
+            lyric_rows: None,
             idle_art: None,
             progress_style: "dot".into(),
             icons: IconStyle::Unicode,
@@ -299,6 +303,7 @@ const TEMPLATE: &str = r#"# ypm 配置 — 常用项也可在 ypm 设置页修�
 #                              # synthwave84 | laserwave | fairyfloss | ultraviolence | transparent
 #                              # 省略时：暗色终端用 db16，亮色终端用 fairyfloss
 # layout = "side"             # side（封面撑满高度）| stacked（封面居中在上）
+# lyric_rows = 7               # 歌词最多显示行数（含当前行与翻译行），在面板里居中；省略 = 自动填满
 # progress_style = "dot"      # dot（细线+圆点）| bar（粗块）
 # icons = "unicode"           # unicode（无需特殊字体）| nerd（需要 Nerd Font）
 # cover_mode = "pixel"        # pixel（字符像素画）| original（终端原图协议，不支持时回退 pixel）
@@ -475,6 +480,9 @@ mod tests {
 
         let parsed: Config = toml::from_str("cache_limit_mib = 4096").unwrap();
         assert_eq!(parsed.cache_limit_mib, Some(4096));
+
+        let parsed: Config = toml::from_str("lyric_rows = 7").unwrap();
+        assert_eq!(parsed.lyric_rows, Some(7));
     }
 
     #[test]
@@ -613,6 +621,7 @@ idle_art = "~/art.png"
                 cache_limit_mib: Some(2048),
                 enter_replaces_queue: false,
                 layout: "stacked".into(),
+                lyric_rows: Some(7),
                 idle_art: Some("~/cover.png".into()),
                 progress_style: "bar".into(),
                 icons: IconStyle::Nerd,

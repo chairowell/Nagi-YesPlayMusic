@@ -74,9 +74,14 @@ fn side_panel_spectrum_rows(state: &AppState, panel_height: u16) -> u16 {
     }
     if !state.lyrics.is_empty() {
         let available = panel_height.saturating_sub(text_rows + 1 + SIDE_PANEL_GAP_ROWS);
-        let lyric_rows = (available * 2 / 5)
+        let mut lyric_rows = (available * 2 / 5)
             .clamp(SIDE_PANEL_MIN_LYRIC_ROWS, SIDE_PANEL_MAX_LYRIC_ROWS)
             .min(available);
+        // A configured cap frees its unused budget rows to the spectrum
+        // instead of leaving them blank around the shrunken window.
+        if let Some(configured) = state.config.lyric_rows {
+            lyric_rows = lyric_rows.min(configured);
+        }
         text_rows += 1 + lyric_rows;
     } else if state.status.is_some() {
         text_rows += 2;
@@ -379,7 +384,11 @@ fn lyric_window(state: &AppState, height: u16) -> Vec<Line<'static>> {
     let rows = usize::from(height);
     let anchor = current.unwrap_or(0);
     let current_cost = lyric_display_rows(&state.lyrics[anchor]);
-    let window_rows = rows.min(MAX_LYRIC_CONTEXT_ROWS * 2 + current_cost);
+    let mut window_cap = MAX_LYRIC_CONTEXT_ROWS * 2 + current_cost;
+    if let Some(configured) = state.config.lyric_rows {
+        window_cap = window_cap.min(usize::from(configured));
+    }
+    let window_rows = rows.min(window_cap);
     let target_above = ((window_rows.saturating_sub(current_cost)) / 2).min(MAX_LYRIC_CONTEXT_ROWS);
     let target_below = window_rows
         .saturating_sub(target_above + current_cost)
@@ -1055,6 +1064,38 @@ mod tests {
                     .is_some_and(|span| span.content.starts_with("Line")))
                 .count(),
             19
+        );
+    }
+
+    #[test]
+    fn configured_lyric_rows_shrink_the_window_and_keep_it_centered() {
+        let mut state = AppState::new(&Config::default());
+        state.config.lyric_rows = Some(5);
+        state.position = Duration::from_secs(15);
+        state.lyrics = (0..31)
+            .map(|index| LyricLine {
+                time: Duration::from_secs(index),
+                text: format!("Line {index}"),
+                translation: None,
+                word_timing: None,
+            })
+            .collect();
+
+        let lines = lyric_window(&state, 31);
+        let lyric_rows: Vec<&str> = lines
+            .iter()
+            .filter_map(|line| line.spans.get(1).map(|span| span.content.as_ref()))
+            .filter(|content| content.starts_with("Line"))
+            .collect();
+        assert_eq!(lyric_rows.len(), 5, "the cap wins over the panel height");
+        assert_eq!(lyric_rows.first().copied(), Some("Line 13"));
+        let current = lines
+            .iter()
+            .position(|line| line.spans.first().is_some_and(|span| span.content == "▎ "))
+            .unwrap();
+        assert_eq!(
+            current, 15,
+            "the window floats mid-panel, current mid-window"
         );
     }
 

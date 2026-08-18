@@ -20,6 +20,7 @@ pub(crate) enum SettingField {
     CoverPalette,
     CoverDetail,
     Layout,
+    LyricRows,
     ProgressStyle,
     PixelDetail,
     QueueBehavior,
@@ -39,7 +40,7 @@ pub(crate) enum SettingField {
 }
 
 impl SettingField {
-    pub(crate) const ALL: [Self; 24] = [
+    pub(crate) const ALL: [Self; 25] = [
         Self::Theme,
         Self::ThemeMode,
         Self::Language,
@@ -48,6 +49,7 @@ impl SettingField {
         Self::CoverPalette,
         Self::CoverDetail,
         Self::Layout,
+        Self::LyricRows,
         Self::ProgressStyle,
         Self::PixelDetail,
         Self::QueueBehavior,
@@ -76,6 +78,7 @@ impl SettingField {
             Self::CoverPalette => Key::SettingCoverPalette,
             Self::CoverDetail => Key::SettingCoverDetail,
             Self::Layout => Key::SettingLayout,
+            Self::LyricRows => Key::SettingLyricRows,
             Self::ProgressStyle => Key::SettingProgressStyle,
             Self::PixelDetail => Key::SettingPixelDetail,
             Self::QueueBehavior => Key::SettingQueueBehavior,
@@ -262,6 +265,13 @@ impl AppState {
                 const VALUES: &[&str] = &["side", "stacked"];
                 self.config.layout = cycle(VALUES, &self.config.layout.as_str(), delta).to_owned();
             }
+            SettingField::LyricRows => {
+                // Odd presets keep the current line visually centered; larger
+                // custom values live in the config file only.
+                const VALUES: &[Option<u16>] =
+                    &[None, Some(3), Some(5), Some(7), Some(9), Some(13), Some(17)];
+                self.config.lyric_rows = cycle(VALUES, &self.config.lyric_rows, delta);
+            }
             SettingField::ProgressStyle => {
                 const VALUES: &[&str] = &["dot", "bar"];
                 self.config.progress_style =
@@ -417,6 +427,10 @@ impl AppState {
                 _ => "Side",
             }
             .to_owned(),
+            SettingField::LyricRows => match self.config.lyric_rows {
+                Some(rows) => rows.to_string(),
+                None => format!("auto ({})", i18n::t(Key::SettingDefaultTag)),
+            },
             SettingField::ProgressStyle => match self.config.progress_style.as_str() {
                 "bar" => "Bar",
                 _ => "Dot",
