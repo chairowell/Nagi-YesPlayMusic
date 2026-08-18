@@ -51,3 +51,6 @@ devenv.local.nix
 
 # Local architecture plans
 /docs/sidecar-rust-migration.local.md
+
+# npx skills 会把技能副本写进项目目录，仓库只保留 skills/ 下的原件
+.agents/
