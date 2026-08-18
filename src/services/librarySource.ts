@@ -1,4 +1,5 @@
 import { getAppStore } from '@/stores/accessor';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { unlockParams } from '@/services/playbackSource';
 
 /**
@@ -15,7 +16,7 @@ async function libraryRequest(
   for (const [key, value] of Object.entries(fields)) {
     params.set(key, value);
   }
-  const response = await fetch(`/api/native/library/${path}?${params}`, {
+  const response = await nativeFetch(`/api/native/library/${path}?${params}`, {
     method,
   });
   if (!response.ok) {

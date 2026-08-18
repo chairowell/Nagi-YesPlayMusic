@@ -1,4 +1,5 @@
 import { isTauriRuntime } from '@/utils/runtime';
+import { nativeFetch } from '@/utils/nativeFetch';
 import type { Track } from '@/types/domain';
 
 export interface UnblockedSong {
@@ -15,7 +16,7 @@ export async function requestUnblockedSong(
   if (!isTauriRuntime) return null;
 
   try {
-    const response = await fetch('/api/native/unblock-music', {
+    const response = await nativeFetch('/api/native/unblock-music', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sourceListString, track, context }),

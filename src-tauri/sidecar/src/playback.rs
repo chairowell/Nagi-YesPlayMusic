@@ -20,7 +20,8 @@ use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::json;
 use yesplaymusic_core::ncm::{
-    lyrics_with, song_url_with, LyricsPayload, NcmClientError, PlaybackSource, SongUrlError,
+    capture_rotated_cookies, lyrics_with, song_url_with, LyricsPayload, NcmClientError,
+    PlaybackSource, SongUrlError,
 };
 
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -123,32 +124,56 @@ async fn source_handler(
 ) -> Response<Body> {
     let resolved = tokio::time::timeout(
         RESOLVE_TIMEOUT,
-        state.resolver.song_url(
+        capture_rotated_cookies(state.resolver.song_url(
             ncm_query(&headers, query.real_ip, query.proxy),
             track_id,
             query.bitrate,
-        ),
+        )),
     )
     .await;
-    let body = match resolved {
-        Ok(Ok(source)) => (StatusCode::OK, source_body(&source)),
-        Ok(Err(SongUrlError::Unavailable)) => (StatusCode::OK, json!({ "status": "unavailable" })),
-        Ok(Err(SongUrlError::Rejected(code))) => (
-            StatusCode::OK,
-            json!({ "status": "rejected", "code": code }),
+    let (body, cookies) = match resolved {
+        Ok((Ok(source), cookies)) => ((StatusCode::OK, source_body(&source)), cookies),
+        Ok((Err(SongUrlError::Unavailable), cookies)) => (
+            (StatusCode::OK, json!({ "status": "unavailable" })),
+            cookies,
         ),
-        Ok(Err(SongUrlError::Other(error))) => {
+        Ok((Err(SongUrlError::Rejected(code)), cookies)) => (
+            (
+                StatusCode::OK,
+                json!({ "status": "rejected", "code": code }),
+            ),
+            cookies,
+        ),
+        Ok((Err(SongUrlError::Other(error)), cookies))
+            if crate::native::is_session_expired(&error) =>
+        {
+            tracing::warn!(track_id, "playback source refused: session expired");
+            (
+                (
+                    StatusCode::UNAUTHORIZED,
+                    crate::native::session_expired_body(),
+                ),
+                cookies,
+            )
+        }
+        Ok((Err(SongUrlError::Other(error)), cookies)) => {
             tracing::warn!(track_id, %error, "playback source resolution failed");
             (
-                StatusCode::BAD_GATEWAY,
-                json!({ "status": "error", "message": "could not resolve the playback source" }),
+                (
+                    StatusCode::BAD_GATEWAY,
+                    json!({ "status": "error", "message": "could not resolve the playback source" }),
+                ),
+                cookies,
             )
         }
         Err(_) => {
             tracing::warn!(track_id, "playback source resolution timed out");
             (
-                StatusCode::GATEWAY_TIMEOUT,
-                json!({ "status": "error", "message": "playback source resolution timed out" }),
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    json!({ "status": "error", "message": "playback source resolution timed out" }),
+                ),
+                Vec::new(),
             )
         }
     };
@@ -156,6 +181,7 @@ async fn source_handler(
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    crate::native::append_set_cookies(&mut response, &cookies);
     response
 }
 
@@ -167,33 +193,54 @@ async fn lyrics_handler(
 ) -> Response<Body> {
     let resolved = tokio::time::timeout(
         RESOLVE_TIMEOUT,
-        state
-            .resolver
-            .lyrics(ncm_query(&headers, query.real_ip, query.proxy), track_id),
+        capture_rotated_cookies(
+            state
+                .resolver
+                .lyrics(ncm_query(&headers, query.real_ip, query.proxy), track_id),
+        ),
     )
     .await;
-    let body = match resolved {
-        Ok(Ok(lyrics)) => (
-            StatusCode::OK,
-            json!({
-                "lrc": lyrics.lrc,
-                "tlyric": lyrics.tlyric,
-                "romalrc": lyrics.romalrc,
-                "yrc": lyrics.yrc,
-            }),
+    let (body, cookies) = match resolved {
+        Ok((Ok(lyrics), cookies)) => (
+            (
+                StatusCode::OK,
+                json!({
+                    "lrc": lyrics.lrc,
+                    "tlyric": lyrics.tlyric,
+                    "romalrc": lyrics.romalrc,
+                    "yrc": lyrics.yrc,
+                }),
+            ),
+            cookies,
         ),
-        Ok(Err(error)) => {
+        Ok((Err(error), cookies)) if crate::native::is_session_expired(&error) => {
+            tracing::warn!(track_id, "lyrics refused: session expired");
+            (
+                (
+                    StatusCode::UNAUTHORIZED,
+                    crate::native::session_expired_body(),
+                ),
+                cookies,
+            )
+        }
+        Ok((Err(error), cookies)) => {
             tracing::warn!(track_id, %error, "lyrics resolution failed");
             (
-                StatusCode::BAD_GATEWAY,
-                json!({ "status": "error", "message": "could not resolve the lyrics" }),
+                (
+                    StatusCode::BAD_GATEWAY,
+                    json!({ "status": "error", "message": "could not resolve the lyrics" }),
+                ),
+                cookies,
             )
         }
         Err(_) => {
             tracing::warn!(track_id, "lyrics resolution timed out");
             (
-                StatusCode::GATEWAY_TIMEOUT,
-                json!({ "status": "error", "message": "lyrics resolution timed out" }),
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    json!({ "status": "error", "message": "lyrics resolution timed out" }),
+                ),
+                Vec::new(),
             )
         }
     };
@@ -201,6 +248,7 @@ async fn lyrics_handler(
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    crate::native::append_set_cookies(&mut response, &cookies);
     response
 }
 
@@ -445,5 +493,32 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(body["status"], "error");
+    }
+
+    #[tokio::test]
+    async fn an_expired_session_is_a_401_on_source_and_lyrics() {
+        let (status, body) = request(
+            FakeResolver::new(Err(SongUrlError::Other(NcmClientError::Api(
+                ncm_api_rs::NcmError::AuthRequired("需要登录".into()),
+            )))),
+            "/native/playback/source/42?bitrate=320000",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["code"], 301);
+        assert_eq!(body["msg"], "需要登录");
+
+        let (status, body) = request(
+            FakeResolver::with_lyrics(Err(NcmClientError::Api(
+                ncm_api_rs::NcmError::AuthRequired("需要登录".into()),
+            ))),
+            "/native/playback/lyrics/42",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["code"], 301);
+        assert_eq!(body["msg"], "需要登录");
     }
 }

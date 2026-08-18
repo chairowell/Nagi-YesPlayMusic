@@ -937,6 +937,38 @@ fn invalid_payload(path: &str) -> NcmClientError {
     NcmClientError::InvalidPayload(path.to_owned())
 }
 
+tokio::task_local! {
+    /// Per-request sink for upstream Set-Cookie rotation. The typed `*_with`
+    /// transports note every rotation here; outside a capture scope (the TUI
+    /// path) noting is a no-op, so no signature has to carry the cookies.
+    static ROTATED_COOKIES: std::cell::RefCell<Vec<String>>;
+}
+
+/// Run `future` and collect the upstream Set-Cookie lines noted by the typed
+/// transports inside it. The GUI sidecar wraps each `/native/*` request with
+/// this so cookie rotation reaches the browser again.
+pub async fn capture_rotated_cookies<F: std::future::Future>(
+    future: F,
+) -> (F::Output, Vec<String>) {
+    ROTATED_COOKIES
+        .scope(std::cell::RefCell::new(Vec::new()), async move {
+            let output = future.await;
+            let cookies = ROTATED_COOKIES.with(std::cell::RefCell::take);
+            (output, cookies)
+        })
+        .await
+}
+
+/// Record upstream Set-Cookie rotation for the surrounding capture scope.
+pub fn note_rotated_cookies(cookies: &[String]) {
+    if cookies.is_empty() {
+        return;
+    }
+    let _ = ROTATED_COOKIES.try_with(|sink| {
+        sink.borrow_mut().extend_from_slice(cookies);
+    });
+}
+
 /// Playback resolution for frontends that carry their own cookie transport:
 /// the GUI sidecar forwards the browser cookie on every request instead of
 /// using [`NcmClient`]'s persisted session.
@@ -953,6 +985,7 @@ pub async fn song_url_with(
         .song_url(&query)
         .await
         .map_err(|error| SongUrlError::Other(error.into()))?;
+    note_rotated_cookies(&response.cookie);
     classify_song_url(&response.body, id)
 }
 
@@ -1046,6 +1079,7 @@ pub async fn liked_ids_with(
 ) -> Result<Vec<i64>, NcmClientError> {
     let query = query.param("uid", &uid.to_string());
     let response = client.likelist(&query).await?;
+    note_rotated_cookies(&response.cookie);
     Ok(response_array(&response.body, &["ids"])?
         .iter()
         .filter_map(Value::as_i64)
@@ -1062,6 +1096,7 @@ pub async fn set_like_with(
         .param("id", &id.to_string())
         .param("like", if like { "true" } else { "false" });
     let response = client.like(&query).await?;
+    note_rotated_cookies(&response.cookie);
     match response.body["code"].as_i64() {
         Some(200) => Ok(()),
         code => Err(NcmClientError::Rejected(code)),
@@ -1077,6 +1112,7 @@ pub async fn fm_trash_with(
 ) -> Result<(), NcmClientError> {
     let query = query.param("id", &id.to_string());
     let response = client.fm_trash(&query).await?;
+    note_rotated_cookies(&response.cookie);
     match response.body.get("code").and_then(Value::as_i64) {
         Some(200) => Ok(()),
         code => Err(NcmClientError::Rejected(code)),
@@ -1091,6 +1127,7 @@ pub async fn personal_fm_with(
     query: Query,
 ) -> Result<Vec<SongItem>, NcmClientError> {
     let response = client.personal_fm(&query).await?;
+    note_rotated_cookies(&response.cookie);
     let songs = response_array(&response.body, &["data"])?;
     Ok(songs
         .iter()
@@ -1107,6 +1144,7 @@ pub async fn daily_songs_with(
     query: Query,
 ) -> Result<Vec<SongItem>, NcmClientError> {
     let response = client.recommend_songs(&query).await?;
+    note_rotated_cookies(&response.cookie);
     let songs = response_array(&response.body, &["data", "dailySongs"])?;
     let mut hits: Vec<SongItem> = songs
         .iter()
@@ -1143,6 +1181,7 @@ pub async fn playlist_detail_with(
 ) -> Result<PlaylistDetailPayload, NcmClientError> {
     let query = query.param("id", &id.to_string());
     let response = client.playlist_detail(&query).await?;
+    note_rotated_cookies(&response.cookie);
     require_success(&response.body)?;
     let mut playlist = response.body["playlist"].clone();
     let Some(fields) = playlist.as_object_mut() else {
@@ -1168,6 +1207,7 @@ pub async fn album_with(
 ) -> Result<AlbumDetailPayload, NcmClientError> {
     let query = query.param("id", &id.to_string());
     let response = client.album(&query).await?;
+    note_rotated_cookies(&response.cookie);
     require_success(&response.body)?;
     let album = response.body["album"].clone();
     if !album.is_object() {
@@ -1192,6 +1232,7 @@ pub async fn artist_with(
 ) -> Result<ArtistDetailPayload, NcmClientError> {
     let query = query.param("id", &id.to_string());
     let response = client.artists(&query).await?;
+    note_rotated_cookies(&response.cookie);
     require_success(&response.body)?;
     let artist = response.body["artist"].clone();
     if !artist.is_object() {
@@ -1212,6 +1253,7 @@ pub async fn song_detail_with(
 ) -> Result<TrackDetailPayload, NcmClientError> {
     let query = query.param("ids", ids);
     let response = client.song_detail(&query).await?;
+    note_rotated_cookies(&response.cookie);
     let songs = response_array(&response.body, &["songs"])?.to_vec();
     let privileges = response.body["privileges"]
         .as_array()
@@ -1251,6 +1293,7 @@ pub async fn search_with(
         .param("limit", &limit.to_string())
         .param("offset", &offset.to_string());
     let response = client.cloudsearch(&query).await?;
+    note_rotated_cookies(&response.cookie);
     parse_search_payload(&response.body, channel)
 }
 
@@ -1264,6 +1307,7 @@ pub async fn lyrics_with(
     let query = query.param("id", &id.to_string());
     // `lyric_new` sends yv/ytv/yrv, the API's YRC request flags.
     let response = client.lyric_new(&query).await?;
+    note_rotated_cookies(&response.cookie);
     parse_lyrics_payload(&response.body)
 }
 
@@ -1403,6 +1447,26 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    #[tokio::test]
+    async fn rotated_cookies_reach_the_capture_scope_and_nowhere_else() {
+        // Outside a scope noting is a silent no-op (the TUI path).
+        note_rotated_cookies(&["MUSIC_U=stray; Path=/".to_owned()]);
+
+        let (value, cookies) = capture_rotated_cookies(async {
+            note_rotated_cookies(&[]);
+            note_rotated_cookies(&["MUSIC_U=new; Path=/".to_owned()]);
+            note_rotated_cookies(&["__csrf=next; Path=/".to_owned()]);
+            42
+        })
+        .await;
+        assert_eq!(value, 42);
+        assert_eq!(cookies, ["MUSIC_U=new; Path=/", "__csrf=next; Path=/"]);
+
+        // The stray note above never leaked into this scope.
+        let (_, empty) = capture_rotated_cookies(async {}).await;
+        assert!(empty.is_empty());
+    }
 
     #[test]
     fn a_captive_portal_body_does_not_expire_the_session() {

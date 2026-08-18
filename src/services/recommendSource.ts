@@ -1,4 +1,5 @@
 import { getAppStore } from '@/stores/accessor';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { unlockParams } from '@/services/playbackSource';
 import { adaptTrackItems } from '@/services/songItems';
 import { mapTrackPlayableStatus } from '@/utils/common';
@@ -12,7 +13,7 @@ import type { Track } from '@/types/domain';
 export async function fetchDailyRecommendTracks(): Promise<Track[]> {
   const params = unlockParams(getAppStore().settings);
   const query = params.size > 0 ? `?${params}` : '';
-  const response = await fetch(`/api/native/recommend/daily-songs${query}`);
+  const response = await nativeFetch(`/api/native/recommend/daily-songs${query}`);
   if (!response.ok) {
     throw new Error(`每日推荐请求失败（HTTP ${response.status}）`);
   }

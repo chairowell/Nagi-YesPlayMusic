@@ -4,6 +4,7 @@ import {
   normalizeAudioFormat,
   sniffAudioFormat,
 } from '@/utils/audioSource';
+import { nativeFetch } from '@/utils/nativeFetch';
 import {
   listTrackSourceMigrationIds,
   readTrackSourceForMigration,
@@ -113,7 +114,7 @@ export function sharedCacheQualityFromBitrate(bitRate: number): number | null {
 }
 
 export async function getSharedCacheStatus(
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = nativeFetch
 ): Promise<SharedCacheStatus> {
   const response = await fetcher('/api/native/shared-cache/status');
   if (!response.ok) throw responseError(response, 'shared cache status');
@@ -151,7 +152,7 @@ async function configureSharedCache(
 export function syncSharedCacheSetting(
   enabled: boolean,
   cacheLimitMib: number | null = null,
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = nativeFetch
 ): Promise<void> {
   const sync = settingsQueue.then(async () => {
     try {
@@ -196,7 +197,7 @@ export async function shouldUseSharedAudioProxy(
 export async function findSharedCachedAudio(
   trackID: number,
   quality: SettingsState['musicQuality'],
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = nativeFetch
 ): Promise<AudioSource | null> {
   await settingsQueue;
   if (!sharedCacheHealthy) return null;
@@ -248,7 +249,7 @@ export function isSharedAudioProxyURL(url: string): boolean {
 
 export async function prefetchSharedAudio(
   url: string,
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = nativeFetch
 ): Promise<void> {
   await settingsQueue;
   const response = await fetcher(url);
@@ -259,7 +260,7 @@ export async function prefetchSharedAudio(
 export async function deleteSharedCachedAudio(
   trackID: number,
   quality: SettingsState['musicQuality'],
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = nativeFetch
 ): Promise<void> {
   await settingsQueue;
   const response = await fetcher(
@@ -316,7 +317,7 @@ export async function importTrackIntoSharedCache(
   bitRate: number,
   quality: SettingsState['musicQuality'],
   format: unknown,
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = nativeFetch
 ): Promise<boolean> {
   await settingsQueue;
   return importSharedCacheRecord(

@@ -1,4 +1,5 @@
 import { getAlbum } from '@/api/album';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { getArtist } from '@/api/artist';
 import { trackScrobble, trackUpdateNowPlaying } from '@/api/lastfm';
 import { fetchPersonalFM } from '@/services/fmSource';
@@ -472,7 +473,7 @@ export default class Player {
         localStorage.setItem('playerCurrentTrackTime', String(this._progress));
       }
       if (isDesktopRuntime) {
-        void fetch('/api/native/player-info', {
+        void nativeFetch('/api/native/player-info', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

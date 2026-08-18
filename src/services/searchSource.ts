@@ -1,4 +1,5 @@
 import { getAppStore } from '@/stores/accessor';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { unlockParams } from '@/services/playbackSource';
 import { adaptTrackItems } from '@/services/songItems';
 import { mapTrackPlayableStatus } from '@/utils/common';
@@ -38,7 +39,7 @@ async function fetchSearch(
   if (options.offset !== undefined) {
     params.set('offset', String(options.offset));
   }
-  const response = await fetch(`/api/native/search?${params}`);
+  const response = await nativeFetch(`/api/native/search?${params}`);
   if (!response.ok) {
     throw new Error(`搜索请求失败（HTTP ${response.status}）`);
   }

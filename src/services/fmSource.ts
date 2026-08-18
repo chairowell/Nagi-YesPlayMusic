@@ -1,4 +1,5 @@
 import { getAppStore } from '@/stores/accessor';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { unlockParams } from '@/services/playbackSource';
 import type { Artist, Track } from '@/types/domain';
 
@@ -10,7 +11,7 @@ import type { Artist, Track } from '@/types/domain';
 export async function fetchPersonalFM(): Promise<{ data: Track[] }> {
   const params = unlockParams(getAppStore().settings);
   const query = params.size > 0 ? `?${params}` : '';
-  const response = await fetch(`/api/native/fm/personal${query}`);
+  const response = await nativeFetch(`/api/native/fm/personal${query}`);
   if (!response.ok) {
     throw new Error(`私人FM请求失败（HTTP ${response.status}）`);
   }

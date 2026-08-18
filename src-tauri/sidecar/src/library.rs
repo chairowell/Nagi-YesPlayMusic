@@ -15,7 +15,9 @@ use axum::{
 use ncm_api_rs::{api::Query, ApiClient};
 use serde::Deserialize;
 use serde_json::json;
-use yesplaymusic_core::ncm::{fm_trash_with, liked_ids_with, set_like_with, NcmClientError};
+use yesplaymusic_core::ncm::{
+    capture_rotated_cookies, fm_trash_with, liked_ids_with, set_like_with, NcmClientError,
+};
 
 use crate::native::{respond, with_no_store};
 
@@ -114,11 +116,11 @@ async fn like_handler(
         "like",
         tokio::time::timeout(
             LIBRARY_TIMEOUT,
-            state.resolver.set_like(
+            capture_rotated_cookies(state.resolver.set_like(
                 crate::playback::ncm_query(&headers, query.real_ip, query.proxy),
                 query.id,
                 query.like,
-            ),
+            )),
         )
         .await,
     )
@@ -133,44 +135,66 @@ async fn fm_trash_handler(
         "fm-trash",
         tokio::time::timeout(
             LIBRARY_TIMEOUT,
-            state.resolver.fm_trash(
+            capture_rotated_cookies(state.resolver.fm_trash(
                 crate::playback::ncm_query(&headers, query.real_ip, query.proxy),
                 query.id,
-            ),
+            )),
         )
         .await,
     )
 }
 
-fn mutation_response(
-    operation: &'static str,
-    resolved: Result<Result<(), NcmClientError>, tokio::time::error::Elapsed>,
-) -> Response<Body> {
-    let response = match resolved {
-        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Err(NcmClientError::Rejected(code))) => {
+type CapturedMutation =
+    Result<(Result<(), NcmClientError>, Vec<String>), tokio::time::error::Elapsed>;
+
+fn mutation_response(operation: &'static str, resolved: CapturedMutation) -> Response<Body> {
+    let (response, cookies) = match resolved {
+        Ok((Ok(()), cookies)) => (StatusCode::NO_CONTENT.into_response(), cookies),
+        Ok((Err(error), cookies)) if crate::native::is_session_expired(&error) => {
+            tracing::warn!(operation, "library mutation refused: session expired");
+            (
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(crate::native::session_expired_body()),
+                )
+                    .into_response(),
+                cookies,
+            )
+        }
+        Ok((Err(NcmClientError::Rejected(code)), cookies)) => {
             tracing::warn!(operation, ?code, "library mutation rejected");
             (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({ "status": "rejected", "code": code })),
+                (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "status": "rejected", "code": code })),
+                )
+                    .into_response(),
+                cookies,
             )
-                .into_response()
         }
-        Ok(Err(error)) => {
+        Ok((Err(error), cookies)) => {
             tracing::warn!(operation, %error, "library mutation failed");
             (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "status": "error", "message": "library operation failed" })),
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "status": "error", "message": "library operation failed" })),
+                )
+                    .into_response(),
+                cookies,
             )
-                .into_response()
         }
         Err(_) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(json!({ "status": "error", "message": "library operation timed out" })),
-        )
-            .into_response(),
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(json!({ "status": "error", "message": "library operation timed out" })),
+            )
+                .into_response(),
+            Vec::new(),
+        ),
     };
-    with_no_store(response)
+    let mut response = with_no_store(response);
+    crate::native::append_set_cookies(&mut response, &cookies);
+    response
 }
 
 #[cfg(test)]
@@ -305,5 +329,25 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn an_expired_session_turns_mutations_into_401_not_422() {
+        let resolver = Arc::new(FakeResolver {
+            like_outcome: Mutex::new(Some(Err(NcmClientError::Api(
+                ncm_api_rs::NcmError::AuthRequired("需要登录".into()),
+            )))),
+            ..FakeResolver::default()
+        });
+        let (status, body) = request(
+            resolver,
+            axum::http::Method::POST,
+            "/native/library/like?id=7&like=true",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], 301);
+        assert_eq!(body["msg"], "需要登录");
     }
 }

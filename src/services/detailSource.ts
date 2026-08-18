@@ -1,4 +1,5 @@
 import { getAppStore } from '@/stores/accessor';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { unlockParams } from '@/services/playbackSource';
 import { adaptTrackItems } from '@/services/songItems';
 import { decodeTrackCollectionResponse } from '@/api/decoders';
@@ -19,7 +20,7 @@ async function fetchDetail(
 ): Promise<Record<string, unknown>> {
   const params = unlockParams(getAppStore().settings);
   params.set('id', String(id));
-  const response = await fetch(`/api/native/${kind}/detail?${params}`);
+  const response = await nativeFetch(`/api/native/${kind}/detail?${params}`);
   if (!response.ok) {
     throw new Error(`详情请求失败（HTTP ${response.status}）`);
   }
@@ -117,7 +118,7 @@ export async function fetchTrackDetails(
 ): Promise<TrackCollectionResponse> {
   const params = unlockParams(getAppStore().settings);
   params.set('ids', ids);
-  const response = await fetch(`/api/native/song/detail?${params}`);
+  const response = await nativeFetch(`/api/native/song/detail?${params}`);
   if (!response.ok) {
     throw new Error(`歌曲详情请求失败（HTTP ${response.status}）`);
   }

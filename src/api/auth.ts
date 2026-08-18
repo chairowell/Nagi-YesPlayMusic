@@ -1,4 +1,5 @@
 import request from '@/utils/request';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { createPasswordLoginRequest } from '@/utils/loginRequest';
 import type { EmailCredentials, PhoneCredentials } from '@/utils/loginRequest';
 import type { ApiResponse } from './types';
@@ -133,7 +134,7 @@ export function logout() {
 }
 
 export async function clearDesktopSession(): Promise<true> {
-  const response = await fetch('/api/native/logout-session', {
+  const response = await nativeFetch('/api/native/logout-session', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { Accept: 'application/json' },

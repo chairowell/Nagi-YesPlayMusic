@@ -1,4 +1,5 @@
 import { getAppStore } from '@/stores/accessor';
+import { nativeFetch } from '@/utils/nativeFetch';
 import { isDesktopRuntime } from '@/utils/runtime';
 import type { LyricsResponse } from '@/utils/lyrics';
 
@@ -54,7 +55,7 @@ export async function fetchNeteaseLyrics(
 ): Promise<LyricsResponse> {
   const params = unlockParams(getAppStore().settings);
   const queryString = params.size > 0 ? `?${params}` : '';
-  const response = await fetch(
+  const response = await nativeFetch(
     `/api/native/playback/lyrics/${trackID}${queryString}`
   );
   if (!response.ok) {
@@ -93,7 +94,7 @@ export async function resolveNeteasePlaybackSource(
   params.set('bitrate', String(playbackBitrate(settings.musicQuality)));
   let payload: unknown;
   try {
-    const response = await fetch(
+    const response = await nativeFetch(
       `/api/native/playback/source/${trackID}?${params}`
     );
     payload = await response.json();

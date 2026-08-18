@@ -196,7 +196,7 @@ HTTP、cookie、云盘、UNM、音频和 proxy 的行为测试与对应 Rust 模
 
 阶段 1 当前独立价值是锁定 57 条产品路由清单、构建 Rust 行为测试和合规闭包。完整 cookie jar 链与五档共享 case table 已补齐；由于逐路 differential 仍缺真实脱敏 response corpus，不能称为“完整 API differential 门禁”。
 
-阶段 1 的 cookie 行为链“ephemeral frontend → `/api` → ephemeral Rust”已通过：测试真实启动两个临时 listener，使用 cookie jar 验证多 `Set-Cookie`、下一请求重放、refresh 轮换、native logout 过期和清空后不再携带。renderer 的 301 expiry interceptor 另有行为测试，确认清本地会话并返回账号登录页。真实 `28232 → /api → 12754` 已由阶段 2 packaged smoke 验证基础 API 路径；真实账号登录仍只作为 canary 手工 smoke，不写入 fixture 或 required CI。
+阶段 1 的 cookie 行为链“ephemeral frontend → `/api` → ephemeral Rust”已通过：测试真实启动两个临时 listener，使用 cookie jar 验证多 `Set-Cookie`、下一请求重放、refresh 轮换、native logout 过期和清空后不再携带。renderer 的 301 expiry interceptor 另有行为测试，确认清本地会话并返回账号登录页。typed `/native/*` 端点自 v0.9.0 起共享同一契约：`AuthRequired` 映射为 401 `{code:301}`，上游 Set-Cookie 轮换经 `capture_rotated_cookies` 转发，renderer 侧统一走 `nativeFetch`（15s 超时 + 按 body 判定的过期拦截）。真实 `28232 → /api → 12754` 已由阶段 2 packaged smoke 验证基础 API 路径；真实账号登录仍只作为 canary 手工 smoke，不写入 fixture 或 required CI。
 
 ### 阶段 2：Rust-only canary candidate（接线完成，发布门禁未清零）
 

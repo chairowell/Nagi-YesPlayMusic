@@ -164,4 +164,55 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(body["status"], "error");
     }
+
+    #[tokio::test]
+    async fn an_expired_session_is_a_401_with_the_generic_route_contract() {
+        let resolver = Arc::new(FakeResolver {
+            answer: Mutex::new(Some(Err(NcmClientError::Api(
+                ncm_api_rs::NcmError::AuthRequired("需要登录".into()),
+            )))),
+            seen_query: Mutex::new(None),
+        });
+        let (status, body) = request(resolver, "/native/fm/personal").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["code"], 301);
+        assert_eq!(body["msg"], "需要登录");
+    }
+
+    /// The typed transports note upstream Set-Cookie rotation; respond()
+    /// must forward it so the browser keeps rotating like the generic route.
+    struct RotatingResolver;
+
+    #[async_trait]
+    impl FmResolver for RotatingResolver {
+        async fn personal_fm(&self, _query: Query) -> Result<Vec<SongItem>, NcmClientError> {
+            yesplaymusic_core::ncm::note_rotated_cookies(&[
+                "MUSIC_U=rotated; Path=/".to_owned(),
+                "__csrf=next; Path=/".to_owned(),
+            ]);
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn rotated_upstream_cookies_are_forwarded_as_set_cookie_headers() {
+        let app = router(FmState::testing(Arc::new(RotatingResolver)));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/native/fm/personal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(cookies, ["MUSIC_U=rotated; Path=/", "__csrf=next; Path=/"]);
+    }
 }
