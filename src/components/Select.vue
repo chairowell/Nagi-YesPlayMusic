@@ -1,10 +1,19 @@
 <template>
   <div ref="root" class="custom-select">
     <button
+      ref="triggerEl"
       type="button"
       class="custom-select-trigger"
-      :class="{ open }"
+      :class="{ open, focused }"
+      role="combobox"
+      :aria-haspopup="'listbox'"
+      :aria-expanded="open"
+      :aria-controls="listboxId"
+      :aria-activedescendant="open ? getOptionId(highlightIndex) : undefined"
       @click="toggle"
+      @keydown="onTriggerKeydown"
+      @focus="onFocus"
+      @blur="onBlur"
     >
       <span class="value">{{ currentLabel }}</span>
       <span class="arrow">
@@ -15,12 +24,25 @@
     </button>
 
     <Transition name="dropdown">
-      <ul v-if="open" class="custom-select-menu">
+      <ul
+        v-if="open"
+        :id="listboxId"
+        class="custom-select-menu"
+        role="listbox"
+        :aria-label="currentLabel || '选项列表'"
+      >
         <li
-          v-for="opt in options"
+          v-for="(opt, index) in options"
           :key="String(opt.value)"
-          :class="{ active: opt.value === modelValue }"
+          :id="getOptionId(index)"
+          role="option"
+          :class="{
+            active: opt.value === modelValue,
+            highlighted: index === highlightIndex,
+          }"
+          :aria-selected="opt.value === modelValue"
           @click="select(opt.value)"
+          @mouseenter="highlightIndex = index"
         >
           {{ opt.label }}
         </li>
@@ -37,16 +59,22 @@ export interface SelectOption {
   label: string;
 }
 
+/** Incremented counter to generate unique ARIA IDs per instance. */
+let instanceCounter = 0;
+
 /**
  * 自定义下拉选择框，替代原生 <select>。
+ * 支持完整键盘导航和 ARIA 无障碍属性。
  */
 export default defineComponent({
   name: 'CustomSelect',
   props: {
+    /** v-model 绑定的值。 */
     modelValue: {
       type: [String, Number, Boolean] as PropType<string | number | boolean>,
       required: true,
     },
+    /** 选项列表。 */
     options: {
       type: Array as PropType<SelectOption[]>,
       required: true,
@@ -56,31 +84,190 @@ export default defineComponent({
   data() {
     return {
       open: false,
+      /** 当前键盘高亮的选项索引，-1 表示无高亮。 */
+      highlightIndex: -1,
+      focused: false,
+      /** 唯一 ID 前缀，用于 ARIA 属性关联。 */
+      idPrefix: `ypm-select-${++instanceCounter}`,
     };
   },
   computed: {
+    /** 当前选中选项的标签文本。 */
     currentLabel(): string {
       const matched = this.options.find(opt => opt.value === this.modelValue);
       return matched?.label ?? '';
     },
+    /** listbox 元素的唯一 ID。 */
+    listboxId(): string {
+      return `${this.idPrefix}-listbox`;
+    },
+  },
+  watch: {
+    /** 当选项列表变化时，同步高亮位置到当前选中项。 */
+    options() {
+      this.syncHighlightToValue();
+    },
+    modelValue() {
+      this.syncHighlightToValue();
+    },
   },
   methods: {
-    toggle() {
-      this.open = !this.open;
+    /**
+     * 生成指定索引选项的唯一 ID，用于 aria-activedescendant。
+     * @param index 选项在数组中的索引
+     * @returns 唯一 ID 字符串
+     */
+    getOptionId(index: number): string {
+      return `${this.idPrefix}-opt-${index}`;
     },
+
+    /** 将高亮索引同步到当前 modelValue 对应的选项。 */
+    syncHighlightToValue() {
+      const index = this.options.findIndex(
+        opt => opt.value === this.modelValue
+      );
+      this.highlightIndex = index >= 0 ? index : -1;
+    },
+
+    /** 打开下拉菜单并聚焦到当前选中项。 */
+    openMenu() {
+      this.syncHighlightToValue();
+      if (this.highlightIndex < 0) this.highlightIndex = 0;
+      this.open = true;
+      this.$nextTick(() => this.scrollHighlightIntoView());
+    },
+
+    /** 关闭下拉菜单并将焦点归还触发器。 */
+    closeMenu() {
+      if (!this.open) return;
+      this.open = false;
+      const trigger = this.$refs['triggerEl'] as HTMLElement | undefined;
+      trigger?.focus();
+    },
+
+    /** 切换菜单展开状态。 */
+    toggle() {
+      this.open ? this.closeMenu() : this.openMenu();
+    },
+
+    /**
+     * 选中指定值并关闭菜单。
+     * @param value 要选中的值
+     */
     select(value: string | number | boolean) {
       this.$emit('update:modelValue', value);
-      this.open = false;
+      this.closeMenu();
     },
+
+    /** 高亮移动到指定索引，并在打开时滚动到可视区域。 */
+    setHighlight(index: number) {
+      if (index < 0 || index >= this.options.length) return;
+      this.highlightIndex = index;
+      if (this.open) this.$nextTick(() => this.scrollHighlightIntoView());
+    },
+
+    /** 将高亮选项滚动到视口内。 */
+    scrollHighlightIntoView() {
+      if (this.highlightIndex < 0 || !this.open) return;
+      const el = document.getElementById(this.getOptionId(this.highlightIndex));
+      el?.scrollIntoView({ block: 'nearest' });
+    },
+
+    /**
+     * 键盘事件统一处理。菜单关闭时打开菜单，菜单打开时导航/选择/关闭。
+     * 所有按键走同一个入口，焦点始终在触发器上，避免事件丢失。
+     * @param event 键盘事件
+     */
+    onTriggerKeydown(event: KeyboardEvent) {
+      const key = event.key;
+      const open = this.open;
+
+      if (!open) {
+        // 菜单关闭：打开菜单
+        if (
+          key === 'Enter' ||
+          key === ' ' ||
+          key === 'Spacebar' ||
+          key === 'ArrowDown' ||
+          key === 'Down' ||
+          key === 'ArrowUp' ||
+          key === 'Up'
+        ) {
+          event.preventDefault();
+          this.openMenu();
+        }
+        return;
+      }
+
+      // 菜单打开：导航/选择/关闭
+      switch (key) {
+        case 'ArrowDown':
+        case 'Down':
+          event.preventDefault();
+          this.setHighlight(
+            this.highlightIndex < this.options.length - 1
+              ? this.highlightIndex + 1
+              : 0
+          );
+          break;
+        case 'ArrowUp':
+        case 'Up':
+          event.preventDefault();
+          this.setHighlight(
+            this.highlightIndex > 0
+              ? this.highlightIndex - 1
+              : this.options.length - 1
+          );
+          break;
+        case 'Home':
+          event.preventDefault();
+          this.setHighlight(0);
+          break;
+        case 'End':
+          event.preventDefault();
+          this.setHighlight(this.options.length - 1);
+          break;
+        case 'Enter':
+        case ' ':
+        case 'Spacebar': {
+          const option = this.options[this.highlightIndex];
+          if (option) {
+            event.preventDefault();
+            this.select(option.value);
+          }
+          break;
+        }
+        case 'Escape':
+          event.preventDefault();
+          this.closeMenu();
+          break;
+        case 'Tab':
+          this.closeMenu();
+          break;
+      }
+    },
+
+    /** 文档点击外部时关闭菜单。 */
     onDocumentClick(event: MouseEvent) {
       const root = this.$refs['root'] as HTMLElement | undefined;
       if (root && !root.contains(event.target as Node)) {
         this.open = false;
       }
     },
+
+    /** 触发器获取焦点时的状态标记。 */
+    onFocus() {
+      this.focused = true;
+    },
+
+    /** 触发器失去焦点时的状态标记。 */
+    onBlur() {
+      this.focused = false;
+    },
   },
   mounted() {
     document.addEventListener('click', this.onDocumentClick);
+    this.syncHighlightToValue();
   },
   unmounted() {
     document.removeEventListener('click', this.onDocumentClick);
@@ -107,8 +294,17 @@ export default defineComponent({
     border: none;
     border-radius: 8px;
     cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
     user-select: none;
+
+    &:focus {
+      outline: none;
+    }
+
+    &.focused,
+    &:focus-visible {
+      box-shadow: 0 0 0 2px var(--color-primary);
+    }
 
     .value {
       overflow: hidden;
@@ -162,6 +358,8 @@ export default defineComponent({
       0 6px 12px -4px rgba(0, 0, 0, 0.12);
     z-index: 100;
     overflow: hidden;
+    max-height: 320px;
+    overflow-y: auto;
 
     li {
       padding: 8px 12px;
@@ -174,7 +372,8 @@ export default defineComponent({
       color: var(--color-text);
       transition: background 0.15s ease, color 0.15s ease;
 
-      &:hover {
+      &:hover,
+      &.highlighted {
         background: rgba(128, 128, 128, 0.15);
       }
 
