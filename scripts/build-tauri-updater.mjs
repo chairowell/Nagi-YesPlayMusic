@@ -32,7 +32,7 @@ export const UPDATER_BUILD_PLANS = Object.freeze({
 });
 
 export const CANARY_UPDATER_ENDPOINT =
-  'https://raw.githubusercontent.com/nagi-studio/YesPlayMusic/updater-feed/channels/canary.json';
+  'https://raw.githubusercontent.com/nagi-studio/Yokaze/updater-feed/channels/canary.json';
 
 function updaterChannel(version) {
   const match = version.match(
@@ -77,7 +77,7 @@ export async function createUpdaterBuildConfig(publicKey, version) {
 /// overrides its plan, because it has to produce the DMG that ships.
 ///
 /// `app` must stay in that list even though only the DMG is published. Drop
-/// it and Tauri deletes bundle/macos/YesPlayMusic.app the moment the DMG is
+/// it and Tauri deletes bundle/macos/Yokaze.app the moment the DMG is
 /// built, which breaks three consumers at once: the signature/staple
 /// validation gate, collect:tauri:release-dmg (it re-verifies the .app and
 /// reads its provenance), and the updater artifacts — those come only from an

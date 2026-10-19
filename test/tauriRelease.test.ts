@@ -51,13 +51,13 @@ test('macOS CI 保留非 tag 本地路径和 tag Developer ID 发布路径', () 
   expect(workflow).toContain(
     'name: Verify complete macOS distribution set and checksums'
   );
-  expect(workflow).toContain('YesPlayMusic_${VERSION}_aarch64.dmg');
-  expect(workflow).toContain('YesPlayMusic_${VERSION}_sidecar-source.tar.gz');
-  expect(workflow).toContain('YesPlayMusic_${VERSION}_SOURCE-OFFER.md');
+  expect(workflow).toContain('Yokaze_${VERSION}_aarch64.dmg');
+  expect(workflow).toContain('Yokaze_${VERSION}_sidecar-source.tar.gz');
+  expect(workflow).toContain('Yokaze_${VERSION}_SOURCE-OFFER.md');
   expect(workflow).toContain('shasum -a 256 -c ./*.sha256');
   expect(workflow).toContain('run: bun run verify:tauri:version');
   expect(workflow).toContain('path: dist_tauri/*');
-  expect(workflow).toContain('name: YesPlayMusic-macos-aarch64');
+  expect(workflow).toContain('name: Yokaze-macos-aarch64');
   expect(workflow).toContain('files: release/**/*');
   expect(workflow).toContain('run: bun run build:tauri:release');
   expect(workflow).toContain('run: bun run collect:tauri:release-dmg');
@@ -103,7 +103,7 @@ test('Windows CI 上传测试包并把 tag updater 交给 release job', () => {
     'verify-packaged-app-compliance.mjs windows-x86_64'
   );
   expect(windowsJob).toContain('Get-Command 7z -ErrorAction Stop');
-  expect(releaseJob).toContain('YesPlayMusic-windows-x64');
+  expect(releaseJob).toContain('Yokaze-windows-x64');
 });
 
 test('Ubuntu CI 构建 AppImage、deb 并把 tag updater 交给 release job', () => {
@@ -145,7 +145,7 @@ test('Ubuntu CI 构建 AppImage、deb 并把 tag updater 交给 release job', ()
     'verify-packaged-app-compliance.mjs linux-x86_64-deb'
   );
   expect(linuxJob).toContain('sha256sum -c SHA256SUMS-linux-x64.txt');
-  expect(releaseJob).toContain('YesPlayMusic-linux-x64');
+  expect(releaseJob).toContain('Yokaze-linux-x64');
 });
 
 test('三平台发布资产 basename 不会在 draft release 中相互覆盖', () => {
@@ -403,7 +403,7 @@ test('版本 tag 创建草稿 release，带连字符的版本保持 prerelease',
 });
 
 test('DMG 文件名明确标记版本和 Apple Silicon 架构', () => {
-  expect(tauriDmgName('0.6.0')).toBe('YesPlayMusic_0.6.0_aarch64.dmg');
+  expect(tauriDmgName('0.6.0')).toBe('Yokaze_0.6.0_aarch64.dmg');
 });
 
 test('README 区分三次重构与各平台支持状态', () => {

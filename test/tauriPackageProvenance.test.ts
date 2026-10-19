@@ -49,7 +49,7 @@ async function createFakeApp(manifestUuid = uuid): Promise<{
 }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'ypm-package-app-'));
   temporaryDirectories.push(root);
-  const appPath = path.join(root, 'YesPlayMusic.app');
+  const appPath = path.join(root, 'Yokaze.app');
   const macOSDirectory = path.join(appPath, 'Contents', 'MacOS');
   const complianceDirectory = path.join(
     appPath,
@@ -122,7 +122,7 @@ async function createFakeApp(manifestUuid = uuid): Promise<{
     ),
     writeFile(
       path.join(complianceDirectory, 'SOURCE-OFFER.md'),
-      `Download ${sourceAsset} from https://github.com/nagi-studio/YesPlayMusic/releases/download/v${version}/${sourceAsset}.\n`
+      `Download ${sourceAsset} from https://github.com/nagi-studio/Yokaze/releases/download/v${version}/${sourceAsset}.\n`
     ),
   ]);
   return { appPath, builtSidecarPath, expectedAppComplianceDirectory };

@@ -85,11 +85,11 @@ export default {
     login: 'Login',
     loginWithEmail: 'Login with Email',
     loginWithPhone: 'Login with Phone',
-    notice: `YesPlayMusic promises not to save any of your account information to the cloud.<br />
+    notice: `Yokaze promises not to save any of your account information to the cloud.<br />
       Your password will be MD5 encrypted locally and then transmitted to NetEase Music API.<br />
-      YesPlayMusic is not the official website of NetEase Music, please consider carefully before entering account information. You can also go to <a href="https://github.com/qier222/YesPlayMusic">YesPlayMusic's GitHub repository</a> to build and use the self-hosted NetEase Music API.`,
+      Yokaze is not the official website of NetEase Music, please consider carefully before entering account information. You can also go to <a href="https://github.com/nagi-studio/Yokaze">Yokaze's GitHub repository</a> to build and use the self-hosted NetEase Music API.`,
     noticeDesktop: `Your password will be MD5 encrypted locally and then transmitted to NetEase Music API.<br />
-      YesPlayMusic promises not to save any of your account information to the cloud.<br />`,
+      Yokaze promises not to save any of your account information to the cloud.<br />`,
   },
   mv: {
     moreVideo: 'More Videos',
@@ -252,7 +252,7 @@ export default {
       minimizeToTray: 'Minimize to tray',
     },
     closePrompt: {
-      title: 'Close YesPlayMusic?',
+      title: 'Close Yokaze?',
       description: 'Choose whether to keep playing in the tray or exit.',
       remember: 'Remember my choice',
     },

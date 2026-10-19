@@ -42,7 +42,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: 'YesPlayMusic 版本'
+      label: 'Yokaze 版本'
       placeholder: |
         示例：v0.8.0-canary.1
     validations:

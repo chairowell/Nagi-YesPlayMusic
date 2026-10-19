@@ -106,11 +106,11 @@ export function sidecarSourceArchiveName(version) {
 }
 
 export function sidecarSourceOfferName(version) {
-  return `YesPlayMusic_${version}_SOURCE-OFFER.md`;
+  return `Yokaze_${version}_SOURCE-OFFER.md`;
 }
 
 export function complianceSourceArchiveName(targetSpec, version) {
-  return `YesPlayMusic_${version}_${targetSpec.archiveSlug}-source.tar.gz`;
+  return `Yokaze_${version}_${targetSpec.archiveSlug}-source.tar.gz`;
 }
 
 function sha256(content) {
@@ -654,7 +654,7 @@ function thirdPartyNotice(targetSpec, records) {
       ? 'The Tauri host is a separate process and is not part of this statically linked executable.'
       : '`ypm` is distributed as a standalone terminal executable.';
 
-  return `# YesPlayMusic ${displayName} third-party notices
+  return `# Yokaze ${displayName} third-party notices
 
 This inventory is generated from the exact non-development dependency closure
 used by the ${displayName} release graph in \`Cargo.lock\`.
@@ -692,12 +692,12 @@ function sourceOffer({ targetSpec, packageVersion, sourceArchiveName }) {
   const displayName = targetDisplayName(targetSpec);
   return `# Complete Corresponding Source
 
-The ${displayName} in YesPlayMusic ${packageVersion} is distributed under
+The ${displayName} in Yokaze ${packageVersion} is distributed under
 GPL-3.0-only. Its complete machine-readable Corresponding Source is the
 companion release asset:
 
 - ${sourceArchiveName}
-- https://github.com/nagi-studio/YesPlayMusic/releases/download/v${packageVersion}/${sourceArchiveName}
+- https://github.com/nagi-studio/Yokaze/releases/download/v${packageVersion}/${sourceArchiveName}
 
 The source asset is offered at no additional charge from the same GitHub
 Release as the object-code downloads. It contains the exact application
@@ -722,9 +722,9 @@ permissions on macOS and Linux.`;
 ports and the parent PID as arguments and sends a per-launch health token on
 stdin.
 
-- macOS: replace \`YesPlayMusic.app/Contents/MacOS/yesplaymusic-sidecar\`, then
+- macOS: replace \`Yokaze.app/Contents/MacOS/yesplaymusic-sidecar\`, then
   ad-hoc sign the modified app with
-  \`codesign --force --deep --sign - YesPlayMusic.app\`.
+  \`codesign --force --deep --sign - Yokaze.app\`.
 - Windows current-user install: replace \`yesplaymusic-sidecar.exe\` in the
   installed application directory. Windows may warn because the publisher's
   Authenticode signature no longer matches the modified file.
@@ -744,11 +744,11 @@ function rebuildReadme({
   const displayName = targetDisplayName(targetSpec);
   const applicationDescription =
     targetSpec.package === SIDECAR_PACKAGE
-      ? 'the exact YesPlayMusic Sidecar and shared core source, route manifest'
-      : 'the exact YesPlayMusic ypm TUI and shared core source, embedded logo';
+      ? 'the exact Yokaze Sidecar and shared core source, route manifest'
+      : 'the exact Yokaze ypm TUI and shared core source, embedded logo';
   const replacementPreamble =
     targetSpec.package === SIDECAR_PACKAGE
-      ? 'Quit YesPlayMusic first. Keep the executable name and executable permission.'
+      ? 'Quit Yokaze first. Keep the executable name and executable permission.'
       : 'Quit any running `ypm` process first. Keep the executable name and executable permission.';
   const signingNotes =
     targetSpec.package === SIDECAR_PACKAGE
@@ -767,9 +767,9 @@ the user-built replacement.`;
 
 `
       : '';
-  return `# YesPlayMusic ${displayName} source and relinking kit
+  return `# Yokaze ${displayName} source and relinking kit
 
-This directory accompanies YesPlayMusic ${packageVersion}. It contains the
+This directory accompanies Yokaze ${packageVersion}. It contains the
 preferred source needed to modify and rebuild/relink the ${displayName}
 executable.
 
@@ -789,7 +789,7 @@ executable.
 
 The UNM crates declare LGPL-3.0-or-later. \`unm_engine_kuwo\` links
 \`random-string 1.1.0\`, which declares GPL-3.0-only, so the resulting
-${displayName} executable is distributed under GPL-3.0-only. YesPlayMusic modified
+${displayName} executable is distributed under GPL-3.0-only. Yokaze modified
 the integration in 2026; the bundled published crate directories themselves
 are copied without source edits.
 

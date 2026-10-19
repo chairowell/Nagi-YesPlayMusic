@@ -39,7 +39,7 @@ export function resolveTauriSmokeExecutable({
   if (platform === 'darwin' && arch === 'arm64') {
     return path.join(
       root,
-      'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app/Contents/MacOS/yesplaymusic-tauri'
+      'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Yokaze.app/Contents/MacOS/yesplaymusic-tauri'
     );
   }
   if (platform === 'win32' && arch === 'x64') {

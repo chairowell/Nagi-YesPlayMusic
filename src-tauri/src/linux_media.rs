@@ -244,8 +244,8 @@ async fn run_media_service(
     control_handler: Arc<dyn Fn(MediaControl) + Send + Sync>,
 ) {
     let player = match Player::builder("yesplaymusic")
-        .identity("YesPlayMusic")
-        .desktop_entry("YesPlayMusic")
+        .identity("Yokaze")
+        .desktop_entry("Yokaze")
         .can_quit(true)
         .can_go_next(true)
         .can_go_previous(true)

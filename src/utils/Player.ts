@@ -166,8 +166,8 @@ const delay = (ms: number): Promise<void> =>
 function setTitle(track: Track | null): void {
   const artist = track?.ar?.[0]?.name ?? '';
   document.title = track
-    ? `${track.name ?? ''} · ${artist} - YesPlayMusic`
-    : 'YesPlayMusic';
+    ? `${track.name ?? ''} · ${artist} - Yokaze`
+    : 'Yokaze';
   if (isDesktopRuntime) {
     void sendDesktop('updateTrayTooltip', document.title);
   }

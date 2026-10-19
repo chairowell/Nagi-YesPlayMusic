@@ -1,4 +1,4 @@
-//! SQLite-indexed audio cache shared by local YesPlayMusic processes.
+//! SQLite-indexed audio cache shared by local Yokaze processes.
 //!
 //! SQLite serializes publication and eviction. OS file locks keep an opened
 //! lease readable while another process trims the cache.

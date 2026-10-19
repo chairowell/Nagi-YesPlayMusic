@@ -1,7 +1,7 @@
-# YesPlayMusic（个人 fork）
+# Yokaze（夜风）
 
-高颜值的第三方网易云播放器，本仓库是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic)
-分出来独立维护的私有版本。Apple Silicon macOS 是正式支持平台；Windows x64 和
+高颜值的第三方网易云播放器，原名 YesPlayMusic，是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic)
+分出来独立维护的版本，v0.13.0 起改名 Yokaze。Apple Silicon macOS 是正式支持平台；Windows x64 和
 Ubuntu x64 由 CI 提供 Tauri 实验构建。
 
 ## 命令
@@ -151,6 +151,12 @@ dev 是未打包的二进制，WebKit 按进程名 `yesplaymusic-tauri` 存数�
 - 正式版：同样三处，名字换成 `com.electron.yesplaymusic`
 - `~/Library/Application Support/YesPlayMusic/` 是旧 Electron 版的数据，
   `legacy_renderer_data.rs` 首次启动时从这里迁移，不要删
+
+改名 Yokaze 时**故意保留**了这些旧名字，它们是数据位置或内部协议，不是品牌，改了会丢数据：
+bundle id `com.electron.yesplaymusic`、`mainBinaryName` `yesplaymusic-tauri`、sidecar 二进制名、
+IndexedDB 库名 `yesplaymusic`（`src/utils/db.ts`）、`X-YesPlayMusic-*` 内部 header。
+Windows 安装器的 `src-tauri/windows/installer-hooks.nsh` 会静默卸掉旧名下的安装（不删数据），
+因为 NSIS 的安装目录和卸载项按 productName 派生。
 
 ## 已知的坑
 

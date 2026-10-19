@@ -1,11 +1,11 @@
 ---
 name: ypm
-description: Control the local YesPlayMusic player — read playback, pause/resume, change tracks, or seek to a requested time. Use when the user asks about the music that is playing or wants it changed.
+description: Control the local Yokaze player — read playback, pause/resume, change tracks, or seek to a requested time. Use when the user asks about the music that is playing or wants it changed.
 ---
 
-# ypm — YesPlayMusic remote control
+# ypm — Yokaze remote control
 
-`ypm` is the YesPlayMusic CLI. It talks to whichever player is running on this
+`ypm` is the Yokaze CLI. It talks to whichever player is running on this
 machine (desktop GUI or terminal TUI) over a local socket; nothing here touches
 the network or needs credentials.
 
@@ -22,7 +22,7 @@ the network or needs credentials.
 
 - **No player running**: the command prints
   `没有运行中的播放器（GUI 或 TUI 都不在线）` — relay that and suggest opening
-  YesPlayMusic (GUI) or running `ypm` (TUI). Retrying without a player is a
+  Yokaze (GUI) or running `ypm` (TUI). Retrying without a player is a
   no-op.
 - **Both players running**: `--gui` / `--tui` forces the target; by default
   ypm picks the running one itself.

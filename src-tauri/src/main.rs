@@ -150,7 +150,7 @@ fn acquire_macos_startup_gate(path: &Path, timeout: Duration) -> Result<MacosSta
             return Err(format!("无法取得 single-instance 启动锁：{error}"));
         }
         if Instant::now() >= deadline {
-            return Err("等待现有 YesPlayMusic 实例完成冷启动超时".into());
+            return Err("等待现有 Yokaze 实例完成冷启动超时".into());
         }
         thread::sleep(Duration::from_millis(25));
     }
@@ -239,7 +239,7 @@ mod updater_target_tests {
     fn only_an_empty_internal_single_instance_connection_is_a_readiness_probe() {
         assert!(single_instance_notification_is_probe(&[String::new()], ""));
         assert!(!single_instance_notification_is_probe(
-            &["/Applications/YesPlayMusic.app".into()],
+            &["/Applications/Yokaze.app".into()],
             "/tmp"
         ));
     }
@@ -309,7 +309,7 @@ fn prepare_for_update(app: AppHandle) -> Result<bool, String> {
 
 fn app_about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadataBuilder::new()
-        .name(Some("YesPlayMusic"))
+        .name(Some("Yokaze"))
         // macOS reads the build number from Info.plist, so provide only the short version.
         .short_version(Some(version.to_string()))
         .credits(Some("Tauri 2 跨平台版\n由 Nagi Studio 独立维护"))
@@ -444,7 +444,7 @@ fn create_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             #[cfg(not(target_os = "macos"))]
             &PredefinedMenuItem::about(
                 app,
-                Some("About YesPlayMusic"),
+                Some("About Yokaze"),
                 Some(app_about_metadata(&app.package_info().version.to_string())),
             )?,
             &MenuItem::with_id(app, "app.github", "GitHub", true, None::<&str>)?,
@@ -455,12 +455,12 @@ fn create_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     #[cfg(target_os = "macos")]
     let app_submenu = Submenu::with_items(
         app,
-        "YesPlayMusic",
+        "Yokaze",
         true,
         &[
             &PredefinedMenuItem::about(
                 app,
-                Some("About YesPlayMusic"),
+                Some("About Yokaze"),
                 Some(app_about_metadata(&app.package_info().version.to_string())),
             )?,
             &PredefinedMenuItem::separator(app)?,
@@ -561,7 +561,7 @@ fn sidecar_exit_action(shutdown_requested: bool, completed_restarts: usize) -> S
 
 fn sidecar_startup_error_message(port: u16, detail: &str) -> String {
     format!(
-        "后台服务无法启动。端口 {port} 可能已被其他程序占用。\n\n请退出其他 YesPlayMusic 实例或释放该端口后重试。\n\n技术信息：{detail}"
+        "后台服务无法启动。端口 {port} 可能已被其他程序占用。\n\n请退出其他 Yokaze 实例或释放该端口后重试。\n\n技术信息：{detail}"
     )
 }
 
@@ -580,7 +580,7 @@ fn handle_sidecar_startup_failure(
     let exit_handle = app.clone();
     app.dialog()
         .message(message)
-        .title("YesPlayMusic 无法启动")
+        .title("Yokaze 无法启动")
         .kind(MessageDialogKind::Error)
         .show(move |_| exit_handle.exit(1));
     Ok(())
@@ -1215,7 +1215,7 @@ fn app_menu_action(id: &str) -> Option<AppMenuAction> {
         "shuffle" => Some(AppMenuAction::Emit("shuffle")),
         "minimizeToTray" => Some(AppMenuAction::Hide),
         "github" => Some(AppMenuAction::OpenUrl(
-            "https://github.com/nagi-studio/YesPlayMusic",
+            "https://github.com/nagi-studio/Yokaze",
         )),
         "tauri" => Some(AppMenuAction::OpenUrl("https://tauri.app")),
         "delete" => Some(AppMenuAction::DeleteSelection),
@@ -2002,7 +2002,7 @@ fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("YesPlayMusic")
+        .tooltip("Yokaze")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quit" => app.exit(0),
             "show-main" => {
@@ -2126,9 +2126,7 @@ fn wait_for_sidecar(port: u16, expected_token: &str, timeout: Duration) -> Resul
         thread::sleep(Duration::from_millis(50));
     }
 
-    Err(format!(
-        "等待 YesPlayMusic sidecar 身份握手超时（端口 {port}）"
-    ))
+    Err(format!("等待 Yokaze sidecar 身份握手超时（端口 {port}）"))
 }
 
 fn wait_for_supervised_sidecar(
@@ -2143,7 +2141,7 @@ fn wait_for_supervised_sidecar(
 
     while Instant::now() < deadline {
         if permanently_unavailable.load(Ordering::Acquire) {
-            return Err("YesPlayMusic sidecar exhausted its restart budget".into());
+            return Err("Yokaze sidecar exhausted its restart budget".into());
         }
         if replacement_ready.load(Ordering::Acquire) {
             return Ok(());
@@ -2154,9 +2152,7 @@ fn wait_for_supervised_sidecar(
         thread::sleep(Duration::from_millis(50));
     }
 
-    Err(format!(
-        "等待 YesPlayMusic sidecar 受监督启动超时（端口 {port}）"
-    ))
+    Err(format!("等待 Yokaze sidecar 受监督启动超时（端口 {port}）"))
 }
 
 fn generate_sidecar_health_token() -> Result<String, Box<dyn std::error::Error>> {
@@ -2619,7 +2615,7 @@ fn create_main_window(
     });
     let url = format!("http://127.0.0.1:{port}").parse()?;
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-        .title("YesPlayMusic")
+        .title("Yokaze")
         .inner_size(f64::from(size.width), f64::from(size.height))
         .min_inner_size(300.0, 48.0)
         .visible(false);
@@ -2755,7 +2751,7 @@ fn build_taskbar_overlay(
         taskbar_docking::OVERLAY_LABEL,
         WebviewUrl::External(url),
     )
-    .title("YesPlayMusic")
+    .title("Yokaze")
     .inner_size(380.0, 48.0)
     .decorations(false)
     .transparent(true)
@@ -3151,7 +3147,7 @@ mod tests {
         let message = sidecar_startup_error_message(28_232, "health check timed out");
 
         assert!(message.contains("28232"));
-        assert!(message.contains("其他 YesPlayMusic 实例"));
+        assert!(message.contains("其他 Yokaze 实例"));
         assert!(message.contains("health check timed out"));
     }
 
@@ -3167,7 +3163,7 @@ mod tests {
         let version = env!("CARGO_PKG_VERSION");
         let metadata = app_about_metadata(version);
 
-        assert_eq!(metadata.name.as_deref(), Some("YesPlayMusic"));
+        assert_eq!(metadata.name.as_deref(), Some("Yokaze"));
         assert_eq!(metadata.version, None);
         assert_eq!(metadata.short_version.as_deref(), Some(version));
         assert_eq!(
@@ -3196,7 +3192,7 @@ mod tests {
             ("app.minimizeToTray", AppMenuAction::Hide),
             (
                 "app.github",
-                AppMenuAction::OpenUrl("https://github.com/nagi-studio/YesPlayMusic"),
+                AppMenuAction::OpenUrl("https://github.com/nagi-studio/Yokaze"),
             ),
             ("app.tauri", AppMenuAction::OpenUrl("https://tauri.app")),
             ("app.delete", AppMenuAction::DeleteSelection),

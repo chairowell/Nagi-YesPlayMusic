@@ -23,7 +23,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::{i18n, update};
 
-const DOWNLOAD_BASE: &str = "https://github.com/nagi-studio/YesPlayMusic/releases/download";
+const DOWNLOAD_BASE: &str = "https://github.com/nagi-studio/Yokaze/releases/download";
 /// Injected by CI from the repo's updater key infrastructure; a dev build
 /// without it refuses to update rather than skipping verification.
 const UPDATER_PUBKEY: Option<&str> = option_env!("TAURI_UPDATER_PUBKEY");

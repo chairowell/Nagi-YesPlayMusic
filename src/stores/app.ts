@@ -76,7 +76,7 @@ function createInitialState(): AppState {
     sessionEpoch: 0,
     showLyrics: false,
     enableScrolling: true,
-    title: 'YesPlayMusic',
+    title: 'Yokaze',
     liked: createEmptyLikedState(),
     contextMenu: {
       clickObjectID: 0,

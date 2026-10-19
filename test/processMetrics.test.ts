@@ -14,7 +14,7 @@ import {
 } from '../scripts/lib/processMetrics.mjs';
 
 describe('性能采样参数', () => {
-  test('只接受显式根 PID，避免误采样其他 YesPlayMusic', () => {
+  test('只接受显式根 PID，避免误采样其他 Yokaze', () => {
     expect(() => parseMetricsArgs([])).toThrow('必须通过 --pid 指定根进程');
     expect(parseMetricsArgs(['--pid', '42', '--duration', '5'])).toEqual({
       pid: 42,

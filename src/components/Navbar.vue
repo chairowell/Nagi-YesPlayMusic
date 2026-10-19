@@ -107,7 +107,7 @@ import { platform } from '@/utils/platform';
 import { openExternalUrlSafely } from '@/services/externalLinks';
 import { resolveCustomTitlebar } from '@/services/titlebar';
 
-const PROJECT_REPOSITORY = 'https://github.com/nagi-studio/YesPlayMusic';
+const PROJECT_REPOSITORY = 'https://github.com/nagi-studio/Yokaze';
 
 export default defineComponent({
   name: 'Navbar',

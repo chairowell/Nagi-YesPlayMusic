@@ -88,10 +88,10 @@ const updaterTestSignature = Buffer.from(
 
 async function writeSignedUpdaterFixtures(root: string): Promise<void> {
   for (const [directory, name] of [
-    ['macos', 'YesPlayMusic.app.tar.gz'],
-    ['windows', 'YesPlayMusic_0.7.0_x64-setup.exe'],
-    ['linux-appimage', 'YesPlayMusic_0.7.0_amd64.AppImage'],
-    ['linux-deb', 'YesPlayMusic_0.7.0_amd64.deb'],
+    ['macos', 'Yokaze.app.tar.gz'],
+    ['windows', 'Yokaze_0.7.0_x64-setup.exe'],
+    ['linux-appimage', 'Yokaze_0.7.0_amd64.AppImage'],
+    ['linux-deb', 'Yokaze_0.7.0_amd64.deb'],
   ] as const) {
     const target = path.join(root, directory);
     await mkdir(target, { recursive: true });
@@ -113,7 +113,7 @@ test('desktop builds use the official Tauri updater and process plugins', () => 
   expect(capabilities.permissions).toContain('updater:default');
   expect(capabilities.permissions).toContain('process:allow-restart');
   expect(tauriConfig.plugins.updater.endpoints).toEqual([
-    'https://github.com/nagi-studio/YesPlayMusic/releases/latest/download/latest.json',
+    'https://github.com/nagi-studio/Yokaze/releases/latest/download/latest.json',
   ]);
   expect(tauriConfig.bundle.createUpdaterArtifacts).toBe(false);
   expect(updaterConfig.bundle.createUpdaterArtifacts).toBe(true);
@@ -242,7 +242,7 @@ test('release builds inject the public key into createUpdaterArtifacts config', 
       updater: {
         pubkey: updaterTestPublicKey,
         endpoints: [
-          'https://github.com/nagi-studio/YesPlayMusic/releases/latest/download/latest.json',
+          'https://github.com/nagi-studio/Yokaze/releases/latest/download/latest.json',
         ],
       },
     },
@@ -265,7 +265,7 @@ test('updater manifest rejects an artifact not signed by the injected public key
   try {
     await writeSignedUpdaterFixtures(root);
     await writeFile(
-      path.join(root, 'windows', 'YesPlayMusic_0.7.0_x64-setup.exe'),
+      path.join(root, 'windows', 'Yokaze_0.7.0_x64-setup.exe'),
       'tampered'
     );
 
@@ -369,16 +369,16 @@ test('latest.json maps every supported target to its signed release asset', asyn
       'windows-x86_64',
     ]);
     expect(manifest.platforms['darwin-aarch64']?.url).toEndWith(
-      '/v0.7.0/YesPlayMusic.app.tar.gz'
+      '/v0.7.0/Yokaze.app.tar.gz'
     );
     expect(manifest.platforms['windows-x86_64']?.signature).toBe(
       updaterTestSignature
     );
     expect(manifest.platforms['linux-x86_64-appimage']?.url).toEndWith(
-      '/v0.7.0/YesPlayMusic_0.7.0_amd64.AppImage'
+      '/v0.7.0/Yokaze_0.7.0_amd64.AppImage'
     );
     expect(manifest.platforms['linux-x86_64-deb']?.url).toEndWith(
-      '/v0.7.0/YesPlayMusic_0.7.0_amd64.deb'
+      '/v0.7.0/Yokaze_0.7.0_amd64.deb'
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -410,7 +410,7 @@ test('updater manifest ignores TUI binaries sharing the release directory', asyn
       artifactVersionReader: async () => '0.7.0',
     });
     expect(manifest.platforms['windows-x86_64']?.url).toEndWith(
-      '/v0.7.0/YesPlayMusic_0.7.0_x64-setup.exe'
+      '/v0.7.0/Yokaze_0.7.0_x64-setup.exe'
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -420,15 +420,15 @@ test('updater manifest ignores TUI binaries sharing the release directory', asyn
 test('macOS updater archive exposes the signed embedded app version', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yesplaymusic-version-test-'));
   try {
-    const resources = path.join(root, 'YesPlayMusic.app/Contents/Resources');
+    const resources = path.join(root, 'Yokaze.app/Contents/Resources');
     await mkdir(resources, { recursive: true });
     await writeFile(
       path.join(resources, 'updater-artifact-version.json'),
       JSON.stringify({ version: '0.7.1-canary.2' })
     );
-    const archive = path.join(root, 'YesPlayMusic.app.tar.gz');
+    const archive = path.join(root, 'Yokaze.app.tar.gz');
     const tar = Bun.spawnSync(
-      ['tar', '-czf', archive, '-C', root, 'YesPlayMusic.app'],
+      ['tar', '-czf', archive, '-C', root, 'Yokaze.app'],
       { stdout: 'pipe', stderr: 'pipe' }
     );
     expect(tar.exitCode).toBe(0);
@@ -508,8 +508,8 @@ test('Linux updater collector preserves both signed package formats', async () =
       'src-tauri/target/x86_64-unknown-linux-gnu/release/bundle'
     );
     for (const [directory, name] of [
-      ['appimage', 'YesPlayMusic_0.7.0_amd64.AppImage'],
-      ['deb', 'YesPlayMusic_0.7.0_amd64.deb'],
+      ['appimage', 'Yokaze_0.7.0_amd64.AppImage'],
+      ['deb', 'Yokaze_0.7.0_amd64.deb'],
     ] as const) {
       const source = path.join(bundleRoot, directory);
       await mkdir(source, { recursive: true });
@@ -556,7 +556,7 @@ test('core smoke launches each platform from its packaged runtime layout', async
         'release',
         'bundle',
         'macos',
-        'YesPlayMusic.app',
+        'Yokaze.app',
         'Contents',
         'MacOS',
         'yesplaymusic-tauri'
@@ -581,12 +581,12 @@ test('core smoke launches each platform from its packaged runtime layout', async
     );
     await mkdir(appImageDirectory, { recursive: true });
     await writeFile(
-      path.join(appImageDirectory, 'YesPlayMusic_0.7.0_amd64.AppImage'),
+      path.join(appImageDirectory, 'Yokaze_0.7.0_amd64.AppImage'),
       'artifact'
     );
     expect(
       resolveTauriSmokeExecutable({ platform: 'linux', arch: 'x64', root })
-    ).toBe(path.join(appImageDirectory, 'YesPlayMusic_0.7.0_amd64.AppImage'));
+    ).toBe(path.join(appImageDirectory, 'Yokaze_0.7.0_amd64.AppImage'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -620,7 +620,7 @@ test('installed smoke canonicalizes symlinked launch paths before Tauri resolves
 
 test('Developer ID 构建保留 app 目标，否则 macOS 更新包和 .app 都不会产出', () => {
   // v0.9.2 的首个签名构建就挂在这：--bundles dmg 让 Tauri 在打完 DMG 后删掉
-  // bundle/macos/YesPlayMusic.app，签名验收、collect:tauri:release-dmg 和
+  // bundle/macos/Yokaze.app，签名验收、collect:tauri:release-dmg 和
   // updater 产物三处同时失效，而 Tauri 只在日志里留一行 warn。
   const developerId = updaterBuildArgs('darwin-aarch64', { developerId: true });
   expect(developerId).toContain('app,dmg');

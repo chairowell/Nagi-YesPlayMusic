@@ -1,6 +1,6 @@
 class Ypm < Formula
-  desc "Terminal client for YesPlayMusic"
-  homepage "https://github.com/nagi-studio/YesPlayMusic"
+  desc "Terminal client for Yokaze"
+  homepage "https://github.com/nagi-studio/Yokaze"
   license "GPL-3.0-only"
 
   # Release checklist: replace 0.0.0 here and in both URLs with the tag version
@@ -9,7 +9,7 @@ class Ypm < Formula
   version "0.0.0"
 
   on_macos do
-    url "https://github.com/nagi-studio/YesPlayMusic/releases/download/v0.0.0/ypm-macos-aarch64",
+    url "https://github.com/nagi-studio/Yokaze/releases/download/v0.0.0/ypm-macos-aarch64",
         using: :nounzip
     sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -17,7 +17,7 @@ class Ypm < Formula
   end
 
   on_linux do
-    url "https://github.com/nagi-studio/YesPlayMusic/releases/download/v0.0.0/ypm-linux-x64",
+    url "https://github.com/nagi-studio/Yokaze/releases/download/v0.0.0/ypm-linux-x64",
         using: :nounzip
     sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 

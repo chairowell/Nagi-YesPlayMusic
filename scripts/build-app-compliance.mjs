@@ -545,7 +545,7 @@ function noticeRows(records) {
 function thirdPartyNotice({ targetTriple, hostPackages, rendererPackages }) {
   const header =
     '| Package | Version | SPDX license | Authors | Upstream | Notice source | Included license/notice files |\n| --- | --- | --- | --- | --- | --- | --- |';
-  return `# YesPlayMusic application third-party notices
+  return `# Yokaze application third-party notices
 
 This inventory covers the exact third-party code distributed in the Tauri
 host normal dependency closure for \`${targetTriple}\` and the packages whose

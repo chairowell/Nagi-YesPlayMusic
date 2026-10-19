@@ -42,7 +42,7 @@ export const RUST_SIDECAR_APP_SIZE_LIMIT_BYTES = Math.floor(54.1 * 1024 * 1024);
 
 export const defaultTauriAppPath = path.join(
   projectRoot,
-  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app'
+  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Yokaze.app'
 );
 
 export const defaultBuiltSidecarPath = path.join(
@@ -51,7 +51,7 @@ export const defaultBuiltSidecarPath = path.join(
 );
 
 export function tauriDmgName(version) {
-  return `YesPlayMusic_${version}_aarch64.dmg`;
+  return `Yokaze_${version}_aarch64.dmg`;
 }
 
 export function tauriBundledDmgPath(version) {
@@ -182,7 +182,7 @@ export async function assertMacBundleProvenance(
     );
   }
   const expectedSourceAsset = sidecarSourceArchiveName(expectedVersion);
-  const expectedSourceUrl = `https://github.com/nagi-studio/YesPlayMusic/releases/download/v${expectedVersion}/${expectedSourceAsset}`;
+  const expectedSourceUrl = `https://github.com/nagi-studio/Yokaze/releases/download/v${expectedVersion}/${expectedSourceAsset}`;
   if (
     completeSource.assetName !== expectedSourceAsset ||
     !sourceOffer.includes(expectedSourceAsset) ||
@@ -269,7 +269,7 @@ async function verifyCompleteSourceKit(
     'utf8'
   );
   const sourceArchiveName = sidecarSourceArchiveName(expectedVersion);
-  const sourceUrl = `https://github.com/nagi-studio/YesPlayMusic/releases/download/v${expectedVersion}/${sourceArchiveName}`;
+  const sourceUrl = `https://github.com/nagi-studio/Yokaze/releases/download/v${expectedVersion}/${sourceArchiveName}`;
   if (
     !sourceOffer.includes(sourceArchiveName) ||
     !sourceOffer.includes(sourceUrl)
@@ -393,12 +393,12 @@ export async function packageTauriDmg({
     await rm(dmgPath, { force: true });
     await rm(checksumPath, { force: true });
     run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
-    run('ditto', [appPath, path.join(stagingDir, 'YesPlayMusic.app')]);
+    run('ditto', [appPath, path.join(stagingDir, 'Yokaze.app')]);
     await symlink('/Applications', path.join(stagingDir, 'Applications'));
     run('hdiutil', [
       'create',
       '-volname',
-      'YesPlayMusic',
+      'Yokaze',
       '-srcfolder',
       stagingDir,
       '-ov',

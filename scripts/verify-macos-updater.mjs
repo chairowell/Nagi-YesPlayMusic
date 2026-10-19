@@ -9,7 +9,7 @@ const projectRoot = path.resolve(
 );
 const defaultArchivePath = path.join(
   projectRoot,
-  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app.tar.gz'
+  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Yokaze.app.tar.gz'
 );
 
 function run(command, args) {
@@ -30,7 +30,7 @@ export async function verifyMacOSUpdaterArtifact(
   );
   try {
     run('tar', ['-xzf', archivePath, '-C', extractionDir]);
-    const appPath = path.join(extractionDir, 'YesPlayMusic.app');
+    const appPath = path.join(extractionDir, 'Yokaze.app');
     run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
     return appPath;
   } finally {

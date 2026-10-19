@@ -10,7 +10,7 @@ const projectRoot = path.resolve(
 
 export const defaultMacOSAppPath = path.join(
   projectRoot,
-  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app'
+  'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Yokaze.app'
 );
 
 function run(command, args, environment = process.env) {

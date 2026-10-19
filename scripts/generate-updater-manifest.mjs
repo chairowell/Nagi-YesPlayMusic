@@ -27,7 +27,7 @@ async function walk(directory) {
 export async function createUpdaterManifest({
   artifactsDir,
   version,
-  repository = 'nagi-studio/YesPlayMusic',
+  repository = 'nagi-studio/Yokaze',
   tag = `v${version}`,
   publishedAt = new Date().toISOString(),
   publicKey = process.env.TAURI_UPDATER_PUBKEY,
@@ -77,7 +77,7 @@ export async function createUpdaterManifest({
   }
   return {
     version,
-    notes: `YesPlayMusic ${version}`,
+    notes: `Yokaze ${version}`,
     pub_date: publishedAt,
     platforms,
   };

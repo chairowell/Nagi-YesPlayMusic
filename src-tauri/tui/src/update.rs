@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-const RELEASES_URL: &str = "https://api.github.com/repos/nagi-studio/YesPlayMusic/releases";
+const RELEASES_URL: &str = "https://api.github.com/repos/nagi-studio/Yokaze/releases";
 /// The tap is bumped by hand after a release, so it lags GitHub by anywhere
 /// from minutes to days. Announcing a tag `brew upgrade` cannot deliver yet
 /// is exactly how gh (cli/cli#6949) and codex (openai/codex#6436) collected

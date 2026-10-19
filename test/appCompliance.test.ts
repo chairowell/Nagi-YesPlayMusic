@@ -168,7 +168,7 @@ describe('Tauri host and renderer distribution notices', () => {
       }),
       'utf8'
     );
-    await writeFile(path.join(root, 'LICENSE'), 'YesPlayMusic MIT\n');
+    await writeFile(path.join(root, 'LICENSE'), 'Yokaze MIT\n');
     const outputDirectory = path.join(root, 'generated', 'app-compliance');
     const metadata = {
       packages: [host, tauri, buildOnly],

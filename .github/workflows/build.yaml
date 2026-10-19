@@ -223,7 +223,7 @@ jobs:
       - name: Validate Developer ID signature and notarization ticket
         if: github.ref_type == 'tag'
         run: |
-          APP_PATH="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/YesPlayMusic.app"
+          APP_PATH="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Yokaze.app"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           spctl --assess --type execute --verbose=4 "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
@@ -251,12 +251,12 @@ jobs:
         run: |
           VERSION="$(node -p 'require("../package.json").version')"
           REQUIRED_ARTIFACTS=(
-            "YesPlayMusic_${VERSION}_aarch64.dmg"
-            "YesPlayMusic_${VERSION}_aarch64.dmg.sha256"
-            "YesPlayMusic_${VERSION}_sidecar-source.tar.gz"
-            "YesPlayMusic_${VERSION}_sidecar-source.tar.gz.sha256"
-            "YesPlayMusic_${VERSION}_SOURCE-OFFER.md"
-            "YesPlayMusic_${VERSION}_SOURCE-OFFER.md.sha256"
+            "Yokaze_${VERSION}_aarch64.dmg"
+            "Yokaze_${VERSION}_aarch64.dmg.sha256"
+            "Yokaze_${VERSION}_sidecar-source.tar.gz"
+            "Yokaze_${VERSION}_sidecar-source.tar.gz.sha256"
+            "Yokaze_${VERSION}_SOURCE-OFFER.md"
+            "Yokaze_${VERSION}_SOURCE-OFFER.md.sha256"
           )
           for artifact in "${REQUIRED_ARTIFACTS[@]}"; do
             test -s "$artifact" || { echo "Missing required release artifact: $artifact" >&2; exit 1; }
@@ -265,7 +265,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: YesPlayMusic-macos-aarch64
+          name: Yokaze-macos-aarch64
           path: dist_tauri/*
           if-no-files-found: error
           retention-days: 7
@@ -413,7 +413,7 @@ jobs:
             [System.Text.UTF8Encoding]::new($false)
           )
           @"
-          YesPlayMusic Tauri Windows x64 experimental test build
+          Yokaze Tauri Windows x64 experimental test build
           Commit: $env:GITHUB_SHA
 
           This package is unsigned. Windows SmartScreen may warn before installation.
@@ -430,7 +430,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
-          name: YesPlayMusic-windows-x64-${{ github.sha }}
+          name: Yokaze-windows-x64-${{ github.sha }}
           path: dist_tauri_windows/*
           if-no-files-found: error
           retention-days: 7
@@ -581,7 +581,7 @@ jobs:
           cd dist_tauri_linux
           sha256sum ./*.AppImage ./*.deb > SHA256SUMS-linux-x64.txt
           printf '%s\n' \
-            'YesPlayMusic Tauri Ubuntu x64 experimental test build' \
+            'Yokaze Tauri Ubuntu x64 experimental test build' \
             "Commit: $GITHUB_SHA" \
             '' \
             'AppImage can run without installation. The deb package targets Ubuntu/Debian systems.' \
@@ -599,7 +599,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
-          name: YesPlayMusic-linux-x64-${{ github.sha }}
+          name: Yokaze-linux-x64-${{ github.sha }}
           path: dist_tauri_linux/*
           if-no-files-found: error
           retention-days: 7
@@ -712,7 +712,7 @@ jobs:
           cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.source }}" src-tauri/target/release/ypm
           bun run build:ypm:compliance
           VERSION="${GITHUB_REF_NAME#v}"
-          tar -czf "dist-ypm/YesPlayMusic_${VERSION}_ypm-source.tar.gz" -C src-tauri/generated ypm-complete-source
+          tar -czf "dist-ypm/Yokaze_${VERSION}_ypm-source.tar.gz" -C src-tauri/generated ypm-complete-source
 
       - uses: actions/upload-artifact@v7
         with:
@@ -742,17 +742,17 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: YesPlayMusic-macos-aarch64
+          name: Yokaze-macos-aarch64
           path: release/macos
 
       - uses: actions/download-artifact@v8
         with:
-          name: YesPlayMusic-windows-x64-${{ github.sha }}
+          name: Yokaze-windows-x64-${{ github.sha }}
           path: release/windows
 
       - uses: actions/download-artifact@v8
         with:
-          name: YesPlayMusic-linux-x64-${{ github.sha }}
+          name: Yokaze-linux-x64-${{ github.sha }}
           path: release/linux
 
       - uses: actions/download-artifact@v8

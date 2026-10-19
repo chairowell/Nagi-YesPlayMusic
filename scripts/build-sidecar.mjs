@@ -114,11 +114,11 @@ if [ ! -r "$payload" ]; then
   payload="$script_dir/../lib/yesplaymusic/sidecar.payload"
 fi
 if [ ! -r "$payload" ]; then
-  echo "YesPlayMusic sidecar payload is missing" >&2
+  echo "Yokaze sidecar payload is missing" >&2
   exit 1
 fi
 if [ "$(dd if="$payload" bs=4 count=1 2>/dev/null)" != "YPM1" ]; then
-  echo "YesPlayMusic sidecar payload is invalid" >&2
+  echo "Yokaze sidecar payload is invalid" >&2
   exit 1
 fi
 
@@ -127,7 +127,7 @@ if [ -n "\${XDG_CACHE_HOME:-}" ]; then
 elif [ -n "\${HOME:-}" ]; then
   cache_root=$HOME/.cache
 else
-  echo "YesPlayMusic sidecar needs HOME or XDG_CACHE_HOME" >&2
+  echo "Yokaze sidecar needs HOME or XDG_CACHE_HOME" >&2
   exit 1
 fi
 cache_dir="$cache_root/yesplaymusic"
@@ -145,7 +145,7 @@ if [ ! -x "$cached" ]; then
   trap 'rm -f "$temporary"' EXIT HUP INT TERM
   tail -c +5 "$payload" > "$temporary"
   if [ "$(sha256sum "$temporary" | awk '{print $1}')" != "${digest}" ]; then
-    echo "YesPlayMusic sidecar payload checksum failed" >&2
+    echo "Yokaze sidecar payload checksum failed" >&2
     exit 1
   fi
   chmod 700 "$temporary"

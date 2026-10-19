@@ -659,7 +659,7 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
     expect(result.copyleftSourceCount).toBe(EXPECTED_UNM_CRATES.length + 1);
     expect(result.dependencyCount).toBe(EXPECTED_UNM_CRATES.length + 2);
     expect(ypmSourceArchiveName('0.7.0')).toBe(
-      'YesPlayMusic_0.7.0_ypm-source.tar.gz'
+      'Yokaze_0.7.0_ypm-source.tar.gz'
     );
 
     const manifest = JSON.parse(
@@ -683,7 +683,7 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
     });
     expect(manifest.completeSource).toEqual(
       expect.objectContaining({
-        assetName: 'YesPlayMusic_0.7.0_ypm-source.tar.gz',
+        assetName: 'Yokaze_0.7.0_ypm-source.tar.gz',
         dependencySourceCount: EXPECTED_UNM_CRATES.length + 2,
       })
     );
@@ -760,7 +760,7 @@ describe('Rust Sidecar copyleft distribution bundle', () => {
     );
     expect(
       await readFile(path.join(outputDirectory, 'SOURCE-OFFER.md'), 'utf8')
-    ).toContain('YesPlayMusic_0.7.0_ypm-source.tar.gz');
+    ).toContain('Yokaze_0.7.0_ypm-source.tar.gz');
   });
 
   test('ypm provenance reads the release binary path', async () => {

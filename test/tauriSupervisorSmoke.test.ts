@@ -8,7 +8,7 @@ import {
 import { tauriSmokeExitTimeoutMs } from '../scripts/smoke-tauri-local.mjs';
 
 const sidecarExecutable =
-  '/tmp/Installed Copy/YesPlayMusic.app/Contents/MacOS/yesplaymusic-sidecar';
+  '/tmp/Installed Copy/Yokaze.app/Contents/MacOS/yesplaymusic-sidecar';
 
 test('WebView smoke runner outlives the packaged host exit timer', () => {
   expect(tauriSmokeExitTimeoutMs(true)).toBeGreaterThan(25_000);

@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "YesPlayMusic",
+  "productName": "Yokaze",
   "version": "0.12.0",
   "identifier": "com.electron.yesplaymusic",
   "mainBinaryName": "yesplaymusic-tauri",
@@ -21,7 +21,7 @@
     "updater": {
       "pubkey": "",
       "endpoints": [
-        "https://github.com/nagi-studio/YesPlayMusic/releases/latest/download/latest.json"
+        "https://github.com/nagi-studio/Yokaze/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

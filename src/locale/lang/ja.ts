@@ -85,11 +85,11 @@ export default {
     login: 'ログイン',
     loginWithEmail: 'メールアドレスでログイン',
     loginWithPhone: '電話番号でログイン',
-    notice: `YesPlayMusic がアカウント情報をクラウドに保存することはありません。<br />
+    notice: `Yokaze がアカウント情報をクラウドに保存することはありません。<br />
       パスワードはローカルで MD5 ハッシュ化してから NetEase Cloud Music の API に送信されます。<br />
-      YesPlayMusic は NetEase Cloud Music の公式サイトではありません。アカウント情報を入力する前によく確認してください。<a href="https://github.com/qier222/YesPlayMusic">YesPlayMusic の GitHub リポジトリ</a>から、自分でビルドして自前の API を使うこともできます。`,
+      Yokaze は NetEase Cloud Music の公式サイトではありません。アカウント情報を入力する前によく確認してください。<a href="https://github.com/nagi-studio/Yokaze">Yokaze の GitHub リポジトリ</a>から、自分でビルドして自前の API を使うこともできます。`,
     noticeDesktop: `パスワードはローカルで MD5 ハッシュ化してから NetEase Cloud Music の API に送信されます。<br />
-      YesPlayMusic がアカウント情報を NetEase Cloud Music 以外のサーバーへ送ることはありません。<br />`,
+      Yokaze がアカウント情報を NetEase Cloud Music 以外のサーバーへ送ることはありません。<br />`,
   },
   mv: {
     moreVideo: 'ほかの動画',
@@ -254,7 +254,7 @@ export default {
       minimizeToTray: 'トレイに格納',
     },
     closePrompt: {
-      title: 'YesPlayMusic を終了しますか？',
+      title: 'Yokaze を終了しますか？',
       description: 'トレイで再生を続けるか、終了するかを選んでください。',
       remember: 'この選択を記憶する',
     },

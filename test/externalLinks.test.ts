@@ -24,8 +24,8 @@ const capabilities = JSON.parse(
 describe('桌面外链', () => {
   test('只允许交给系统浏览器打开 HTTP(S) 地址', () => {
     expect(
-      normalizeExternalUrl('https://github.com/nagi-studio/YesPlayMusic')
-    ).toBe('https://github.com/nagi-studio/YesPlayMusic');
+      normalizeExternalUrl('https://github.com/nagi-studio/Yokaze')
+    ).toBe('https://github.com/nagi-studio/Yokaze');
     expect(() => normalizeExternalUrl('javascript:alert(1)')).toThrow(
       '只允许打开 HTTP(S) 外链'
     );

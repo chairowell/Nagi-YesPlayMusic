@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="images/logo.png" alt="YesPlayMusic Logo" width="156" height="156">
+  <img src="images/logo.png" alt="Yokaze Logo" width="156" height="156">
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://tauri.app"><img src="images/tauri-glyph.svg" alt="Built with Tauri 2" height="72"></a>
 </p>
 
-<h2 align="center" style="font-weight: 600">YesPlayMusic</h2>
+<h2 align="center" style="font-weight: 600">Yokaze · 夜风</h2>
 
 <p align="center">高颜值的第三方网易云播放器 · 桌面版与 TUI 同一个仓库、共用一套 Rust 核心</p>
 <p align="center"><sub>Tauri 2 桌面应用 + <code>ypm</code> TUI · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
@@ -16,8 +16,9 @@
 
 ---
 
-这是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 分出来独立维护的
-macOS Tauri 重构版，不再跟随上游发版。界面和主要功能保留，桌面运行时、本地服务、缓存和
+Yokaze（夜风）原名 YesPlayMusic，是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic)
+分出来独立维护的 macOS Tauri 重构版，v0.13.0 起改用现在的名字（取自 MyGO!!!!! 的《夜隠染》，读作 よかぜ），
+不再跟随上游发版。界面和主要功能保留，桌面运行时、本地服务、缓存和
 窗口交互全部重新实现。想要原版跨平台安装包请去[上游仓库](https://github.com/qier222/YesPlayMusic)。
 
 仓库里是两个前端：Tauri 2 桌面应用，和终端里跑的 `ypm`。网易云的账号、搜索、
@@ -150,22 +151,22 @@ ypm --json --tui spectrum --fps 12
 
 ```sh
 mkdir -p ~/.agents/skills/ypm && curl -fsSL \
-  https://raw.githubusercontent.com/nagi-studio/YesPlayMusic/master/skills/ypm/SKILL.md \
+  https://raw.githubusercontent.com/nagi-studio/Yokaze/master/skills/ypm/SKILL.md \
   -o ~/.agents/skills/ypm/SKILL.md
 ```
 
 `~/.agents/skills/` 是各家 agent 通用的位置；dsh 另外还认 `~/.dsh/skills/`
 和项目内 `.dsh/skills/`，Claude Code 认 `~/.claude/skills/`，换个目标目录即可。
 
-用 `npx skills add nagi-studio/YesPlayMusic -s ypm -g -a universal` 也能装，
+用 `npx skills add nagi-studio/Yokaze -s ypm -g -a universal` 也能装，
 但那会为这一个文件克隆整个仓库。
 
 ## 安装
 
-> **[尝鲜版（canary）](https://github.com/nagi-studio/YesPlayMusic/releases?q=prerelease%3Atrue&expanded=true)** 带上面那个 TUI。
+> **[尝鲜版（canary）](https://github.com/nagi-studio/Yokaze/releases?q=prerelease%3Atrue&expanded=true)** 带上面那个 TUI。
 > canary 走独立更新通道，和 stable 互不干扰。稳定版请用下面的 Releases 页面。
 
-到 [Releases](https://github.com/nagi-studio/YesPlayMusic/releases) 下载 DMG，
+到 [Releases](https://github.com/nagi-studio/Yokaze/releases) 下载 DMG，
 只提供 Apple Silicon（`arm64`），要求 macOS 14 或更高版本。
 
 DMG 经 Developer ID 签名与 Apple 公证，下载后双击即可，不需要额外放行。
@@ -191,7 +192,7 @@ v0.9.1 及更早的版本走的是 ad-hoc Hardened Runtime seal，没有 Develop
 stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 验签，与 Apple Developer ID
 无关。普通本地构建没有发布公钥，自动更新保持未配置状态。
 
-同一 Release 会提供对应版本的 `YesPlayMusic_<version>_sidecar-source.tar.gz`、SHA-256 与醒目的
+同一 Release 会提供对应版本的 `Yokaze_<version>_sidecar-source.tar.gz`、SHA-256 与醒目的
 `SOURCE-OFFER` 指引，这是 Rust Sidecar 的完整对应源码和离线重链接包。转发或镜像 DMG 时，
 请同时保留源码资产和源码下载指引。
 

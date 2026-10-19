@@ -1,7 +1,7 @@
 [package]
 name = "yesplaymusic-tui"
 version = "0.12.0"
-description = "ypm — YesPlayMusic in the terminal"
+description = "ypm — Yokaze in the terminal"
 edition = "2021"
 rust-version = "1.91"
 license = "GPL-3.0-only"

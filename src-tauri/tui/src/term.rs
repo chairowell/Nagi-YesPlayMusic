@@ -18,7 +18,7 @@ pub(crate) const HOME: &str = "\x1b[H";
 pub(crate) const HIDE_CURSOR: &str = "\x1b[?25l";
 pub(crate) const SHOW_CURSOR: &str = "\x1b[?25h";
 
-/// YesPlayMusic's `--color-primary`, #335eea.
+/// Yokaze's `--color-primary`, #335eea.
 const BRAND_RGB: &str = "\x1b[38;2;51;94;234m";
 const BRAND_256: &str = "\x1b[38;5;63m";
 const BRAND_16: &str = "\x1b[34m";

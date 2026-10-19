@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createLocalSigningSteps } from '../scripts/tauriSigning.mjs';
 
 test('Tauri 本地包分别签 Rust Sidecar、主程序和 app', () => {
-  const appPath = path.join(path.sep, 'tmp', 'YesPlayMusic.app');
+  const appPath = path.join(path.sep, 'tmp', 'Yokaze.app');
   const steps = createLocalSigningSteps(appPath);
 
   expect(steps.map(step => step.label)).toEqual([

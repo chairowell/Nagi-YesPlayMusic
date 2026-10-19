@@ -1,4 +1,4 @@
-//! ypm — YesPlayMusic in the terminal.
+//! ypm — Yokaze in the terminal.
 
 mod action;
 mod api;
@@ -31,7 +31,7 @@ use anyhow::Result;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "ypm", version, about = "YesPlayMusic TUI")]
+#[command(name = "ypm", version, about = "Yokaze TUI")]
 struct Args {
     /// Write a debug log to the state directory (never to the screen).
     #[arg(long)]
