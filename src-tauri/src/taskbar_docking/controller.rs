@@ -579,7 +579,8 @@ impl Worker {
                     attach::hide(overlay);
                 }
             }
-            Effect::ShowPlayer(home) => self.show_player(home),
+            Effect::ShowPlayer { home, focus } => self.show_player(home, focus),
+            Effect::FocusPlayer => self.focus_player(),
             Effect::StripPhase(phase) => self.emit_phase(phase),
             Effect::DockedChanged(docked) => {
                 self.emit_to_main(DOCK_STATE_EVENT, json!({ "docked": docked }));
@@ -730,8 +731,10 @@ impl Worker {
     }
 
     /// Restores a hidden player at its home; a player that is still showing
-    /// (the hide was refused) is left where the user has it.
-    fn show_player(&self, home: Rect) {
+    /// (the hide was refused) is left where the user has it. Only `focus`
+    /// takes the foreground: the main window is built unfocused, so a plain
+    /// show stays behind whatever the user is in.
+    fn show_player(&self, home: Rect, focus: bool) {
         if self.inner.stopping.load(Ordering::Acquire) {
             return;
         }
@@ -742,7 +745,8 @@ impl Worker {
             return;
         }
         let _ = player.set_position(PhysicalPosition::new(home.x, home.y));
-        if player.is_minimized().unwrap_or(false) {
+        // SW_RESTORE activates, so a quiet recovery leaves it minimized.
+        if focus && player.is_minimized().unwrap_or(false) {
             let _ = player.unminimize();
         }
         if let Err(error) = player.show() {
@@ -750,6 +754,29 @@ impl Worker {
         }
         // The display the bar was docked from may be gone by now.
         let _ = crate::ensure_main_window_reachable(&player);
+        if focus {
+            if let Err(error) = player.set_focus() {
+                eprintln!("[taskbar-docking] could not focus the player: {error}");
+            }
+        }
+    }
+
+    fn focus_player(&self) {
+        if self.inner.stopping.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(player) = self.inner.app.get_webview_window(MAIN_LABEL) else {
+            return;
+        };
+        if player.is_minimized().unwrap_or(false) {
+            let _ = player.unminimize();
+        }
+        if let Err(error) = player.show() {
+            eprintln!("[taskbar-docking] could not show the player: {error}");
+        }
+        if let Err(error) = player.set_focus() {
+            eprintln!("[taskbar-docking] could not focus the player: {error}");
+        }
     }
 
     fn emit_phase(&self, phase: StripPhase) {

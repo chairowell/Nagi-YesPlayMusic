@@ -266,6 +266,8 @@ pub enum Phase {
     Undocking {
         home: Rect,
         show_player: bool,
+        /// The user asked for the player, so it may take the foreground.
+        focus: bool,
     },
 }
 
@@ -410,7 +412,14 @@ pub enum Effect {
     /// Put the strip back above the taskbar after Explorer re-ordered it.
     Raise,
     HideStrip,
-    ShowPlayer(Rect),
+    /// Only a user request focuses the player; automatic recovery (a lost
+    /// taskbar mid display change) must not take the foreground from a game.
+    ShowPlayer {
+        home: Rect,
+        focus: bool,
+    },
+    /// Show and focus the player wherever it is.
+    FocusPlayer,
     StripPhase(StripPhase),
     DockedChanged(bool),
 }
@@ -426,7 +435,7 @@ pub fn step(mut state: State, event: Event) -> (State, Vec<Effect>) {
                     effects.push(Effect::InstallWatcher);
                 }
             } else {
-                effects = leave(&mut state);
+                effects = leave(&mut state, true);
                 if state.watching {
                     state.watching = false;
                     state.taskbars = None;
@@ -553,7 +562,7 @@ pub fn step(mut state: State, event: Event) -> (State, Vec<Effect>) {
                                 Vec::new()
                             }
                         }
-                        None => leave(&mut state),
+                        None => leave(&mut state, false),
                     }
                 }
                 _ => Vec::new(),
@@ -680,10 +689,14 @@ pub fn step(mut state: State, event: Event) -> (State, Vec<Effect>) {
                     effects.push(Effect::Probe);
                     effects
                 }
-                Phase::Undocking { home, show_player } => {
+                Phase::Undocking {
+                    home,
+                    show_player,
+                    focus,
+                } => {
                     let mut effects = Vec::new();
                     if show_player {
-                        effects.push(Effect::ShowPlayer(home));
+                        effects.push(Effect::ShowPlayer { home, focus });
                     }
                     effects.push(Effect::HideStrip);
                     effects.push(Effect::StripPhase(StripPhase::Hidden));
@@ -698,7 +711,7 @@ pub fn step(mut state: State, event: Event) -> (State, Vec<Effect>) {
         }
         Event::ShowRequested => match &mut state.phase {
             // Mid-flight the player is the only thing we can show for sure.
-            Phase::Docking { .. } => abort(&mut state),
+            Phase::Docking { .. } => abort(&mut state, true),
             Phase::Docked {
                 visible: false,
                 covered,
@@ -717,15 +730,20 @@ pub fn step(mut state: State, event: Event) -> (State, Vec<Effect>) {
                 *covered = false;
                 vec![Effect::ShowStripRequested]
             }
-            Phase::Undocking { show_player, .. } => {
+            Phase::Undocking {
+                show_player, focus, ..
+            } => {
                 *show_player = true;
+                *focus = true;
                 Vec::new()
             }
-            Phase::Undocked { .. } => Vec::new(),
+            // The tray saw a docked bar and handed the show to us, but an
+            // automatic undock landed first: the caller will not show it.
+            Phase::Undocked { .. } => vec![Effect::FocusPlayer],
         },
         Event::HideRequested => hide(&mut state),
-        Event::UndockRequested => leave(&mut state),
-        Event::Abort => abort(&mut state),
+        Event::UndockRequested => leave(&mut state, true),
+        Event::Abort => abort(&mut state, false),
     };
     (state, effects)
 }
@@ -818,10 +836,14 @@ fn foreground(state: &mut State, fullscreen: bool) -> Vec<Effect> {
             }
         }
         // Flying out under a full-screen app: finish at once.
-        Phase::Undocking { home, show_player } if fullscreen => {
+        Phase::Undocking {
+            home,
+            show_player,
+            focus,
+        } if fullscreen => {
             let mut effects = Vec::new();
             if show_player {
-                effects.push(Effect::ShowPlayer(home));
+                effects.push(Effect::ShowPlayer { home, focus });
             }
             effects.push(Effect::HideStrip);
             effects.push(Effect::StripPhase(StripPhase::Hidden));
@@ -901,8 +923,8 @@ fn hide(state: &mut State) -> Vec<Effect> {
 }
 
 /// Leave the taskbar gracefully: fly back when the strip is visible, or just
-/// drop out when it is hidden.
-fn leave(state: &mut State) -> Vec<Effect> {
+/// drop out when it is hidden. `focus` marks a leave the user asked for.
+fn leave(state: &mut State, focus: bool) -> Vec<Effect> {
     match std::mem::replace(&mut state.phase, Phase::Undocked { drag: None }) {
         Phase::Docked {
             placement,
@@ -915,6 +937,7 @@ fn leave(state: &mut State) -> Vec<Effect> {
             state.phase = Phase::Undocking {
                 home,
                 show_player: true,
+                focus,
             };
             vec![
                 Effect::StripPhase(StripPhase::Undocking { motion }),
@@ -925,25 +948,42 @@ fn leave(state: &mut State) -> Vec<Effect> {
                 }),
             ]
         }
-        Phase::Undocking { home, show_player } => {
-            state.phase = Phase::Undocking { home, show_player };
+        Phase::Undocking {
+            home,
+            show_player,
+            focus: earlier,
+        } => {
+            state.phase = Phase::Undocking {
+                home,
+                show_player,
+                focus: earlier || focus,
+            };
             Vec::new()
         }
         // Hidden or covered strips have nothing to fly; a user who hid the
         // player while docked keeps it hidden unless a show was waiting.
-        other => abort_effects(other),
+        other => abort_effects(other, focus),
     }
 }
 
 /// Drop the strip immediately and put the player back where it was.
-fn abort(state: &mut State) -> Vec<Effect> {
-    abort_effects(std::mem::replace(
-        &mut state.phase,
-        Phase::Undocked { drag: None },
-    ))
+fn abort(state: &mut State, focus: bool) -> Vec<Effect> {
+    abort_effects(
+        std::mem::replace(&mut state.phase, Phase::Undocked { drag: None }),
+        focus,
+    )
 }
 
-fn abort_effects(phase: Phase) -> Vec<Effect> {
+fn abort_effects(phase: Phase, focus: bool) -> Vec<Effect> {
+    // A tray show still waiting on the probe is a user request too.
+    let focus = focus
+        || matches!(
+            phase,
+            Phase::Docked {
+                show_pending: true,
+                ..
+            } | Phase::Undocking { focus: true, .. }
+        );
     match phase {
         Phase::Undocked { drag: Some(drag) } if drag.hint != DragHint::None => {
             vec![Effect::Hint(DragHint::None)]
@@ -967,8 +1007,9 @@ fn abort_effects(phase: Phase) -> Vec<Effect> {
         | Phase::Undocking {
             home,
             show_player: true,
+            ..
         } => vec![
-            Effect::ShowPlayer(home),
+            Effect::ShowPlayer { home, focus },
             Effect::HideStrip,
             Effect::StripPhase(StripPhase::Hidden),
             Effect::DockedChanged(false),
@@ -1101,9 +1142,9 @@ mod tests {
         state
     }
 
-    fn abort_with_player(home: Rect) -> Vec<Effect> {
+    fn abort_with_player(home: Rect, focus: bool) -> Vec<Effect> {
         vec![
-            Effect::ShowPlayer(home),
+            Effect::ShowPlayer { home, focus },
             Effect::HideStrip,
             Effect::StripPhase(StripPhase::Hidden),
             Effect::DockedChanged(false),
@@ -1579,9 +1620,51 @@ mod tests {
                 ]
             );
             let (state, trace) = run(state, vec![Event::FlightFinished]);
-            assert_eq!(trace[0], abort_with_player(bar_frame(1000)));
+            assert_eq!(
+                trace[0],
+                abort_with_player(bar_frame(1000), false),
+                "a vanished taskbar must not take the foreground from a game"
+            );
             assert_eq!(state.phase, Phase::Undocked { drag: None });
         }
+    }
+
+    #[test]
+    fn a_show_request_after_an_automatic_undock_still_focuses_the_player() {
+        let gone = vec![Taskbar {
+            auto_hide: true,
+            ..win11_bar()
+        }];
+        let (state, trace) = run(
+            docked_state(),
+            vec![
+                Event::Taskbars(Some(gone)),
+                Event::FlightFinished,
+                Event::ShowRequested,
+            ],
+        );
+        assert_eq!(trace[1], abort_with_player(bar_frame(1000), false));
+        assert_eq!(trace[2], vec![Effect::FocusPlayer]);
+        assert_eq!(state.phase, Phase::Undocked { drag: None });
+    }
+
+    #[test]
+    fn a_show_request_during_an_automatic_undock_focuses_the_player() {
+        let gone = vec![Taskbar {
+            auto_hide: true,
+            ..win11_bar()
+        }];
+        let (state, trace) = run(
+            docked_state(),
+            vec![
+                Event::Taskbars(Some(gone)),
+                Event::ShowRequested,
+                Event::FlightFinished,
+            ],
+        );
+        assert_eq!(trace[1], vec![]);
+        assert_eq!(trace[2], abort_with_player(bar_frame(1000), true));
+        assert_eq!(state.phase, Phase::Undocked { drag: None });
     }
 
     #[test]
@@ -1700,6 +1783,7 @@ mod tests {
                 state.phase,
                 Phase::Undocking {
                     show_player: true,
+                    focus: true,
                     ..
                 }
             ));
@@ -1754,7 +1838,7 @@ mod tests {
                 Event::Taskbars(Some(gone.clone())),
             ],
         );
-        assert_eq!(trace[2], abort_with_player(bar_frame(1000)));
+        assert_eq!(trace[2], abort_with_player(bar_frame(1000), true));
         assert_eq!(state.phase, Phase::Undocked { drag: None });
 
         // Hidden by the user and the taskbar vanished: stay hidden.
@@ -1774,7 +1858,7 @@ mod tests {
         // Asking for the player mid-flight hands it back at once.
         let (prepared, _) = run(docking_state(), vec![Event::StripReady]);
         let (state, trace) = run(prepared, vec![Event::ShowRequested]);
-        assert_eq!(trace[0], abort_with_player(bar_frame(1000)));
+        assert_eq!(trace[0], abort_with_player(bar_frame(1000), true));
         assert_eq!(state.phase, Phase::Undocked { drag: None });
     }
 
@@ -1841,7 +1925,7 @@ mod tests {
         assert_eq!(trace[1], vec![Effect::HideStrip]);
         assert!(!shown.strip_visible());
         let (state, trace) = run(covered.clone(), vec![Event::UndockRequested]);
-        assert_eq!(trace[0], abort_with_player(bar_frame(1000)));
+        assert_eq!(trace[0], abort_with_player(bar_frame(1000), true));
         assert_eq!(state.phase, Phase::Undocked { drag: None });
         let (_, trace) = run(covered, vec![Event::HideRequested]);
         assert_eq!(trace[0], vec![], "already off screen");
@@ -1964,7 +2048,7 @@ mod tests {
         // Flying out when one arrives: finish right there.
         let (undocking, _) = run(docked_state(), vec![Event::UndockRequested]);
         let (state, trace) = run(undocking, vec![Event::Foreground { fullscreen: true }]);
-        assert_eq!(trace[0], abort_with_player(bar_frame(1000)));
+        assert_eq!(trace[0], abort_with_player(bar_frame(1000), true));
         assert_eq!(state.phase, Phase::Undocked { drag: None });
 
         // A tray show explicitly reveals the strip, even while fullscreen.
@@ -2063,9 +2147,13 @@ mod tests {
     fn abort_drops_the_strip_from_every_busy_phase() {
         let (prepared, _) = run(docking_state(), vec![Event::StripReady]);
         let (undocking, _) = run(docked_state(), vec![Event::UndockRequested]);
-        for busy in [prepared, docked_state(), undocking] {
+        for (busy, focus) in [
+            (prepared, false),
+            (docked_state(), false),
+            (undocking, true),
+        ] {
             let (state, trace) = run(busy, vec![Event::Abort]);
-            assert_eq!(trace[0], abort_with_player(bar_frame(1000)));
+            assert_eq!(trace[0], abort_with_player(bar_frame(1000), focus));
             assert_eq!(state.phase, Phase::Undocked { drag: None });
         }
 

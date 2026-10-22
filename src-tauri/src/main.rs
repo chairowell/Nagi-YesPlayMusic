@@ -2631,8 +2631,10 @@ fn create_main_window(
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
+    // tao keeps `focused(false)` for every later show, not just the first, so
+    // docking recovery never activates the player; explicit opens focus it.
     #[cfg(target_os = "windows")]
-    let builder = builder.decorations(false);
+    let builder = builder.decorations(false).focused(false);
     let window = builder
         .on_page_load(|_, payload| {
             if payload.event() == PageLoadEvent::Finished {
@@ -3460,5 +3462,18 @@ mod tests {
         let icon = decode_tray_cover(&encoded).unwrap();
         assert_eq!((icon.width(), icon.height()), (64, 64));
         assert_eq!(icon.rgba().len(), 64 * 64 * 4);
+    }
+
+    #[test]
+    fn quiet_player_shows_rely_on_the_pinned_tao() {
+        // `focused(false)` stays in force after the first show only because
+        // tao 0.35.3 never clears its don't-focus marker. A newer tao may fix
+        // that and let docking recovery steal a game's focus again (#43):
+        // verify on Windows before moving this pin.
+        let lock = include_str!("../Cargo.lock");
+        let mut lines = lock.lines();
+        let found = lines.by_ref().any(|line| line == "name = \"tao\"");
+        assert!(found, "tao is missing from Cargo.lock");
+        assert_eq!(lines.next(), Some("version = \"0.35.3\""));
     }
 }
