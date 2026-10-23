@@ -5,7 +5,7 @@
 <h1 align="center">Yokaze · 夜風</h1>
 
 <p align="center">一个好看的网易云音乐播放器。桌面上是安静的窗口，终端里是 <code>ypm</code>。</p>
-<p align="center"><sub>macOS（Apple Silicon）· Windows 与 Ubuntu 实验构建 · <a href="https://github.com/nagi-studio/Yokaze/releases">下载</a></sub></p>
+<p align="center"><sub>macOS（Apple Silicon）· Windows · Ubuntu · <a href="https://github.com/nagi-studio/Yokaze/releases">下载</a></sub></p>
 
 <p align="center">
   <img src="images/tui-now-playing.png" alt="ypm TUI：正在播放" width="423">
@@ -196,12 +196,23 @@ mkdir -p ~/.agents/skills/ypm && curl -fsSL \
 
 测量口径和完整数据见[性能迁移基线](docs/performance-baseline.md)，功能对照见[功能迁移表](docs/feature-migration.md)。
 
-## Windows 和 Linux
+## Windows
 
-只有 macOS 是正式支持平台。Windows x64（未签名 NSIS `.exe`）和 Ubuntu x64（AppImage 和 `.deb`）
-是同一套 Tauri 外壳的实验构建，未做实装验收：`master` push 只产生 Actions artifact，推 `v*` tag
-时和 macOS 包一起进入同一个草稿 Release（未签名安装包会触发 SmartScreen）。本机构建用
-`bun run build:tauri:windows` / `bun run build:tauri:linux`。这两个平台没有 `afconvert`，
+Windows x64 有一些 macOS 上没有的功能：
+
+- **任务栏歌词**：把迷你播放条拖到任务栏附近松手，它会收进任务栏的空位，显示封面、当前这句歌词和播放控件。
+  全屏玩游戏或看视频时自动藏起来，退出全屏后回来。不想要可以在设置里关掉「允许吸附到任务栏」。
+- **QQ 音乐一键登录**：在官方登录页登录后，QQ 音源需要的 cookie 自动填好。
+
+安装包是未签名的 NSIS `.exe`，第一次运行时 SmartScreen 会拦一下，点「更多信息」→「仍要运行」即可。
+从 YesPlayMusic 升级时，安装器会自动卸掉旧版，登录状态和设置都保留。
+
+## Linux
+
+Ubuntu x64 提供 AppImage 和 `.deb`。
+
+Windows 和 Linux 包在 `master` push 时只产生 Actions artifact，推 `v*` tag 时和 macOS 包一起进入同一个草稿 Release。
+本机构建用 `bun run build:tauri:windows` / `bun run build:tauri:linux`。这两个平台没有 `afconvert`，
 精确 FLAC 拖动走播放器已有的回退路径。
 
 ## 自己构建
