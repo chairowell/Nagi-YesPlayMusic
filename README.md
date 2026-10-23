@@ -8,7 +8,8 @@
 <p align="center"><sub>macOS（Apple Silicon）· Windows 与 Ubuntu 实验构建 · <a href="https://github.com/nagi-studio/Yokaze/releases">下载</a></sub></p>
 
 <p align="center">
-  <img src="images/lyrics.png" alt="Yokaze 的歌词页" width="820">
+  <img src="images/tui-now-playing.png" alt="ypm TUI：正在播放" width="423">
+  <img src="images/tui-spectrum.png" alt="ypm TUI：频谱与双语歌词" width="375">
 </p>
 
 ## 能做什么
@@ -21,11 +22,6 @@
 - 全局快捷键、系统媒体键、Last.fm 记录、Discord 状态
 - 进度条上可以换成彩虹猫、Anon 或 Minecraft 苦力怕
 - 同一个账号也能在终端里用 `ypm` 听，封面、双语歌词和频谱都画在终端里
-
-<p align="center">
-  <img src="images/library-dark.png" alt="音乐库（深色）" width="410">
-  <img src="images/album.png" alt="专辑页" width="410">
-</p>
 
 ## 安装
 
@@ -81,12 +77,7 @@ stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 
 `ypm` 是 Yokaze 的 TUI，和桌面版共用同一套网易云实现。封面直接画在终端里，歌词双语滚动，
 带频谱，8 套内置主题，支持 Nerd Font 图标和自定义配色。
 
-<p align="center">
-  <img src="images/tui-now-playing.png" alt="ypm：正在播放" width="410">
-  <img src="images/tui-spectrum.png" alt="ypm：频谱与双语歌词" width="365">
-</p>
-
-![ypm：曲库](images/tui-library.png)
+![ypm TUI：曲库](images/tui-library.png)
 
 macOS（Apple Silicon）和 Linux（x86_64）用 Homebrew 安装：
 
@@ -236,6 +227,14 @@ cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymu
 ```
 
 开发细节和踩过的坑都记在 [AGENTS.md](AGENTS.md) 里。
+
+## 更多界面
+
+![歌词页](images/lyrics.png)
+
+![音乐库（深色）](images/library-dark.png)
+
+![专辑](images/album.png)
 
 ## 致谢
 
