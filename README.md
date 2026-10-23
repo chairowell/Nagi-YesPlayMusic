@@ -1,7 +1,5 @@
 <p align="center">
   <img src="images/logo.png" alt="Yokaze Logo" width="156" height="156">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://tauri.app"><img src="images/tauri-glyph.svg" alt="Built with Tauri 2" height="72"></a>
 </p>
 
 <h2 align="center" style="font-weight: 600">Yokaze · 夜风</h2>
