@@ -1,4 +1,4 @@
-# Yokaze（夜风）
+# Yokaze（夜風）
 
 高颜值的第三方网易云播放器，原名 YesPlayMusic，是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic)
 分出来独立维护的版本，v0.13.0 起改名 Yokaze。Apple Silicon macOS 是正式支持平台；Windows x64 和

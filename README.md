@@ -1,58 +1,92 @@
 <p align="center">
-  <img src="images/logo.png" alt="Yokaze Logo" width="156" height="156">
+  <img src="images/logo.png" alt="Yokaze" width="128" height="128">
 </p>
 
-<h2 align="center" style="font-weight: 600">Yokaze · 夜风</h2>
+<h1 align="center">Yokaze · 夜風</h1>
 
-<p align="center">高颜值的第三方网易云播放器 · 桌面版与 TUI 同一个仓库、共用一套 Rust 核心</p>
-<p align="center"><sub>Tauri 2 桌面应用 + <code>ypm</code> TUI · macOS 正式发布 · Windows / Ubuntu 实验构建 · 由 <a href="https://github.com/nagi-studio">Nagi Studio</a> 维护</sub></p>
+<p align="center">一个好看的网易云音乐播放器。桌面上是安静的窗口，终端里是 <code>ypm</code>。</p>
+<p align="center"><sub>macOS（Apple Silicon）· Windows 与 Ubuntu 实验构建 · <a href="https://github.com/nagi-studio/Yokaze/releases">下载</a></sub></p>
 
 <p align="center">
-  <img src="images/tui-now-playing.png" alt="ypm TUI：正在播放" width="423">
-  <img src="images/tui-spectrum.png" alt="ypm TUI：频谱与双语歌词" width="375">
+  <img src="images/lyrics.png" alt="Yokaze 的歌词页" width="820">
 </p>
 
----
+## 能做什么
 
-Yokaze（夜风）原名 YesPlayMusic，是从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic)
-分出来独立维护的 macOS Tauri 重构版，v0.13.0 起改用现在的名字（取自 MyGO!!!!! 的《夜隠染》，读作 よかぜ），
-不再跟随上游发版。界面和主要功能保留，桌面运行时、本地服务、缓存和
-窗口交互全部重新实现。想要原版跨平台安装包请去[上游仓库](https://github.com/qier222/YesPlayMusic)。
+- 登录网易云账号，听每日推荐、私人 FM、歌单、专辑、歌手和云盘
+- 歌词页大字滚动，原文下面跟着中文翻译
+- 窗口压矮就变成一条迷你播放条，可以钉在最上层
+- 菜单栏直接显示封面和当前这句歌词
+- 灰色歌曲自动换源，最高支持无损和 Hi-Res
+- 全局快捷键、系统媒体键、Last.fm 记录、Discord 状态
+- 进度条上可以换成彩虹猫、Anon 或 Minecraft 苦力怕
+- 同一个账号也能在终端里用 `ypm` 听，封面、双语歌词和频谱都画在终端里
 
-仓库里是两个前端：Tauri 2 桌面应用，和终端里跑的 `ypm`。网易云的账号、搜索、
-歌单、播放源、歌词这些业务逻辑收在同一份 Rust 核心（`core::ncm`）里，两边共用，
-所以两个界面的行为一致，修一次两边都好。
+<p align="center">
+  <img src="images/library-dark.png" alt="音乐库（深色）" width="410">
+  <img src="images/album.png" alt="专辑页" width="410">
+</p>
 
-Apple Silicon Mac 是正式支持平台，Windows x64 和 Ubuntu x64 由 CI 提供实验构建。欢迎提 Issue 和 PR。
+## 安装
 
-## 迷你播放器
+到 [Releases](https://github.com/nagi-studio/Yokaze/releases) 下载 DMG，双击安装即可：
+Apple Silicon（`arm64`），macOS 14 或更高。安装包经 Developer ID 签名与 Apple 公证，不需要额外放行。
 
-窗口压矮（高度小于 340）自动变成紧凑播放条，最小可到 300×48。空间够时原文下面跟一行中文翻译，
-纯音乐显示「纯音乐，请欣赏」。拖回大窗口自动还原。
+想先用上新功能，可以装[尝鲜版（canary）](https://github.com/nagi-studio/Yokaze/releases?q=prerelease%3Atrue&expanded=true)。
+canary 和稳定版各走各的更新通道，互不干扰。
 
-![迷你播放器：双语歌词](images/mini-player-bilingual.png)
+`ypm` TUI 的安装见下面的 [ypm TUI](#ypm-tui)。
 
-![迷你播放器：双语歌词](images/mini-player.png)
+<details>
+<summary>签名、自动更新与 Sidecar 源码提供</summary>
 
-![迷你播放器：纯音乐](images/mini-player-instrumental.png)
+<br>
 
-播放条上有图钉按钮，把窗口钉在最上层，跟着切桌面和全屏应用走。按钮和红绿灯平时藏着，鼠标移上去才出现。
+DMG 内的 `.app` 由 `Developer ID Application` 身份签名、启用 Hardened Runtime，并经 Apple
+公证，DMG 带 stapler ticket，因此离线也能通过 Gatekeeper 校验。签名与公证是发版门禁：
+`codesign --verify`、`spctl --assess` 和 `xcrun stapler validate` 任一失败就不产出安装包。
+
+从 tag 构建的包会在启动时静默检查更新，也可以在设置页手动检查、下载和安装。stable 只接收
+stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 验签，与 Apple Developer ID
+无关。普通本地构建没有发布公钥，自动更新保持未配置状态。
+
+同一 Release 会提供对应版本的 `Yokaze_<version>_sidecar-source.tar.gz`、SHA-256 与醒目的
+`SOURCE-OFFER` 指引，这是 Rust Sidecar 的完整对应源码和离线重链接包。转发或镜像 DMG 时，
+请同时保留源码资产和源码下载指引。
+
+</details>
+
+## 迷你播放条
+
+窗口高度压到 340 以下会自动变成紧凑的播放条，最小 300×48。空间够时原文下面跟一行中文翻译，
+纯音乐显示「纯音乐，请欣赏」，拉回大窗口自动还原。
+
+![迷你播放条：双语歌词](images/mini-player-bilingual.png)
+
+![迷你播放条](images/mini-player.png)
+
+![迷你播放条：纯音乐](images/mini-player-instrumental.png)
+
+播放条上的图钉能把窗口钉在最上层，切桌面、开全屏应用时也跟着走。按钮和红绿灯平时藏着，鼠标移上去才出现。
 
 ## 菜单栏歌词
 
-菜单栏图标位置直接显示专辑封面，右边跟着当前歌词走，按显示宽度截断，中日文和英文都能显示得比较满。
-迷你条开着时菜单栏只留封面，窗口一收起歌词立刻补回来。
+菜单栏图标的位置显示专辑封面，旁边跟着当前歌词，按显示宽度截断，中日文和英文都能排得比较满。
+迷你播放条开着时菜单栏只留封面，收起后歌词立刻回来。
 
 ![菜单栏歌词](images/menubar.png)
 
-另外多了 Anon 和 Creeper（Minecraft 苦力怕）两种进度条皮肤（和彩虹猫三者互斥，设置里
-切换），并修掉了网络慢时快速切歌会把新歌歌词覆盖成上一首的老问题。
-
 ## ypm TUI
 
-![ypm TUI：曲库](images/tui-library.png)
+`ypm` 是 Yokaze 的 TUI，和桌面版共用同一套网易云实现。封面直接画在终端里，歌词双语滚动，
+带频谱，8 套内置主题，支持 Nerd Font 图标和自定义配色。
 
-封面直接画在终端里，歌词双语滚动，带频谱。8 套内置主题，支持 Nerd Font 图标和自定义配色。
+<p align="center">
+  <img src="images/tui-now-playing.png" alt="ypm：正在播放" width="410">
+  <img src="images/tui-spectrum.png" alt="ypm：频谱与双语歌词" width="365">
+</p>
+
+![ypm：曲库](images/tui-library.png)
 
 macOS（Apple Silicon）和 Linux（x86_64）用 Homebrew 安装：
 
@@ -63,7 +97,7 @@ brew tap nagi-studio/ypm && brew install ypm
 较新版本的 Homebrew 会要求先 `brew trust nagi-studio/ypm` 信任第三方 tap。
 formula 模板在 [`Formula/`](Formula/)，发版后同步到 [`nagi-studio/homebrew-ypm`](https://github.com/nagi-studio/homebrew-ypm)。
 
-也可以从同一 Release 下载 `ypm-macos-aarch64`、`ypm-linux-x64` 或 `ypm-windows-x64.exe`：
+也可以从 [Releases](https://github.com/nagi-studio/Yokaze/releases) 下载 `ypm-macos-aarch64`、`ypm-linux-x64` 或 `ypm-windows-x64.exe`：
 
 ```bash
 chmod +x ypm-macos-aarch64 # Linux 对应 ypm-linux-x64
@@ -159,53 +193,25 @@ mkdir -p ~/.agents/skills/ypm && curl -fsSL \
 用 `npx skills add nagi-studio/Yokaze -s ypm -g -a universal` 也能装，
 但那会为这一个文件克隆整个仓库。
 
-## 安装
+## 体积与性能
 
-> **[尝鲜版（canary）](https://github.com/nagi-studio/Yokaze/releases?q=prerelease%3Atrue&expanded=true)** 带上面那个 TUI。
-> canary 走独立更新通道，和 stable 互不干扰。稳定版请用下面的 Releases 页面。
+`.app` 从 82.6 MiB 降到 23.0 MiB，DMG 12.0 MiB，Sidecar 常驻内存约 9 MiB。这来自三次重构：
 
-到 [Releases](https://github.com/nagi-studio/Yokaze/releases) 下载 DMG，
-只提供 Apple Silicon（`arm64`），要求 macOS 14 或更高版本。
+| 阶段               | 改动                                                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `v0.6.0`：桌面外壳 | Electron → Tauri 2；升级 Vue 3、Vite 7、TypeScript 6 和 Pinia 4，改用系统 WebView                                |
+| `v0.8.0`：后台服务 | Bun Sidecar → Rust Sidecar；页面托管、网易云 API、同源 `/api` 和 UNM 全部改写为 Rust，桌面包不再携带 Bun runtime |
+| `v0.9.0`：业务核心 | 网易云客户端逻辑下沉 `core::ncm`；桌面端与 TUI 共用同一份 Rust 实现，通用转发路由从 57 条减到 45 条              |
 
-DMG 经 Developer ID 签名与 Apple 公证，下载后双击即可，不需要额外放行。
+测量口径和完整数据见[性能迁移基线](docs/performance-baseline.md)，功能对照见[功能迁移表](docs/feature-migration.md)。
 
-v0.9.1 及更早的包没有签名，首次打开时 macOS 会拦一道，放行方法二选一：
+## Windows 和 Linux
 
-- 打开「系统设置 → 隐私与安全性」，往下翻到被拦截的提示，点「仍要打开」
-- 或者在终端跑一句：`xattr -dr com.apple.quarantine /Applications/YesPlayMusic.app`
-
-从源码构建的产物不带隔离属性，没有这个问题。
-
-<details>
-<summary>签名、自动更新与 Sidecar 源码提供</summary>
-
-<br>
-
-DMG 内的 `.app` 由 `Developer ID Application` 身份签名、启用 Hardened Runtime，并经 Apple
-公证，DMG 带 stapler ticket，因此离线也能通过 Gatekeeper 校验。签名与公证是发版门禁：
-`codesign --verify`、`spctl --assess` 和 `xcrun stapler validate` 任一失败就不产出安装包。
-v0.9.1 及更早的版本走的是 ad-hoc Hardened Runtime seal，没有 Developer ID 身份。
-
-从 tag 构建的包会在启动时静默检查更新，也可以在设置页手动检查、下载和安装。stable 只接收
-stable 更新，canary 只接收 canary 更新；更新包使用 Tauri Minisign 验签，与 Apple Developer ID
-无关。普通本地构建没有发布公钥，自动更新保持未配置状态。
-
-同一 Release 会提供对应版本的 `Yokaze_<version>_sidecar-source.tar.gz`、SHA-256 与醒目的
-`SOURCE-OFFER` 指引，这是 Rust Sidecar 的完整对应源码和离线重链接包。转发或镜像 DMG 时，
-请同时保留源码资产和源码下载指引。
-
-</details>
-
-## 三次桌面重构
-
-| 阶段                        | 改动                                                                                                            |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `v0.6.0`：桌面外壳          | Electron → Tauri 2；升级 Vue 3、Vite 7、TypeScript 6 和 Pinia 4，改用系统 WebView                               |
-| `v0.8.0`：后台服务          | Bun Sidecar → Rust Sidecar；页面托管、网易云 API、同源 `/api` 和 UNM 全部改写为 Rust，桌面包不再携带 Bun runtime |
-| `v0.9.0`：业务核心          | 网易云客户端逻辑下沉 `core::ncm`；桌面端与 TUI 共用同一份 Rust 实现，通用转发路由从 57 条减到 45 条              |
-
-`.app` 从 82.6 MiB 降到 23.0 MiB，DMG 12.0 MiB，Sidecar 常驻内存约 9 MiB。
-详见[功能迁移表](docs/feature-migration.md)和[性能迁移基线](docs/performance-baseline.md)。
+只有 macOS 是正式支持平台。Windows x64（未签名 NSIS `.exe`）和 Ubuntu x64（AppImage 和 `.deb`）
+是同一套 Tauri 外壳的实验构建，未做实装验收：`master` push 只产生 Actions artifact，推 `v*` tag
+时和 macOS 包一起进入同一个草稿 Release（未签名安装包会触发 SmartScreen）。本机构建用
+`bun run build:tauri:windows` / `bun run build:tauri:linux`。这两个平台没有 `afconvert`，
+精确 FLAC 拖动走播放器已有的回退路径。
 
 ## 自己构建
 
@@ -229,39 +235,20 @@ Tauri 产物在 `src-tauri/target/<target-triple>/release/bundle/`，macOS 的 D
 cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymusic-tui
 ```
 
-开发细节和踩过的坑都记在 [CLAUDE.md](CLAUDE.md) 里。
-
-## Windows 和 Linux
-
-只有 macOS 是正式支持平台。Windows x64（未签名 NSIS `.exe`）和 Ubuntu x64（AppImage 和 `.deb`）
-是同一套 Tauri 外壳的实验构建，未做实装验收：`master` push 只产生 Actions artifact，推 `v*` tag
-时和 macOS 包一起进入同一个草稿 Release（未签名安装包会触发 SmartScreen）。本机构建用
-`bun run build:tauri:windows` / `bun run build:tauri:linux`。这两个平台没有 `afconvert`，
-精确 FLAC 拖动走播放器已有的回退路径。
-
-## 更多界面
-
-以下界面来自上游，这个分支没有改动。
-
-![歌词页](images/lyrics.png)
-
-![音乐库（深色）](images/library-dark.png)
-
-![专辑](images/album.png)
+开发细节和踩过的坑都记在 [AGENTS.md](AGENTS.md) 里。
 
 ## 致谢
 
-这个项目的一切都建立在 [qier222](https://github.com/qier222) 和
-[YesPlayMusic 所有贡献者](https://github.com/qier222/YesPlayMusic/graphs/contributors)
-的工作之上。播放器内核、界面设计、歌词、音乐库、网易云 API 的对接，这些真正困难的部分
-都是他们写好的，这个分支只是在上面加了几个自己想要的功能。
+Yokaze 从 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 发展而来。界面设计、播放器、
+歌词和音乐库的基础都来自 [qier222](https://github.com/qier222) 和
+[YesPlayMusic 的所有贡献者](https://github.com/qier222/YesPlayMusic/graphs/contributors)。
 
-同样感谢这些被项目依赖的开源工作：
+同样感谢这些开源项目：
 
 - [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 及其
   [维护分支](https://github.com/neteasecloudmusicapienhanced/api)：网易云 API 的实现
 - [UnblockNeteaseMusic](https://github.com/UnblockNeteaseMusic/server)：灰色歌曲解锁
-- [Vue](https://vuejs.org)、[Vite](https://vite.dev)、[Tauri](https://tauri.app)
+- [Vue](https://vuejs.org)、[Vite](https://vite.dev)、[Tauri](https://tauri.app)、[Ratatui](https://ratatui.rs)
 
 界面设计的灵感来自 [Apple Music](https://music.apple.com)、
 [YouTube Music](https://music.youtube.com) 和 [Spotify](https://www.spotify.com)。
@@ -276,6 +263,3 @@ cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p yesplaymu
 MIT 与 GPL-3.0 均允许商业使用，本项目不附加“仅限个人或非商业用途”的代码许可限制。
 使用者仍须自行遵守网易云音乐服务条款、适用法律和音乐版权要求；本项目不提供音乐内容，
 也不授予任何音乐作品的商业使用权。
-
-TAURI is a trademark of The Tauri Programme within the Commons Conservancy. README 中使用的
-Tauri 标识来自官方 Logopack，仅作技术栈说明。
